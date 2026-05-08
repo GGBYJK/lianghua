@@ -42,7 +42,7 @@ Optional overrides:
 ```powershell
 $env:ALIYUN_MARKET_SYMBOL_PARAM="symbol"
 $env:ALIYUN_MARKET_PERIOD_PARAM="type"
-$env:ALIYUN_MARKET_LIMIT_PARAM="pnum"
+$env:ALIYUN_MARKET_LIMIT_PARAM="limit"
 $env:ALIYUN_MARKET_EXTRA_PARAMS="key1=value1&key2=value2"
 ```
 

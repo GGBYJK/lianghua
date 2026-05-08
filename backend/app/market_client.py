@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import asyncio
+import json
+import logging
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -15,6 +17,7 @@ class MarketApiError(RuntimeError):
 
 
 load_dotenv()
+logger = logging.getLogger("app.market_client")
 
 
 def get_market_settings() -> dict[str, str | None]:
@@ -78,7 +81,7 @@ def _fetch_kline_from_aliyun_market_sync(symbol: str, period: str, limit: int = 
     params = {
         os.getenv("ALIYUN_MARKET_SYMBOL_PARAM", "symbol"): symbol,
         os.getenv("ALIYUN_MARKET_PERIOD_PARAM", "period"): normalize_aliyun_period(period),
-        os.getenv("ALIYUN_MARKET_LIMIT_PARAM", "pnum"): str(limit),
+        os.getenv("ALIYUN_MARKET_LIMIT_PARAM", "limit"): str(limit),
     }
     extra_params = os.getenv("ALIYUN_MARKET_EXTRA_PARAMS")
     if extra_params:
@@ -93,25 +96,59 @@ def _fetch_kline_from_aliyun_market_sync(symbol: str, period: str, limit: int = 
     try:
         response = httpx.get(url, params=params, headers=headers, timeout=timeout)
     except httpx.HTTPError as exc:
+        logger.exception(
+            "Aliyun kline request failed before response: url=%s params=%s headers=%s",
+            url,
+            params,
+            redact_headers(headers),
+        )
         raise MarketApiError(f"阿里云行情接口请求失败：{exc}") from exc
 
     if response.status_code != 200:
-        raise MarketApiError(f"阿里云行情接口HTTP错误：{response.status_code}，{response.text[:200]}")
+        log_aliyun_response_error(response=response, params=params, headers=headers)
+        raise MarketApiError(f"阿里云行情接口HTTP错误：{response.status_code}，{response.text}")
 
     try:
         payload = response.json()
     except ValueError as exc:
-        raise MarketApiError(f"阿里云行情接口返回不是JSON：{response.text[:200]}") from exc
+        log_aliyun_response_error(response=response, params=params, headers=headers)
+        raise MarketApiError(f"阿里云行情接口返回不是JSON：{response.text}") from exc
 
     if isinstance(payload, dict):
         code = str(payload.get("Code", payload.get("code", "0")))
         if code not in {"0", "200", "Success", "success"} and not any(key in payload for key in ("Obj", "Data", "data", "result")):
-            raise MarketApiError(f"阿里云行情接口返回错误：{payload.get('Msg') or payload.get('msg') or payload}")
+            log_aliyun_response_error(response=response, params=params, headers=headers)
+            raise MarketApiError(f"阿里云行情接口返回错误：{json.dumps(payload, ensure_ascii=False)}")
 
     rows = extract_rows(payload, symbol=symbol)
     if not rows:
+        log_aliyun_response_error(response=response, params=params, headers=headers)
         raise MarketApiError("阿里云行情接口没有返回K线数据")
     return rows_to_dataframe(rows)
+
+
+def redact_headers(headers: dict[str, str]) -> dict[str, str]:
+    redacted = dict(headers)
+    if "Authorization" in redacted:
+        value = redacted["Authorization"]
+        redacted["Authorization"] = value[:16] + "***" if len(value) > 16 else "***"
+    return redacted
+
+
+def log_aliyun_response_error(
+    response: httpx.Response,
+    params: dict[str, str],
+    headers: dict[str, str],
+) -> None:
+    logger.error(
+        "Aliyun kline response error: status=%s request_url=%s params=%s headers=%s response_headers=%s response_body=%s",
+        response.status_code,
+        response.request.url,
+        params,
+        redact_headers(headers),
+        dict(response.headers),
+        response.text,
+    )
 
 
 def aliyun_symbol_hints(symbols: str | None = None) -> list[dict[str, str | None]]:
