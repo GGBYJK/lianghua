@@ -1,0 +1,85 @@
+default:
+  pivot_left: 3
+  pivot_right: 3
+  min_head_above_shoulder_pct: 0.03
+  max_shoulder_diff_pct: 0.05
+  max_neck_diff_pct: 0.05
+  min_right_leg_to_left_leg_ratio: 0.8
+  max_right_leg_to_left_leg_ratio: 1.6
+  min_head_to_right_neck_to_left_neck_to_head_ratio: 0.8
+  max_head_to_right_neck_to_left_neck_to_head_ratio: 1.6
+  min_right_shoulder_ratio_to_left: 0.85
+  right_shoulder_must_below_head: true
+  enable_right_shoulder_volume_weak: true
+  right_shoulder_volume_ratio: 0.8
+  volume_compare_window: 3
+  enable_break_volume_confirm: true
+  break_volume_window: 5
+  break_volume_ratio: 1.1
+  enable_ma_filter: true
+  ma_short: 3
+  ma_mid: 5
+  ma_long: 8
+  ma_periods: [5, 10, 20, 30, 60, 250]
+  require_ma_bearish_alignment: false
+  require_close_below_ma_long: true
+  enable_macd_divergence: true
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  macd_price_new_high_pct: 0.01
+  use_macd_hist_for_divergence: true
+  break_by: close
+  neckline_break_pct: 0.002
+  max_bars_after_right_shoulder: 30
+  max_signal_age_bars: 0
+  enable_score: true
+  min_score_to_alert: 70
+
+timeframes:
+  1m:
+    pivot_left: 5
+    pivot_right: 5
+    min_head_above_shoulder_pct: 0.0005
+    macd_price_new_high_pct: 0.0005
+    break_volume_ratio: 1.1
+    min_score_to_alert: 70
+  5m:
+    pivot_left: 3
+    pivot_right: 3
+    min_head_above_shoulder_pct: 0.0005
+    macd_price_new_high_pct: 0.0005
+    break_volume_ratio: 1.1
+    max_signal_age_bars: 80
+    min_score_to_alert: 70
+  15m:
+    pivot_left: 3
+    pivot_right: 3
+    min_head_above_shoulder_pct: 0.04
+    break_volume_ratio: 1.15
+    min_score_to_alert: 70
+  30m:
+    pivot_left: 3
+    pivot_right: 3
+    min_head_above_shoulder_pct: 0.006
+    macd_price_new_high_pct: 0.003
+    break_volume_ratio: 1.1
+    min_score_to_alert: 70
+  1h:
+    pivot_left: 3
+    pivot_right: 3
+    min_head_above_shoulder_pct: 0.008
+    macd_price_new_high_pct: 0.004
+    break_volume_ratio: 1.1
+    min_score_to_alert: 70
+
+symbols:
+  rb:
+    5m:
+      min_head_above_shoulder_pct: 0.025
+      max_shoulder_diff_pct: 0.05
+  ag:
+    5m:
+      min_head_above_shoulder_pct: 0.035
+      max_shoulder_diff_pct: 0.06
+      break_volume_ratio: 1.3
