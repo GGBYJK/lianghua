@@ -363,7 +363,11 @@ function KlineChartEcharts({ candles, signals }: {
       return;
     }
 
-    const chart = echarts.init(chartRef.current, "dark", { renderer: "canvas" });
+    const chart = echarts.init(chartRef.current, "dark", {
+      renderer: "canvas",
+      devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      useDirtyRect: true,
+    });
     const categories = candles.map((candle) => formatShortTime(candle.time));
     const ohlc = candles.map((candle) => [candle.open, candle.close, candle.low, candle.high]);
     const volumes = candles.map((candle) => ({
@@ -496,8 +500,29 @@ function KlineChartEcharts({ candles, signals }: {
         },
       ],
       dataZoom: [
-        { type: "inside", xAxisIndex: [0, 1], start, end: 100, zoomOnMouseWheel: true, moveOnMouseWheel: true, moveOnMouseMove: true, preventDefaultMouseMove: true },
-        { type: "slider", xAxisIndex: [0, 1], bottom: 6, height: 18, brushSelect: false, borderColor: "rgba(148,163,184,0.18)", fillerColor: "rgba(121,183,164,0.16)", handleStyle: { color: "#79b7a4" }, textStyle: { color: "#91a39a" } },
+        {
+          type: "inside",
+          xAxisIndex: [0, 1],
+          start,
+          end: 100,
+          zoomOnMouseWheel: true,
+          moveOnMouseWheel: true,
+          moveOnMouseMove: true,
+          preventDefaultMouseMove: true,
+          throttle: 80,
+        },
+        {
+          type: "slider",
+          xAxisIndex: [0, 1],
+          bottom: 6,
+          height: 18,
+          realtime: false,
+          brushSelect: false,
+          borderColor: "rgba(148,163,184,0.18)",
+          fillerColor: "rgba(121,183,164,0.16)",
+          handleStyle: { color: "#79b7a4" },
+          textStyle: { color: "#91a39a" },
+        },
       ],
       series: [
         {
@@ -555,9 +580,36 @@ function KlineChartEcharts({ candles, signals }: {
       end: number;
       active: boolean;
     } | null = null;
+    const activePointers = new Set<number>();
+    let pendingZoom: { start: number; end: number } | null = null;
+    let zoomFrame = 0;
 
     const clampZoomStart = (value: number, span: number) => Math.max(0, Math.min(100 - span, value));
+    const flushZoom = () => {
+      zoomFrame = 0;
+      if (!pendingZoom) {
+        return;
+      }
+      chart.dispatchAction({
+        type: "dataZoom",
+        dataZoomIndex: 0,
+        start: pendingZoom.start,
+        end: pendingZoom.end,
+      });
+      pendingZoom = null;
+    };
+    const scheduleZoom = (nextStart: number, nextEnd: number) => {
+      pendingZoom = { start: nextStart, end: nextEnd };
+      if (!zoomFrame) {
+        zoomFrame = window.requestAnimationFrame(flushZoom);
+      }
+    };
     const onPointerDown = (event: PointerEvent) => {
+      activePointers.add(event.pointerId);
+      if (activePointers.size > 1) {
+        dragState = null;
+        return;
+      }
       if (event.pointerType === "mouse" || candles.length <= 1) {
         return;
       }
@@ -572,6 +624,10 @@ function KlineChartEcharts({ candles, signals }: {
     };
     const onPointerMove = (event: PointerEvent) => {
       if (!dragState || dragState.pointerId !== event.pointerId) {
+        return;
+      }
+      if (activePointers.size > 1) {
+        dragState = null;
         return;
       }
       const dx = event.clientX - dragState.x;
@@ -591,14 +647,10 @@ function KlineChartEcharts({ candles, signals }: {
       const span = Math.max(1, dragState.end - dragState.start);
       const shift = -(dx / Math.max(1, chartEl.clientWidth)) * span;
       const nextStart = clampZoomStart(dragState.start + shift, span);
-      chart.dispatchAction({
-        type: "dataZoom",
-        dataZoomIndex: 0,
-        start: nextStart,
-        end: nextStart + span,
-      });
+      scheduleZoom(nextStart, nextStart + span);
     };
     const onPointerEnd = (event: PointerEvent) => {
+      activePointers.delete(event.pointerId);
       if (dragState?.pointerId === event.pointerId) {
         chartEl.releasePointerCapture?.(event.pointerId);
         dragState = null;
@@ -616,6 +668,9 @@ function KlineChartEcharts({ candles, signals }: {
       chartEl.removeEventListener("pointermove", onPointerMove);
       chartEl.removeEventListener("pointerup", onPointerEnd);
       chartEl.removeEventListener("pointercancel", onPointerEnd);
+      if (zoomFrame) {
+        window.cancelAnimationFrame(zoomFrame);
+      }
       observer.disconnect();
       chart.dispose();
     };
@@ -789,7 +844,13 @@ function signalKey(signal: Signal) {
 }
 
 function patternLabel(pattern: Signal["pattern"]) {
-  return pattern === "inverse_head_shoulders" ? "反向头肩顶" : "头肩顶";
+  if (pattern === "inverse_head_shoulders") {
+    return "反向头肩顶";
+  }
+  if (pattern === "head_shoulders_range_top") {
+    return "头部区间型头肩顶";
+  }
+  return "头肩顶";
 }
 
 function calculateChartNeckline(leftNeck: PivotPoint, rightNeck: PivotPoint, currentIndex: number) {
@@ -903,9 +964,9 @@ function fieldLabel(field: string) {
     break_volume_ratio: "跌破放量倍数",
     neckline_break_pct: "颈线跌破幅度",
     max_bars_after_right_shoulder: "右肩后观察K线数",
-    max_signal_age_bars: "仅返回最近N根内信号",
+    max_signal_age_bars: "最近信号窗口（0为全部）",
     min_score_to_alert: "最低提醒评分",
-    enable_right_shoulder_volume_weak: "启用右肩缩量",
+    enable_right_shoulder_volume_weak: "启用右肩缩量硬过滤",
     enable_break_volume_confirm: "启用跌破放量确认",
     enable_ma_filter: "启用均线过滤",
     require_ma_bearish_alignment: "要求均线空头排列",
@@ -918,7 +979,9 @@ function fieldLabel(field: string) {
 function translateResultText(text: string) {
   return text
     .replace("head-and-shoulders top confirmed", "头肩顶确认")
+    .replace("head-and-shoulders range top confirmed", "头部区间型头肩顶确认")
     .replace("suspected head-and-shoulders top", "疑似头肩顶")
+    .replace("suspected head-and-shoulders range top", "疑似头部区间型头肩顶")
     .replace("waiting for neckline break", "等待跌破颈线确认")
     .replace("score", "评分")
     .replace("Score", "评分")

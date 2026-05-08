@@ -27,7 +27,7 @@ export type Neckline = {
 export type Signal = {
   symbol: string;
   timeframe: string;
-  pattern: "head_shoulders_top" | "inverse_head_shoulders";
+  pattern: "head_shoulders_top" | "head_shoulders_range_top" | "inverse_head_shoulders";
   left_shoulder: PivotPoint;
   left_neck: PivotPoint;
   head: PivotPoint;
