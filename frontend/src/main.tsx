@@ -4,8 +4,8 @@ import * as echarts from "echarts/core";
 import { BarChart, CandlestickChart, LineChart } from "echarts/charts";
 import { AxisPointerComponent, DataZoomComponent, GridComponent, LegendComponent, MarkLineComponent, MarkPointComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { getDefaultConfig, getMarketSettings, getMarketSymbols, nextSimulationBar, resetSimulation, scanCsv, scanMarket, scanSample, startSimulation } from "./api";
-import type { Candle, MarketSettings, MarketSymbol, Neckline, PivotPoint, ScanResponse, Signal, SimulationStartResponse } from "./types";
+import { getDefaultConfig, getMarketSettings, scanMarket } from "./api";
+import type { Candle, MarketSettings, Neckline, PivotPoint, ScanResponse, Signal } from "./types";
 import "./styles.css";
 
 echarts.use([
@@ -49,21 +49,6 @@ const booleanFields = [
   "enable_macd_divergence",
 ];
 
-const symbolTypes = [
-  { value: "DCE", label: "大商所" },
-  { value: "SHFE", label: "上期所" },
-  { value: "CZCE", label: "郑商所" },
-  { value: "CFFEX", label: "中金所" },
-  { value: "FUTURES", label: "期货" },
-  { value: "FOREX", label: "外汇" },
-  { value: "ENERGY", label: "能源" },
-  { value: "METAL", label: "金属" },
-  { value: "CRYPTO", label: "加密货币" },
-  { value: "STOCK_US", label: "美股" },
-  { value: "STOCK_CN", label: "A股" },
-  { value: "STOCK_HK", label: "港股" },
-];
-
 const MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache_v6";
 const LEGACY_MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache";
 const MARKET_SCAN_CACHE_VERSION = 6;
@@ -86,26 +71,17 @@ type CachedMarketScan = {
 function App() {
   const [symbol, setSymbol] = useState("c0");
   const [timeframe, setTimeframe] = useState("5m");
-  const [file, setFile] = useState<File | null>(null);
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [result, setResult] = useState<ScanResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [simulation, setSimulation] = useState<SimulationStartResponse | null>(null);
-  const [running, setRunning] = useState(false);
-  const [intervalMs, setIntervalMs] = useState(900);
-  const [barsPerTick, setBarsPerTick] = useState(1);
   const [cursor, setCursor] = useState(0);
   const [latestBar, setLatestBar] = useState<Candle | null>(null);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [marketSettings, setMarketSettings] = useState<MarketSettings | null>(null);
   const [marketLimit, setMarketLimit] = useState(420);
   const [marketLastFetch, setMarketLastFetch] = useState<string | null>(null);
-  const [symbolType, setSymbolType] = useState("FUTURES");
-  const [symbolQuery, setSymbolQuery] = useState("");
-  const [marketSymbols, setMarketSymbols] = useState<MarketSymbol[]>([]);
-  const [symbolsLoading, setSymbolsLoading] = useState(false);
-  const [cachedMarketScan, setCachedMarketScan] = useState<CachedMarketScan | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
   const seenSignalKeys = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -121,100 +97,16 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const cached = readCachedMarketScan();
-    if (cached) {
-      setCachedMarketScan(cached);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!running || !simulation) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      void stepSimulation();
-    }, intervalMs);
-    return () => window.clearInterval(timer);
-  }, [running, simulation, intervalMs, barsPerTick]);
-
-  async function runScan() {
-    if (!file) {
-      setError("请先选择 CSV 文件。");
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await scanCsv({ file, symbol, timeframe, overrides: config });
-      setResult(response);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "扫描失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function createSimulation() {
-    if (!file) {
-      setError("请先选择 CSV 文件。");
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    setRunning(false);
-    seenSignalKeys.current.clear();
-    setAlerts([]);
-    setCursor(0);
-    setLatestBar(null);
-    try {
-      const session = await startSimulation({ file, symbol, timeframe, overrides: config });
-      setSimulation(session);
-      setResult(null);
-      await requestBrowserNotification();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "启动模拟失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function stepSimulation() {
-    if (!simulation) {
-      return;
-    }
-    try {
-      const response = await nextSimulationBar(simulation.session_id, barsPerTick);
-      setCursor(response.cursor);
-      setLatestBar(response.latest_bar);
-      setResult(response.scan);
-      pushNewAlerts(response.scan.signals);
-      if (response.done) {
-        setRunning(false);
-      }
-    } catch (err) {
-      setRunning(false);
-      setError(err instanceof Error ? err.message : "模拟推进失败");
-    }
-  }
-
-  async function resetCurrentSimulation() {
-    if (!simulation) {
-      return;
-    }
-    setRunning(false);
-    await resetSimulation(simulation.session_id);
-    seenSignalKeys.current.clear();
-    setAlerts([]);
-    setCursor(0);
-    setLatestBar(null);
-    setResult(null);
-  }
+    document.body.classList.toggle("modal-open", configOpen);
+    return () => document.body.classList.remove("modal-open");
+  }, [configOpen]);
 
   async function pollMarket() {
     setLoading(true);
     setError(null);
     try {
-      const response = await scanMarket(symbol, timeframe, marketLimit);
+      await requestBrowserNotification();
+      const response = await scanMarket(symbol, timeframe, marketLimit, config);
       applyScanResponse(response);
       saveMarketScanCache(response, marketLimit);
       setMarketLastFetch(`接口 ${new Date().toLocaleTimeString()}`);
@@ -239,59 +131,10 @@ function App() {
       limit,
       result: response,
     };
-    setCachedMarketScan(cached);
     try {
       window.localStorage.setItem(MARKET_SCAN_CACHE_KEY, JSON.stringify(cached));
     } catch {
       setError("查询结果已显示，但浏览器缓存写入失败。");
-    }
-  }
-
-  function loadCachedMarketScan() {
-    const cached = cachedMarketScan ?? readCachedMarketScan();
-    if (!cached) {
-      setError("页面缓存里还没有实盘查询结果。");
-      return;
-    }
-    setError(null);
-    setCachedMarketScan(cached);
-    setSymbol(cached.result.symbol);
-    setTimeframe(cached.result.timeframe);
-    setMarketLimit(cached.limit);
-    applyScanResponse(cached.result);
-    setMarketLastFetch(`缓存 ${formatTime(cached.savedAt)}`);
-    pushNewAlerts(cached.result.signals);
-  }
-
-  async function loadMarketSymbols() {
-    setSymbolsLoading(true);
-    setError(null);
-    try {
-      const response = await getMarketSymbols(symbolType);
-      setMarketSymbols(response.symbols);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "产品列表查询失败");
-    } finally {
-      setSymbolsLoading(false);
-    }
-  }
-
-  async function loadSampleData() {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await scanSample("TEST", "5m");
-      setSymbol(response.symbol);
-      setTimeframe(response.timeframe);
-      setResult(response);
-      setCursor(response.rows);
-      setLatestBar(response.chart.candles[response.chart.candles.length - 1] ?? null);
-      setMarketLastFetch("测试数据");
-      pushNewAlerts(response.signals);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "测试数据加载失败");
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -321,66 +164,23 @@ function App() {
 
   const confirmed = result?.signals.filter((signal) => signal.confirmed) ?? [];
   const suspected = result?.signals.filter((signal) => !signal.confirmed) ?? [];
-  const visibleMarketSymbols = marketSymbols
-    .filter((item) => symbolMatches(item, symbolQuery))
-    .slice(0, 80);
-  const totalRows = simulation?.total_rows ?? result?.rows ?? 0;
+  const totalRows = result?.rows ?? 0;
   const progress = totalRows > 0 ? Math.round((cursor / totalRows) * 100) : 0;
 
   return (
     <main className="app-shell">
-      <section className="hero-panel">
-        <div>
-          <p className="eyebrow">CSV 模拟实盘</p>
-          <h1>头肩顶实时监控工作台</h1>
-          <p className="hero-copy">
-            上传历史K线后按时间逐根回放，模拟实盘不断扫描头肩顶结构；出现疑似或确认信号时，会写入信号流并触发浏览器通知。
-          </p>
-        </div>
-        <div className="hero-stats">
-          <Metric label="已接收K线" value={simulation ? `${cursor}/${simulation.total_rows}` : result?.rows ?? "-"} />
-          <Metric label="信号总数" value={result?.signals.length ?? "-"} />
-          <Metric label="确认信号" value={confirmed.length || "-"} tone="hot" />
-        </div>
-      </section>
 
       <section className="workspace">
         <aside className="control-panel">
-          <h2>数据输入</h2>
-          <label>
-            合约代码
-            <input value={symbol} onChange={(event) => setSymbol(event.target.value)} />
-          </label>
-          <label>
-            周期
-            <select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}>
-              <option value="1m">1m</option>
-              <option value="5m">5m</option>
-              <option value="15m">15m</option>
-              <option value="30m">30m</option>
-              <option value="1h">1h</option>
-              <option value="1d">1d</option>
-            </select>
-          </label>
-          <label className="file-drop">
-            <span>{file ? file.name : "选择 CSV 文件"}</span>
-            <input type="file" accept=".csv,text/csv" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-          </label>
-          <button disabled={loading} onClick={runScan}>{loading ? "处理中..." : "一次性扫描"}</button>
-          <button className="secondary-button" disabled={loading} onClick={() => void loadSampleData()}>使用测试数据</button>
-          {error && <div className="error-box">{error}</div>}
-
-          <h2>模拟实盘</h2>
-          <div className="sim-actions">
-            <button disabled={loading || !file} onClick={createSimulation}>上传并创建模拟</button>
-            <button disabled={!simulation || loading} onClick={() => setRunning((value) => !value)}>
-              {running ? "暂停回放" : "开始回放"}
+          <div className="control-head">
+            <div>
+              <p className="eyebrow">Live Scan</p>
+              <h2>实盘操作</h2>
+            </div>
+            <button className="icon-button" type="button" onClick={() => setConfigOpen(true)} aria-label="打开配置">
+              配置
             </button>
-            <button disabled={!simulation || loading} onClick={() => void stepSimulation()}>推进一批K线</button>
-            <button disabled={!simulation || loading} onClick={() => void resetCurrentSimulation()}>重置回放</button>
           </div>
-
-          <h2>实盘接口监控</h2>
           <div className="progress-box">
             <div className="progress-meta">
               <span>接口地址</span>
@@ -389,98 +189,36 @@ function App() {
             <p>{marketSettings?.provider ?? "行情源"}：{marketSettings?.base_url ?? "未知"}，参数 {marketSettings?.market_module ?? "period"}。未配置时，请先设置对应密钥。</p>
             {marketLastFetch && <p>最近拉取：{marketLastFetch}</p>}
           </div>
-          <div className="symbol-browser">
-            <div className="symbol-browser-head">
-              <h3>产品列表</h3>
-              <span>{marketSymbols.length || "-"} 项</span>
-            </div>
+          <div className="market-form">
             <label>
-              产品类型
-              <select value={symbolType} onChange={(event) => setSymbolType(event.target.value)}>
-                {symbolTypes.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}
+              合约代码
+              <input value={symbol} onChange={(event) => setSymbol(event.target.value)} placeholder="例如 c0 / rb2405" />
+            </label>
+            <label>
+              周期
+              <select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}>
+                <option value="1m">1m</option>
+                <option value="5m">5m</option>
+                <option value="15m">15m</option>
+                <option value="30m">30m</option>
+                <option value="1h">1h</option>
+                <option value="1d">1d</option>
               </select>
             </label>
             <label>
-              搜索产品
-              <input
-                value={symbolQuery}
-                onChange={(event) => setSymbolQuery(event.target.value)}
-                placeholder="代码 / 中文名 / 英文名"
-              />
+              每次拉取K线数量
+              <input type="number" min={30} max={500} value={marketLimit} onChange={(event) => setMarketLimit(Number(event.target.value))} />
             </label>
-            <button className="secondary-button compact-button" disabled={symbolsLoading} onClick={() => void loadMarketSymbols()}>
-              {symbolsLoading ? "加载中..." : "查询产品列表"}
-            </button>
-            {marketSymbols.length > 0 && (
-              <div className="symbol-list">
-                {visibleMarketSymbols.map((item) => (
-                  <button
-                    type="button"
-                    className={`symbol-option ${item.symbol === symbol ? "selected" : ""}`}
-                    key={item.symbol}
-                    onClick={() => setSymbol(item.symbol)}
-                  >
-                    <strong>{item.symbol}</strong>
-                    <span>{displaySymbolName(item)}</span>
-                  </button>
-                ))}
-                {visibleMarketSymbols.length === 0 && <p className="symbol-empty">没有匹配的产品</p>}
-              </div>
-            )}
           </div>
-          <label>
-            每次拉取K线数量
-            <input type="number" min={30} max={500} value={marketLimit} onChange={(event) => setMarketLimit(Number(event.target.value))} />
-          </label>
-          <button disabled={loading} onClick={() => void pollMarket()}>{loading ? "拉取中..." : "点击获取一次实盘K线并扫描1"}</button>
-          <button className="secondary-button" disabled={!cachedMarketScan} onClick={loadCachedMarketScan}>使用页面缓存结果</button>
-          {cachedMarketScan && (
-            <p className="cache-note">
-              已缓存 {cachedMarketScan.result.symbol} / {cachedMarketScan.result.timeframe} / {cachedMarketScan.result.rows} 根，{formatTime(cachedMarketScan.savedAt)}
-            </p>
-          )}
-          <label>
-            回放间隔（毫秒）
-            <input type="number" min={200} step={100} value={intervalMs} onChange={(event) => setIntervalMs(Number(event.target.value))} />
-          </label>
-          <label>
-            每次推送K线数
-            <input type="number" min={1} max={50} value={barsPerTick} onChange={(event) => setBarsPerTick(Number(event.target.value))} />
-          </label>
+          <button className="primary-action" disabled={loading} onClick={() => void pollMarket()}>{loading ? "拉取中..." : "获取实盘K线并扫描"}</button>
+          {error && <div className="error-box">{error}</div>}
           <div className="progress-box">
             <div className="progress-meta">
-              <span>{simulation ? "模拟会话已创建" : "未创建模拟会话"}</span>
+              <span>{result ? "本次扫描完成" : "等待实盘拉取"}</span>
               <strong>{progress}%</strong>
             </div>
             <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
             {latestBar && <p>最新K线：{formatTime(latestBar.time)}，收盘 {formatPrice(latestBar.close)}，成交量 {latestBar.volume}</p>}
-          </div>
-
-          <h2>关键参数</h2>
-          <div className="config-grid">
-            {numericFields.map((field) => (
-              <label key={field}>
-                {fieldLabel(field)}
-                <input
-                  type="number"
-                  step="0.001"
-                  value={String(config[field] ?? "")}
-                  onChange={(event) => setConfig((prev) => ({ ...prev, [field]: Number(event.target.value) }))}
-                />
-              </label>
-            ))}
-          </div>
-          <div className="switch-list">
-            {booleanFields.map((field) => (
-              <label key={field} className="switch-row">
-                <input
-                  type="checkbox"
-                  checked={Boolean(config[field])}
-                  onChange={(event) => setConfig((prev) => ({ ...prev, [field]: event.target.checked }))}
-                />
-                {fieldLabel(field)}
-              </label>
-            ))}
           </div>
         </aside>
 
@@ -488,7 +226,7 @@ function App() {
           <div className="panel-head">
             <div>
               <h2>实时K线结构</h2>
-              <p>{result ? `${result.start_time} - ${result.end_time}` : "上传 CSV 后可一次性扫描，也可以创建模拟实盘逐根推送。"} </p>
+              <p>{result ? `${result.start_time} - ${result.end_time}` : "输入合约代码和周期后，点击获取实盘K线开始扫描。"} </p>
             </div>
             <span className="badge">{result?.symbol ?? symbol} / {result?.timeframe ?? timeframe}</span>
           </div>
@@ -505,7 +243,7 @@ function App() {
               <span className="badge">{alerts.length} 条</span>
             </div>
             {alerts.length === 0 ? (
-              <p className="empty">暂无发送记录。模拟回放中出现新信号后会显示在这里。</p>
+              <p className="empty">暂无发送记录。实盘扫描中出现新信号后会显示在这里。</p>
             ) : alerts.map((alert) => (
               <article className={`alert-item ${alert.confirmed ? "confirmed" : ""}`} key={alert.key}>
                 <strong>{alert.title}</strong>
@@ -521,6 +259,58 @@ function App() {
           </div>
         </section>
       </section>
+
+      {configOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setConfigOpen(false)}>
+          <section
+            className="config-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="config-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">Strategy</p>
+                <h2 id="config-title">关键参数配置</h2>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setConfigOpen(false)} aria-label="关闭配置">
+                关闭
+              </button>
+            </div>
+            <div className="config-scroll">
+              <div className="config-grid">
+                {numericFields.map((field) => (
+                  <label key={field}>
+                    {fieldLabel(field)}
+                    <input
+                      type="number"
+                      step="0.001"
+                      value={String(config[field] ?? "")}
+                      onChange={(event) => setConfig((prev) => ({ ...prev, [field]: Number(event.target.value) }))}
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="switch-list">
+                {booleanFields.map((field) => (
+                  <label key={field} className="switch-row">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(config[field])}
+                      onChange={(event) => setConfig((prev) => ({ ...prev, [field]: event.target.checked }))}
+                    />
+                    {fieldLabel(field)}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setConfigOpen(false)}>保存配置</button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
@@ -630,6 +420,9 @@ function KlineChartEcharts({ candles, signals }: {
       ];
     });
     const start = candles.length > 160 ? Math.max(0, 100 - (160 / candles.length) * 100) : 0;
+    const chartEl = chartRef.current;
+    let zoomStart = start;
+    let zoomEnd = 100;
 
     chart.setOption({
       backgroundColor: "#07100d",
@@ -703,8 +496,8 @@ function KlineChartEcharts({ candles, signals }: {
         },
       ],
       dataZoom: [
-        { type: "inside", xAxisIndex: [0, 1], start, end: 100, zoomOnMouseWheel: true, moveOnMouseWheel: true, moveOnMouseMove: true },
-        { type: "slider", xAxisIndex: [0, 1], bottom: 6, height: 18, borderColor: "rgba(148,163,184,0.18)", fillerColor: "rgba(121,183,164,0.16)", handleStyle: { color: "#79b7a4" }, textStyle: { color: "#91a39a" } },
+        { type: "inside", xAxisIndex: [0, 1], start, end: 100, zoomOnMouseWheel: true, moveOnMouseWheel: true, moveOnMouseMove: true, preventDefaultMouseMove: true },
+        { type: "slider", xAxisIndex: [0, 1], bottom: 6, height: 18, brushSelect: false, borderColor: "rgba(148,163,184,0.18)", fillerColor: "rgba(121,183,164,0.16)", handleStyle: { color: "#79b7a4" }, textStyle: { color: "#91a39a" } },
       ],
       series: [
         {
@@ -747,9 +540,82 @@ function KlineChartEcharts({ candles, signals }: {
       ],
     });
 
+    chart.on("datazoom", () => {
+      const option = chart.getOption();
+      const dataZoom = Array.isArray(option.dataZoom) ? option.dataZoom[0] as { start?: number; end?: number } : null;
+      zoomStart = Number(dataZoom?.start ?? zoomStart);
+      zoomEnd = Number(dataZoom?.end ?? zoomEnd);
+    });
+
+    let dragState: {
+      pointerId: number;
+      x: number;
+      y: number;
+      start: number;
+      end: number;
+      active: boolean;
+    } | null = null;
+
+    const clampZoomStart = (value: number, span: number) => Math.max(0, Math.min(100 - span, value));
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.pointerType === "mouse" || candles.length <= 1) {
+        return;
+      }
+      dragState = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        start: zoomStart,
+        end: zoomEnd,
+        active: false,
+      };
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      if (!dragState || dragState.pointerId !== event.pointerId) {
+        return;
+      }
+      const dx = event.clientX - dragState.x;
+      const dy = event.clientY - dragState.y;
+      if (!dragState.active) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
+          return;
+        }
+        if (Math.abs(dx) <= Math.abs(dy)) {
+          dragState = null;
+          return;
+        }
+        dragState.active = true;
+        chartEl.setPointerCapture?.(event.pointerId);
+      }
+      event.preventDefault();
+      const span = Math.max(1, dragState.end - dragState.start);
+      const shift = -(dx / Math.max(1, chartEl.clientWidth)) * span;
+      const nextStart = clampZoomStart(dragState.start + shift, span);
+      chart.dispatchAction({
+        type: "dataZoom",
+        dataZoomIndex: 0,
+        start: nextStart,
+        end: nextStart + span,
+      });
+    };
+    const onPointerEnd = (event: PointerEvent) => {
+      if (dragState?.pointerId === event.pointerId) {
+        chartEl.releasePointerCapture?.(event.pointerId);
+        dragState = null;
+      }
+    };
+    chartEl.addEventListener("pointerdown", onPointerDown);
+    chartEl.addEventListener("pointermove", onPointerMove);
+    chartEl.addEventListener("pointerup", onPointerEnd);
+    chartEl.addEventListener("pointercancel", onPointerEnd);
+
     const observer = new ResizeObserver(() => chart.resize());
-    observer.observe(chartRef.current);
+    observer.observe(chartEl);
     return () => {
+      chartEl.removeEventListener("pointerdown", onPointerDown);
+      chartEl.removeEventListener("pointermove", onPointerMove);
+      chartEl.removeEventListener("pointerup", onPointerEnd);
+      chartEl.removeEventListener("pointercancel", onPointerEnd);
       observer.disconnect();
       chart.dispose();
     };
@@ -920,20 +786,6 @@ function signalKey(signal: Signal) {
     signal.right_shoulder.index,
     signal.break_time ?? "未跌破",
   ].join("-");
-}
-
-function displaySymbolName(item: MarketSymbol) {
-  return item.name_cn || item.name_en || item.name_hk || "未命名产品";
-}
-
-function symbolMatches(item: MarketSymbol, query: string) {
-  const keyword = query.trim().toLowerCase();
-  if (!keyword) {
-    return true;
-  }
-  return [item.symbol, item.name_cn, item.name_hk, item.name_en]
-    .filter(Boolean)
-    .some((value) => String(value).toLowerCase().includes(keyword));
 }
 
 function patternLabel(pattern: Signal["pattern"]) {

@@ -110,10 +110,18 @@ async def market_symbols(symbol_type: str = "FUTURES", symbols: str | None = Non
 
 
 @app.get("/api/market/scan", response_model=ScanResponse)
-async def scan_market(symbol: str = "rb2405", timeframe: str = "5m", limit: int = 120) -> ScanResponse:
+async def scan_market(
+    symbol: str = "rb2405",
+    timeframe: str = "5m",
+    limit: int = 120,
+    config_overrides: str | None = None,
+) -> ScanResponse:
     try:
+        overrides = parse_overrides(config_overrides)
         df = await fetch_kline_from_market(symbol=symbol, period=timeframe, limit=limit)
-        return build_scan_response(df, symbol=symbol, timeframe=timeframe, overrides=None)
+        return build_scan_response(df, symbol=symbol, timeframe=timeframe, overrides=overrides)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except MarketApiError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

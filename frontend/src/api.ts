@@ -96,11 +96,19 @@ export async function getMarketSymbols(symbolType: string, symbols?: string): Pr
   return response.json();
 }
 
-export async function scanMarket(symbol: string, timeframe: string, limit: number): Promise<ScanResponse> {
+export async function scanMarket(
+  symbol: string,
+  timeframe: string,
+  limit: number,
+  overrides?: Record<string, unknown>,
+): Promise<ScanResponse> {
   const url = new URL("/api/market/scan", API_BASE);
   url.searchParams.set("symbol", symbol);
   url.searchParams.set("timeframe", timeframe);
   url.searchParams.set("limit", String(limit));
+  if (overrides && Object.keys(overrides).length > 0) {
+    url.searchParams.set("config_overrides", JSON.stringify(overrides));
+  }
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(await readError(response));
