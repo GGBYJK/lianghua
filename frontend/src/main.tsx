@@ -432,7 +432,7 @@ function App() {
             每次拉取K线数量
             <input type="number" min={30} max={500} value={marketLimit} onChange={(event) => setMarketLimit(Number(event.target.value))} />
           </label>
-          <button disabled={loading} onClick={() => void pollMarket()}>{loading ? "拉取中..." : "点击获取一次实盘K线并扫描"}</button>
+          <button disabled={loading} onClick={() => void pollMarket()}>{loading ? "拉取中..." : "点击获取一次实盘K线并扫描1"}</button>
           <button className="secondary-button" disabled={!cachedMarketScan} onClick={loadCachedMarketScan}>使用页面缓存结果</button>
           {cachedMarketScan && (
             <p className="cache-note">
