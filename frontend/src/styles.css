@@ -260,6 +260,78 @@ button:disabled {
   gap: 0;
 }
 
+.symbol-combobox {
+  position: relative;
+  display: grid;
+  gap: 7px;
+  margin-bottom: 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.symbol-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 46px;
+  gap: 8px;
+}
+
+.symbol-picker-toggle {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: rgba(121, 183, 164, 0.1);
+  color: var(--ink);
+  padding: 0;
+  font-size: 18px;
+}
+
+.symbol-picker {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid rgba(121, 183, 164, 0.32);
+  border-radius: 14px;
+  background: rgba(12, 20, 18, 0.98);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+  padding: 6px;
+}
+
+.symbol-picker-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  padding: 10px;
+  text-align: left;
+  font-weight: 600;
+}
+
+.symbol-picker-option:hover,
+.symbol-picker-option:focus {
+  background: rgba(121, 183, 164, 0.13);
+  transform: none;
+  filter: none;
+}
+
+.symbol-picker-option strong,
+.symbol-picker-option span {
+  overflow-wrap: anywhere;
+}
+
+.symbol-picker-option span {
+  color: var(--warn);
+  font-size: 12px;
+}
+
 .config-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

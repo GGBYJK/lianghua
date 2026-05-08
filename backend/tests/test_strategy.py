@@ -25,7 +25,6 @@ from app.strategy import (
     calculate_neckline_price,
     find_pivots,
     scan_head_shoulders,
-    scan_head_shoulders_range_top,
     scan_head_shoulders_top,
     scan_inverse_head_shoulders,
 )
@@ -56,14 +55,7 @@ def test_csv_aliases() -> None:
 def test_config_merge_override() -> None:
     config = load_head_shoulder_config("rb2405", "5m", {"min_score_to_alert": 65})
     assert config.min_head_above_shoulder_pct == 0.025
-    assert config.max_signal_age_bars == 0
     assert config.min_score_to_alert == 65
-
-
-def test_1h_config_allows_head_range_without_volume_hard_filter() -> None:
-    config = load_head_shoulder_config("hc2610", "1h")
-    assert config.min_head_above_shoulder_pct == 0.003
-    assert config.enable_right_shoulder_volume_weak is False
 
 
 def test_infoway_kline_payload_normalizes_to_dataframe() -> None:
@@ -159,42 +151,6 @@ def test_sample_scan_finds_confirmed_signal() -> None:
     )
     signals = scan_head_shoulders_top(df, "rb2405", "5m", config)
     assert any(signal.confirmed for signal in signals)
-
-
-def test_head_range_top_finds_confirmed_signal() -> None:
-    df = pd.DataFrame({
-        "datetime": pd.date_range("2026-05-08 09:00:00", periods=11, freq="5min"),
-        "open": [94, 96, 94, 108, 106, 110, 95, 94, 93, 90, 86],
-        "high": [96, 100, 95, 112, 107, 113, 96, 98, 94, 91, 87],
-        "low": [93, 95, 90, 106, 104, 108, 89, 93, 91, 85, 84],
-        "close": [95, 99, 91, 111, 105, 112, 90, 97, 92, 86, 85],
-        "volume": [100, 120, 100, 220, 180, 210, 120, 80, 100, 300, 260],
-    })
-    config = HeadShoulderTopConfig(
-        pivot_left=1,
-        pivot_right=1,
-        min_head_above_shoulder_pct=0.02,
-        max_shoulder_diff_pct=0.05,
-        max_neck_diff_pct=0.03,
-        min_right_leg_to_left_leg_ratio=0.5,
-        max_right_leg_to_left_leg_ratio=2.5,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.5,
-        max_head_to_right_neck_to_left_neck_to_head_ratio=2.5,
-        volume_compare_window=1,
-        right_shoulder_volume_ratio=0.8,
-        break_volume_window=2,
-        break_volume_ratio=1.1,
-        enable_ma_filter=False,
-        enable_macd_divergence=False,
-        min_score_to_alert=70,
-    )
-
-    signals = scan_head_shoulders_range_top(df, "c0", "5m", config)
-
-    confirmed = [signal for signal in signals if signal.confirmed]
-    assert confirmed
-    assert confirmed[0].pattern == "head_shoulders_range_top"
-    assert confirmed[0].score == 100
 
 
 def test_mirrored_sample_finds_confirmed_inverse_signal() -> None:

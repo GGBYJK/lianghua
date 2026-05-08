@@ -49,6 +49,25 @@ const booleanFields = [
   "enable_macd_divergence",
 ];
 
+const futuresSymbolOptions = [
+  { symbol: "SR609", name: "白糖609" },
+  { symbol: "SA609", name: "纯碱609" },
+  { symbol: "RM609", name: "菜粕609" },
+  { symbol: "FG609", name: "玻璃609" },
+  { symbol: "CF609", name: "棉花609" },
+  { symbol: "v2609", name: "PVC2609" },
+  { symbol: "m2609", name: "豆粕2609" },
+  { symbol: "jm2609", name: "焦煤2609" },
+  { symbol: "cs2607", name: "淀粉2607" },
+  { symbol: "c2607", name: "玉米2607" },
+  { symbol: "a2607", name: "豆一2607" },
+  { symbol: "sp2609", name: "纸浆2609" },
+  { symbol: "hc2610", name: "热卷2610" },
+  { symbol: "jd2606", name: "鸡蛋2606" },
+  { symbol: "SF607", name: "硅铁607" },
+  { symbol: "UR609", name: "尿素609" },
+];
+
 const MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache_v6";
 const LEGACY_MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache";
 const MARKET_SCAN_CACHE_VERSION = 6;
@@ -82,6 +101,7 @@ function App() {
   const [marketLimit, setMarketLimit] = useState(420);
   const [marketLastFetch, setMarketLastFetch] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
+  const [symbolPickerOpen, setSymbolPickerOpen] = useState(false);
   const seenSignalKeys = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -164,6 +184,13 @@ function App() {
 
   const confirmed = result?.signals.filter((signal) => signal.confirmed) ?? [];
   const suspected = result?.signals.filter((signal) => !signal.confirmed) ?? [];
+  const visibleFuturesSymbolOptions = futuresSymbolOptions.filter((item) => {
+    const keyword = symbol.trim().toLowerCase();
+    if (!keyword) {
+      return true;
+    }
+    return item.symbol.toLowerCase().includes(keyword) || item.name.toLowerCase().includes(keyword);
+  });
   const totalRows = result?.rows ?? 0;
   const progress = totalRows > 0 ? Math.round((cursor / totalRows) * 100) : 0;
 
@@ -190,10 +217,49 @@ function App() {
             {marketLastFetch && <p>最近拉取：{marketLastFetch}</p>}
           </div>
           <div className="market-form">
-            <label>
-              合约代码
-              <input value={symbol} onChange={(event) => setSymbol(event.target.value)} placeholder="例如 c0 / rb2405" />
-            </label>
+            <div className="symbol-combobox">
+              <label htmlFor="symbol-input">合约代码</label>
+              <div className="symbol-input-row">
+                <input
+                  id="symbol-input"
+                  value={symbol}
+                  onChange={(event) => {
+                    setSymbol(event.target.value);
+                    setSymbolPickerOpen(true);
+                  }}
+                  onFocus={() => setSymbolPickerOpen(true)}
+                  placeholder="选择合约或手动输入，例如 hc2610"
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  className="symbol-picker-toggle"
+                  onClick={() => setSymbolPickerOpen((value) => !value)}
+                  aria-label="展开合约列表"
+                >
+                  ▾
+                </button>
+              </div>
+              {symbolPickerOpen && (
+                <div className="symbol-picker" role="listbox">
+                  {(visibleFuturesSymbolOptions.length > 0 ? visibleFuturesSymbolOptions : futuresSymbolOptions).map((item) => (
+                    <button
+                      type="button"
+                      className="symbol-picker-option"
+                      key={item.symbol}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        setSymbol(item.symbol);
+                        setSymbolPickerOpen(false);
+                      }}
+                    >
+                      <strong>{item.name}</strong>
+                      <span>{item.symbol}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <label>
               周期
               <select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}>
@@ -847,9 +913,6 @@ function patternLabel(pattern: Signal["pattern"]) {
   if (pattern === "inverse_head_shoulders") {
     return "反向头肩顶";
   }
-  if (pattern === "head_shoulders_range_top") {
-    return "头部区间型头肩顶";
-  }
   return "头肩顶";
 }
 
@@ -964,9 +1027,9 @@ function fieldLabel(field: string) {
     break_volume_ratio: "跌破放量倍数",
     neckline_break_pct: "颈线跌破幅度",
     max_bars_after_right_shoulder: "右肩后观察K线数",
-    max_signal_age_bars: "最近信号窗口（0为全部）",
+    max_signal_age_bars: "仅返回最近N根内信号",
     min_score_to_alert: "最低提醒评分",
-    enable_right_shoulder_volume_weak: "启用右肩缩量硬过滤",
+    enable_right_shoulder_volume_weak: "启用右肩缩量",
     enable_break_volume_confirm: "启用跌破放量确认",
     enable_ma_filter: "启用均线过滤",
     require_ma_bearish_alignment: "要求均线空头排列",
@@ -979,9 +1042,7 @@ function fieldLabel(field: string) {
 function translateResultText(text: string) {
   return text
     .replace("head-and-shoulders top confirmed", "头肩顶确认")
-    .replace("head-and-shoulders range top confirmed", "头部区间型头肩顶确认")
     .replace("suspected head-and-shoulders top", "疑似头肩顶")
-    .replace("suspected head-and-shoulders range top", "疑似头部区间型头肩顶")
     .replace("waiting for neckline break", "等待跌破颈线确认")
     .replace("score", "评分")
     .replace("Score", "评分")

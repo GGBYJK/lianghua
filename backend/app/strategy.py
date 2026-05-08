@@ -254,125 +254,6 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
     ], 60
 
 
-def iter_head_range_candidates(
-    pivots: list[PivotPoint],
-    config: HeadShoulderTopConfig,
-) -> list[tuple[PivotPoint, PivotPoint, list[PivotPoint], PivotPoint, PivotPoint]]:
-    candidates: list[tuple[PivotPoint, PivotPoint, list[PivotPoint], PivotPoint, PivotPoint]] = []
-    seen: set[tuple[int, int, int, int, int]] = set()
-
-    for left_shoulder_index in range(len(pivots) - 6):
-        left_shoulder = pivots[left_shoulder_index]
-        left_neck = pivots[left_shoulder_index + 1]
-        if left_shoulder.kind != "high" or left_neck.kind != "low":
-            continue
-
-        for right_neck_index in range(left_shoulder_index + 5, len(pivots) - 1):
-            right_neck = pivots[right_neck_index]
-            if right_neck.kind != "low" or pivots[right_neck_index + 1].kind != "high":
-                continue
-
-            right_shoulder_group: list[PivotPoint] = []
-            for pivot in pivots[right_neck_index + 1 :]:
-                if pivot.kind != "high":
-                    break
-                right_shoulder_group.append(pivot)
-            if not right_shoulder_group:
-                continue
-
-            right_shoulder = right_shoulder_group[-1]
-            min_required_head = max(left_shoulder.price, right_shoulder.price) * (1 + config.min_head_above_shoulder_pct)
-            head_pivots = [
-                pivot for pivot in pivots[left_shoulder_index + 2 : right_neck_index]
-                if pivot.kind == "high"
-                and pivot.price >= min_required_head
-            ]
-            if len(head_pivots) < 2:
-                continue
-
-            key = (
-                left_shoulder.index,
-                left_neck.index,
-                head_pivots[0].index,
-                right_neck.index,
-                right_shoulder.index,
-            )
-            if key in seen:
-                continue
-            seen.add(key)
-            candidates.append((left_shoulder, left_neck, head_pivots, right_neck, right_shoulder))
-
-    return candidates
-
-
-def validate_head_range_structure(
-    left_shoulder: PivotPoint,
-    left_neck: PivotPoint,
-    head_pivots: list[PivotPoint],
-    right_neck: PivotPoint,
-    right_shoulder: PivotPoint,
-    config: HeadShoulderTopConfig,
-) -> tuple[bool, list[str], int]:
-    if len(head_pivots) < 2:
-        return False, ["头部区间高点数量不足"], 0
-
-    head_low = min(point.price for point in head_pivots)
-    head_high = max(point.price for point in head_pivots)
-    min_required_head = max(left_shoulder.price, right_shoulder.price) * (1 + config.min_head_above_shoulder_pct)
-    if head_low < min_required_head:
-        return False, [f"头部区间最低高点不够明显，要求至少高于肩部 {config.min_head_above_shoulder_pct * 100:.2f}%"], 0
-
-    shoulder_diff = abs(left_shoulder.price - right_shoulder.price) / max(left_shoulder.price, right_shoulder.price)
-    if shoulder_diff > config.max_shoulder_diff_pct:
-        return False, [f"左右肩差异过大，当前 {shoulder_diff * 100:.2f}%"], 0
-
-    neck_diff = abs(left_neck.price - right_neck.price) / max(left_neck.price, right_neck.price)
-    if neck_diff > config.max_neck_diff_pct:
-        return False, [f"两个颈线低点差异过大，当前 {neck_diff * 100:.2f}%"], 0
-
-    if right_shoulder.price < left_shoulder.price * config.min_right_shoulder_ratio_to_left:
-        return False, ["右肩过低，更像直接下跌，不像头部区间型头肩顶"], 0
-
-    if right_shoulder.price >= head_low:
-        return False, ["右肩进入头部区间，头部区间型头肩顶结构不成立"], 0
-
-    first_head = min(head_pivots, key=lambda point: point.index)
-    last_head = max(head_pivots, key=lambda point: point.index)
-    left_leg_bars = max(1, left_neck.index - left_shoulder.index)
-    right_leg_bars = max(1, right_shoulder.index - right_neck.index)
-    leg_ratio = right_leg_bars / left_leg_bars
-    if leg_ratio < config.min_right_leg_to_left_leg_ratio or leg_ratio > config.max_right_leg_to_left_leg_ratio:
-        return False, [
-            f"右颈到右肩K线数量不匹配，当前为左肩到左颈的 {leg_ratio:.2f} 倍，"
-            f"要求 {config.min_right_leg_to_left_leg_ratio:.2f}-{config.max_right_leg_to_left_leg_ratio:.2f} 倍"
-        ], 0
-
-    left_neck_to_head_bars = max(1, first_head.index - left_neck.index)
-    head_to_right_neck_bars = max(1, right_neck.index - last_head.index)
-    neck_head_ratio = head_to_right_neck_bars / left_neck_to_head_bars
-    if (
-        neck_head_ratio < config.min_head_to_right_neck_to_left_neck_to_head_ratio
-        or neck_head_ratio > config.max_head_to_right_neck_to_left_neck_to_head_ratio
-    ):
-        return False, [
-            f"头部区间到右颈K线数量不匹配，当前为左颈到头部区间的 {neck_head_ratio:.2f} 倍，"
-            f"要求 {config.min_head_to_right_neck_to_left_neck_to_head_ratio:.2f}-"
-            f"{config.max_head_to_right_neck_to_left_neck_to_head_ratio:.2f} 倍"
-        ], 0
-
-    range_quality = (head_high - head_low) / max(head_high, 1)
-    return True, [
-        f"头部区间最低高点高于左右肩，区间高点数 {len(head_pivots)}",
-        f"头部区间高低差 {range_quality * 100:.2f}%",
-        f"左右肩高度接近，差异 {shoulder_diff * 100:.2f}%",
-        f"两个颈线低点接近，差异 {neck_diff * 100:.2f}%",
-        f"右颈到右肩K线数量为左肩到左颈的 {leg_ratio:.2f} 倍",
-        f"头部区间到右颈K线数量为左颈到头部区间的 {neck_head_ratio:.2f} 倍",
-        "右肩没有过度走弱",
-        "右肩未进入头部区间",
-    ], 70
-
-
 def validate_inverse_head_shoulders_structure(
     points: list[PivotPoint],
     config: HeadShoulderTopConfig,
@@ -454,32 +335,6 @@ def check_right_shoulder_volume_weak(
     return False, f"右肩成交量未明显减弱，右肩/头部量能比 {ratio:.2f}", 0
 
 
-def check_right_shoulder_volume_weak_against_head_range(
-    df: pd.DataFrame,
-    head_pivots: list[PivotPoint],
-    right_shoulder: PivotPoint,
-    config: HeadShoulderTopConfig,
-) -> tuple[bool, str, int]:
-    if not config.enable_right_shoulder_volume_weak:
-        return True, "未启用右肩缩量过滤", 0
-    if not head_pivots:
-        return False, "头部区间为空", 0
-    window = config.volume_compare_window
-    start = max(0, min(point.index for point in head_pivots) - window)
-    end = min(len(df) - 1, max(point.index for point in head_pivots) + window)
-    head_volume = df.loc[start:end, "volume"].mean()
-    right_volume = df.loc[
-        max(0, right_shoulder.index - window) : min(len(df) - 1, right_shoulder.index + window),
-        "volume",
-    ].mean()
-    if head_volume <= 0:
-        return False, "头部区间成交量异常", 0
-    ratio = right_volume / head_volume
-    if ratio <= config.right_shoulder_volume_ratio:
-        return True, f"右肩成交量减弱，右肩/头部区间平均量能比 {ratio:.2f}", 15
-    return False, f"右肩成交量未明显减弱，右肩/头部区间平均量能比 {ratio:.2f}", 0
-
-
 def check_ma_bearish_filter(df: pd.DataFrame, index: int, config: HeadShoulderTopConfig) -> tuple[bool, str, int]:
     if not config.enable_ma_filter:
         return True, "未启用均线过滤", 0
@@ -551,30 +406,6 @@ def check_macd_top_divergence(
     if head_macd < left_macd:
         return True, f"出现 MACD 顶背离：头部价格创新高，但{macd_name}降低", 15
     return False, f"未出现 MACD 顶背离：头部{macd_name}未降低", 0
-
-
-def check_macd_head_range_top_divergence(
-    df: pd.DataFrame,
-    left_shoulder: PivotPoint,
-    head_pivots: list[PivotPoint],
-    config: HeadShoulderTopConfig,
-) -> tuple[bool, str, int]:
-    if not config.enable_macd_divergence:
-        return True, "未启用 MACD 顶背离过滤", 0
-    if not head_pivots:
-        return False, "头部区间为空，无法判断 MACD 顶背离", 0
-    head_high = max(head_pivots, key=lambda point: point.price)
-    if head_high.price <= left_shoulder.price * (1 + config.macd_price_new_high_pct):
-        return False, "头部区间最高价没有形成明显新高，不满足 MACD 顶背离前提", 0
-    macd_col = "macd_hist" if config.use_macd_hist_for_divergence else "macd_dif"
-    macd_name = "MACD柱" if config.use_macd_hist_for_divergence else "DIF"
-    left_macd = df.loc[left_shoulder.index, macd_col]
-    head_macd = df.loc[head_high.index, macd_col]
-    if pd.isna(left_macd) or pd.isna(head_macd):
-        return False, "MACD 数据不足", 0
-    if head_macd < left_macd:
-        return True, f"出现 MACD 顶背离：头部区间最高价创新高，但最高价对应{macd_name}降低", 15
-    return False, f"未出现 MACD 顶背离：头部区间最高价对应{macd_name}未降低", 0
 
 
 def check_macd_bottom_divergence(
@@ -670,10 +501,6 @@ def check_neckline_break_up(
     return False, None, None, None, "尚未有效突破颈线", 0
 
 
-def cap_score(score: int) -> int:
-    return min(score, 100)
-
-
 def scan_head_shoulders_top(
     df: pd.DataFrame,
     symbol: str,
@@ -716,9 +543,9 @@ def scan_head_shoulders_top(
                 right_shoulder=p5,
                 neckline_price=neckline_price,
                 confirmed=False,
-                score=cap_score(total_score),
+                score=total_score,
                 reasons=reasons + [reason],
-                message=f"{symbol} {timeframe} 疑似头肩顶，等待跌破颈线确认，当前评分 {cap_score(total_score)}",
+                message=f"{symbol} {timeframe} 疑似头肩顶，等待跌破颈线确认，当前评分 {total_score}",
             ))
             continue
 
@@ -731,7 +558,7 @@ def scan_head_shoulders_top(
         reasons.append(reason)
         total_score += score
 
-        if config.enable_score and cap_score(total_score) < config.min_score_to_alert:
+        if config.enable_score and total_score < config.min_score_to_alert:
             continue
 
         neckline_price = calculate_neckline_price(p2, p4, break_index)
@@ -746,111 +573,12 @@ def scan_head_shoulders_top(
             right_shoulder=p5,
             neckline_price=neckline_price,
             confirmed=True,
-            score=cap_score(total_score),
+            score=total_score,
             reasons=reasons,
             break_time=break_time,
             break_price=break_price,
             message=(
-                f"{symbol} {timeframe} 头肩顶确认，评分 {cap_score(total_score)}。"
-                f"跌破价格 {break_price:.2f}，颈线价 {neckline_price:.2f}。"
-            ),
-        ))
-
-    return signals
-
-
-def scan_head_shoulders_range_top(
-    df: pd.DataFrame,
-    symbol: str,
-    timeframe: str,
-    config: HeadShoulderTopConfig,
-) -> list[HeadShoulderTopSignal]:
-    df = df.copy().reset_index(drop=True)
-    df["datetime"] = pd.to_datetime(df["datetime"])
-    df = add_macd_columns(add_ma_columns(df, config), config)
-    pivots = find_pivots(df, left=config.pivot_left, right=config.pivot_right)
-    signals: list[HeadShoulderTopSignal] = []
-
-    for left_shoulder, left_neck, head_pivots, right_neck, right_shoulder in iter_head_range_candidates(pivots, config):
-        ok, reasons, total_score = validate_head_range_structure(
-            left_shoulder,
-            left_neck,
-            head_pivots,
-            right_neck,
-            right_shoulder,
-            config,
-        )
-        if not ok:
-            continue
-
-        head = max(head_pivots, key=lambda point: point.price)
-        ok, reason, score = check_right_shoulder_volume_weak_against_head_range(df, head_pivots, right_shoulder, config)
-        if not ok:
-            continue
-        reasons.append(reason)
-        total_score += score
-
-        ok, reason, score = check_macd_head_range_top_divergence(df, left_shoulder, head_pivots, config)
-        reasons.append(reason)
-        if ok:
-            total_score += score
-
-        confirmed, break_index, break_time, break_price, reason, score = check_neckline_break(
-            df,
-            left_neck,
-            right_neck,
-            right_shoulder,
-            config,
-        )
-        if not confirmed:
-            neckline_price = calculate_neckline_price(left_neck, right_neck, right_shoulder.index)
-            signals.append(HeadShoulderTopSignal(
-                symbol=symbol,
-                timeframe=timeframe,
-                pattern="head_shoulders_range_top",
-                left_shoulder=left_shoulder,
-                left_neck=left_neck,
-                head=head,
-                right_neck=right_neck,
-                right_shoulder=right_shoulder,
-                neckline_price=neckline_price,
-                confirmed=False,
-                score=cap_score(total_score),
-                reasons=reasons + [reason],
-                message=f"{symbol} {timeframe} 疑似头部区间型头肩顶，等待跌破颈线确认，当前评分 {cap_score(total_score)}",
-            ))
-            continue
-
-        total_score += score
-        reasons.append(reason)
-        assert break_index is not None
-        ok, reason, score = check_ma_bearish_filter(df, break_index, config)
-        if not ok:
-            continue
-        reasons.append(reason)
-        total_score += score
-
-        if config.enable_score and cap_score(total_score) < config.min_score_to_alert:
-            continue
-
-        neckline_price = calculate_neckline_price(left_neck, right_neck, break_index)
-        signals.append(HeadShoulderTopSignal(
-            symbol=symbol,
-            timeframe=timeframe,
-            pattern="head_shoulders_range_top",
-            left_shoulder=left_shoulder,
-            left_neck=left_neck,
-            head=head,
-            right_neck=right_neck,
-            right_shoulder=right_shoulder,
-            neckline_price=neckline_price,
-            confirmed=True,
-            score=cap_score(total_score),
-            reasons=reasons,
-            break_time=break_time,
-            break_price=break_price,
-            message=(
-                f"{symbol} {timeframe} 头部区间型头肩顶确认，评分 {cap_score(total_score)}。"
+                f"{symbol} {timeframe} 头肩顶确认，评分 {total_score}。"
                 f"跌破价格 {break_price:.2f}，颈线价 {neckline_price:.2f}。"
             ),
         ))
@@ -900,9 +628,9 @@ def scan_inverse_head_shoulders(
                 right_shoulder=p5,
                 neckline_price=neckline_price,
                 confirmed=False,
-                score=cap_score(total_score),
+                score=total_score,
                 reasons=reasons + [reason],
-                message=f"{symbol} {timeframe} 疑似反向头肩顶，等待突破颈线确认，当前评分 {cap_score(total_score)}",
+                message=f"{symbol} {timeframe} 疑似反向头肩顶，等待突破颈线确认，当前评分 {total_score}",
             ))
             continue
 
@@ -915,7 +643,7 @@ def scan_inverse_head_shoulders(
         reasons.append(reason)
         total_score += score
 
-        if config.enable_score and cap_score(total_score) < config.min_score_to_alert:
+        if config.enable_score and total_score < config.min_score_to_alert:
             continue
 
         neckline_price = calculate_neckline_price(p2, p4, break_index)
@@ -930,12 +658,12 @@ def scan_inverse_head_shoulders(
             right_shoulder=p5,
             neckline_price=neckline_price,
             confirmed=True,
-            score=cap_score(total_score),
+            score=total_score,
             reasons=reasons,
             break_time=break_time,
             break_price=break_price,
             message=(
-                f"{symbol} {timeframe} 反向头肩顶确认，评分 {cap_score(total_score)}。"
+                f"{symbol} {timeframe} 反向头肩顶确认，评分 {total_score}。"
                 f"突破价格 {break_price:.2f}，颈线价 {neckline_price:.2f}。"
             ),
         ))
@@ -950,7 +678,6 @@ def scan_head_shoulders(
     config: HeadShoulderTopConfig,
 ) -> list[HeadShoulderTopSignal]:
     signals = scan_head_shoulders_top(df, symbol=symbol, timeframe=timeframe, config=config)
-    signals.extend(scan_head_shoulders_range_top(df, symbol=symbol, timeframe=timeframe, config=config))
     signals.extend(scan_inverse_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config))
     if config.max_signal_age_bars > 0:
         min_right_shoulder_index = max(0, len(df) - config.max_signal_age_bars)
