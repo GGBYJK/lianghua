@@ -50,11 +50,11 @@ const booleanFields = [
 ];
 
 const futuresSymbolOptions = [
-  { symbol: "SR609", name: "白糖609" },
-  { symbol: "SA609", name: "纯碱609" },
-  { symbol: "RM609", name: "菜粕609" },
-  { symbol: "FG609", name: "玻璃609" },
-  { symbol: "CF609", name: "棉花609" },
+  { symbol: "SR2609", name: "白糖2609" },
+  { symbol: "SA2609", name: "纯碱2609" },
+  { symbol: "RM2609", name: "菜粕2609" },
+  { symbol: "FG2609", name: "玻璃2609" },
+  { symbol: "CF2609", name: "棉花2609" },
   { symbol: "v2609", name: "PVC2609" },
   { symbol: "m2609", name: "豆粕2609" },
   { symbol: "jm2609", name: "焦煤2609" },
@@ -64,8 +64,8 @@ const futuresSymbolOptions = [
   { symbol: "sp2609", name: "纸浆2609" },
   { symbol: "hc2610", name: "热卷2610" },
   { symbol: "jd2606", name: "鸡蛋2606" },
-  { symbol: "SF607", name: "硅铁607" },
-  { symbol: "UR609", name: "尿素609" },
+  { symbol: "SF2607", name: "硅铁2607" },
+  { symbol: "UR2609", name: "尿素2609" },
 ];
 
 const MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache_v6";
