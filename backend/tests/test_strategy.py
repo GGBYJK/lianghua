@@ -142,10 +142,6 @@ def test_sample_scan_finds_confirmed_signal() -> None:
         min_head_above_shoulder_pct=0.03,
         max_shoulder_diff_pct=0.06,
         max_neck_diff_pct=0.04,
-        volume_compare_window=2,
-        right_shoulder_volume_ratio=0.85,
-        break_volume_window=5,
-        break_volume_ratio=1.05,
         ma_short=3,
         ma_mid=5,
         ma_long=8,
@@ -172,10 +168,6 @@ def test_mirrored_sample_finds_confirmed_inverse_signal() -> None:
         min_head_above_shoulder_pct=0.03,
         max_shoulder_diff_pct=0.06,
         max_neck_diff_pct=0.04,
-        volume_compare_window=2,
-        right_shoulder_volume_ratio=0.85,
-        break_volume_window=5,
-        break_volume_ratio=1.05,
         ma_short=3,
         ma_mid=5,
         ma_long=8,
@@ -196,10 +188,6 @@ def test_combined_scan_returns_pattern_field() -> None:
         min_head_above_shoulder_pct=0.03,
         max_shoulder_diff_pct=0.06,
         max_neck_diff_pct=0.04,
-        volume_compare_window=2,
-        right_shoulder_volume_ratio=0.85,
-        break_volume_window=5,
-        break_volume_ratio=1.05,
         ma_short=3,
         ma_mid=5,
         ma_long=8,
@@ -210,6 +198,32 @@ def test_combined_scan_returns_pattern_field() -> None:
     )
     signals = scan_head_shoulders(df, "rb2405", "5m", config)
     assert any(signal.pattern == "head_shoulders_top" for signal in signals)
+
+
+def test_combined_scan_includes_inverse_pattern() -> None:
+    df = pd.read_csv(SAMPLE)
+    pivot_price = df["high"].max() + df["low"].min()
+    mirrored = df.copy()
+    mirrored["open"] = pivot_price - df["open"]
+    mirrored["high"] = pivot_price - df["low"]
+    mirrored["low"] = pivot_price - df["high"]
+    mirrored["close"] = pivot_price - df["close"]
+    config = HeadShoulderTopConfig(
+        pivot_left=2,
+        pivot_right=2,
+        min_head_above_shoulder_pct=0.03,
+        max_shoulder_diff_pct=0.06,
+        max_neck_diff_pct=0.04,
+        ma_short=3,
+        ma_mid=5,
+        ma_long=8,
+        min_head_to_right_neck_to_left_neck_to_head_ratio=0.5,
+        require_ma_bearish_alignment=False,
+        require_close_below_ma_long=True,
+        min_score_to_alert=70,
+    )
+    signals = scan_head_shoulders(mirrored, "rb2405", "5m", config)
+    assert any(signal.pattern == "inverse_head_shoulders" for signal in signals)
 
 
 def test_pivots_and_neckline() -> None:
@@ -238,6 +252,24 @@ def test_pattern_candidates_can_skip_minor_swings() -> None:
     candidates = iter_pattern_candidates(pivots, ["high", "low", "high", "low", "high"])
     assert any(
         [point.index for point in candidate] == [604, 614, 623, 646, 652]
+        for candidate in candidates
+    )
+
+
+def test_pattern_candidates_can_skip_minor_swings_between_left_shoulder_and_neck() -> None:
+    times = pd.date_range("2026-04-08 09:15:00", periods=7, freq="h")
+    pivots = [
+        PivotPoint(8, times[0], 3265, "low"),
+        PivotPoint(12, times[1], 3275, "high"),
+        PivotPoint(14, times[2], 3268, "low"),
+        PivotPoint(24, times[3], 3288, "high"),
+        PivotPoint(54, times[4], 3261, "low"),
+        PivotPoint(92, times[5], 3288, "high"),
+        PivotPoint(105, times[6], 3272, "low"),
+    ]
+    candidates = iter_pattern_candidates(pivots, ["low", "high", "low", "high", "low"])
+    assert any(
+        [point.index for point in candidate] == [8, 24, 54, 92, 105]
         for candidate in candidates
     )
 
@@ -398,6 +430,43 @@ def test_deduplicate_prefers_later_right_setup_when_left_and_head_match() -> Non
         reasons=[],
     )
     assert deduplicate_overlapping_signals([early_right, later_right]) == [later_right]
+
+
+def test_deduplicate_prefers_broader_inverse_setup() -> None:
+    times = pd.date_range("2026-04-08 09:00:00", periods=10, freq="h")
+    broad = HeadShoulderTopSignal(
+        symbol="hc2610",
+        timeframe="15m",
+        pattern="inverse_head_shoulders",
+        left_shoulder=PivotPoint(14, times[0], 3268, "low"),
+        left_neck=PivotPoint(24, times[1], 3288, "high"),
+        head=PivotPoint(54, times[2], 3261, "low"),
+        right_neck=PivotPoint(92, times[5], 3288, "high"),
+        right_shoulder=PivotPoint(105, times[6], 3272, "low"),
+        neckline_price=3288,
+        confirmed=True,
+        score=90,
+        reasons=[],
+        break_time=times[8],
+        break_price=3309,
+    )
+    narrow = HeadShoulderTopSignal(
+        symbol="hc2610",
+        timeframe="15m",
+        pattern="inverse_head_shoulders",
+        left_shoulder=PivotPoint(95, times[3], 3280, "low"),
+        left_neck=PivotPoint(100, times[4], 3287, "high"),
+        head=PivotPoint(105, times[5], 3272, "low"),
+        right_neck=PivotPoint(115, times[6], 3287, "high"),
+        right_shoulder=PivotPoint(124, times[7], 3280, "low"),
+        neckline_price=3287,
+        confirmed=True,
+        score=105,
+        reasons=[],
+        break_time=times[8],
+        break_price=3309,
+    )
+    assert deduplicate_overlapping_signals([narrow, broad]) == [broad]
 
 
 def test_api_scan() -> None:

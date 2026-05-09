@@ -32,8 +32,6 @@ const numericFields = [
   "max_right_leg_to_left_leg_ratio",
   "min_head_to_right_neck_to_left_neck_to_head_ratio",
   "max_head_to_right_neck_to_left_neck_to_head_ratio",
-  "right_shoulder_volume_ratio",
-  "break_volume_ratio",
   "neckline_break_pct",
   "max_bars_after_right_shoulder",
   "max_signal_age_bars",
@@ -41,8 +39,6 @@ const numericFields = [
 ];
 
 const booleanFields = [
-  "enable_right_shoulder_volume_weak",
-  "enable_break_volume_confirm",
   "enable_ma_filter",
   "require_ma_bearish_alignment",
   "require_close_below_ma_long",
@@ -1162,14 +1158,10 @@ function fieldLabel(field: string) {
     max_right_leg_to_left_leg_ratio: "右颈到右肩/左肩到左颈上限",
     min_head_to_right_neck_to_left_neck_to_head_ratio: "头部到右颈/左颈到头部下限",
     max_head_to_right_neck_to_left_neck_to_head_ratio: "头部到右颈/左颈到头部上限",
-    right_shoulder_volume_ratio: "右肩/头部量能上限",
-    break_volume_ratio: "跌破放量倍数",
     neckline_break_pct: "颈线跌破幅度",
     max_bars_after_right_shoulder: "右肩后观察K线数",
     max_signal_age_bars: "仅返回最近N根内信号",
     min_score_to_alert: "最低提醒评分",
-    enable_right_shoulder_volume_weak: "启用右肩缩量",
-    enable_break_volume_confirm: "启用跌破放量确认",
     enable_ma_filter: "启用均线过滤",
     require_ma_bearish_alignment: "要求均线空头排列",
     require_close_below_ma_long: "要求收盘价低于长均线",
@@ -1194,10 +1186,8 @@ function translateResultText(text: string) {
     .replace(/neck lows are close, diff ([\d.]+)%/g, "两个颈线低点接近，差异 $1%")
     .replace("right shoulder is not excessively weak", "右肩没有过度走弱")
     .replace("right shoulder is below head", "右肩低于头部")
-    .replace(/right shoulder volume weakened, ratio ([\d.]+)/g, "右肩成交量减弱，右肩/头部量能比 $1")
     .replace("MACD top divergence: price new high but MACD histogram lower", "出现 MACD 顶背离：头部价格创新高，但 MACD柱 降低")
     .replace("MACD top divergence: price new high but DIF lower", "出现 MACD 顶背离：头部价格创新高，但 DIF 降低")
-    .replace(/neckline break confirmed, break ([\d.]+), neckline ([\d.]+), volume ([\d.]+)x/g, "跌破颈线确认，跌破价 $1，颈线价 $2，成交量放大 $3 倍")
     .replace(/neckline break confirmed, break ([\d.]+), neckline ([\d.]+)/g, "跌破颈线确认，跌破价 $1，颈线价 $2")
     .replace(/close is below MA(\d+)/g, "收盘价在 MA$1 下方")
     .replace("MA filter passed", "均线过滤通过")

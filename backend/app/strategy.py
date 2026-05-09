@@ -19,12 +19,6 @@ class HeadShoulderTopConfig:
     max_head_to_right_neck_to_left_neck_to_head_ratio: float = 2.0
     min_right_shoulder_ratio_to_left: float = 0.85
     right_shoulder_must_below_head: bool = True
-    enable_right_shoulder_volume_weak: bool = True
-    right_shoulder_volume_ratio: float = 0.8
-    volume_compare_window: int = 10
-    enable_break_volume_confirm: bool = True
-    break_volume_window: int = 20
-    break_volume_ratio: float = 1.2
     enable_ma_filter: bool = True
     ma_short: int = 3
     ma_mid: int = 5
@@ -187,30 +181,34 @@ def iter_pattern_candidates(
 
     for left_shoulder_index in range(len(pivots) - 4):
         left_shoulder = pivots[left_shoulder_index]
-        left_neck = pivots[left_shoulder_index + 1]
-        if left_shoulder.kind != kinds[0] or left_neck.kind != kinds[1]:
+        if left_shoulder.kind != kinds[0]:
             continue
 
-        for head_index in range(left_shoulder_index + 2, len(pivots) - 2):
-            head = pivots[head_index]
-            if head.kind != kinds[2] or not span_preserves_swing(left_shoulder_index + 1, head_index, left_neck, head):
+        for left_neck_index in range(left_shoulder_index + 1, len(pivots) - 3):
+            left_neck = pivots[left_neck_index]
+            if left_neck.kind != kinds[1] or not span_preserves_swing(left_shoulder_index, left_neck_index, left_shoulder, left_neck):
                 continue
-            for right_neck_index in range(head_index + 1, len(pivots) - 1):
-                right_neck = pivots[right_neck_index]
-                if right_neck.kind != kinds[3] or not span_preserves_swing(head_index, right_neck_index, head, right_neck):
+
+            for head_index in range(left_neck_index + 1, len(pivots) - 2):
+                head = pivots[head_index]
+                if head.kind != kinds[2] or not span_preserves_swing(left_neck_index, head_index, left_neck, head):
                     continue
-                for right_shoulder_index in range(right_neck_index + 1, len(pivots)):
-                    right_shoulder = pivots[right_shoulder_index]
-                    if (
-                        right_shoulder.kind != kinds[4]
-                        or not span_preserves_swing(right_neck_index, right_shoulder_index, right_neck, right_shoulder)
-                    ):
+                for right_neck_index in range(head_index + 1, len(pivots) - 1):
+                    right_neck = pivots[right_neck_index]
+                    if right_neck.kind != kinds[3] or not span_preserves_swing(head_index, right_neck_index, head, right_neck):
                         continue
-                    key = (left_shoulder.index, left_neck.index, head.index, right_neck.index, right_shoulder.index)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    candidates.append((left_shoulder, left_neck, head, right_neck, right_shoulder))
+                    for right_shoulder_index in range(right_neck_index + 1, len(pivots)):
+                        right_shoulder = pivots[right_shoulder_index]
+                        if (
+                            right_shoulder.kind != kinds[4]
+                            or not span_preserves_swing(right_neck_index, right_shoulder_index, right_neck, right_shoulder)
+                        ):
+                            continue
+                        key = (left_shoulder.index, left_neck.index, head.index, right_neck.index, right_shoulder.index)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        candidates.append((left_shoulder, left_neck, head, right_neck, right_shoulder))
 
     return candidates
 
@@ -335,25 +333,6 @@ def validate_inverse_head_shoulders_structure(
     ], 60
 
 
-def check_right_shoulder_volume_weak(
-    df: pd.DataFrame,
-    head: PivotPoint,
-    right_shoulder: PivotPoint,
-    config: HeadShoulderTopConfig,
-) -> tuple[bool, str, int]:
-    if not config.enable_right_shoulder_volume_weak:
-        return True, "未启用右肩缩量过滤", 0
-    window = config.volume_compare_window
-    head_volume = df.loc[max(0, head.index - window) : min(len(df) - 1, head.index + window), "volume"].mean()
-    right_volume = df.loc[max(0, right_shoulder.index - window) : min(len(df) - 1, right_shoulder.index + window), "volume"].mean()
-    if head_volume <= 0:
-        return False, "头部附近成交量异常", 0
-    ratio = right_volume / head_volume
-    if ratio <= config.right_shoulder_volume_ratio:
-        return True, f"右肩成交量减弱，右肩/头部量能比 {ratio:.2f}", 15
-    return False, f"右肩成交量未明显减弱，右肩/头部量能比 {ratio:.2f}", 0
-
-
 def check_ma_bearish_filter(df: pd.DataFrame, index: int, config: HeadShoulderTopConfig) -> tuple[bool, str, int]:
     if not config.enable_ma_filter:
         return True, "未启用均线过滤", 0
@@ -465,19 +444,6 @@ def check_neckline_break(
         break_price = float(df.loc[i, break_col])
         if break_price >= neckline_price * (1 - config.neckline_break_pct):
             continue
-        if config.enable_break_volume_confirm:
-            if i < config.break_volume_window:
-                continue
-            avg_volume = df.loc[i - config.break_volume_window : i - 1, "volume"].mean()
-            if avg_volume <= 0:
-                continue
-            volume_ratio = df.loc[i, "volume"] / avg_volume
-            if volume_ratio < config.break_volume_ratio:
-                continue
-            return True, i, df.loc[i, "datetime"], break_price, (
-                f"跌破颈线确认，跌破价 {break_price:.2f}，颈线价 {neckline_price:.2f}，"
-                f"成交量放大 {volume_ratio:.2f} 倍"
-            ), 20
         return True, i, df.loc[i, "datetime"], break_price, (
             f"跌破颈线确认，跌破价 {break_price:.2f}，颈线价 {neckline_price:.2f}"
         ), 15
@@ -501,19 +467,6 @@ def check_neckline_break_up(
         break_price = float(df.loc[i, break_col])
         if break_price <= neckline_price * (1 + config.neckline_break_pct):
             continue
-        if config.enable_break_volume_confirm:
-            if i < config.break_volume_window:
-                continue
-            avg_volume = df.loc[i - config.break_volume_window : i - 1, "volume"].mean()
-            if avg_volume <= 0:
-                continue
-            volume_ratio = df.loc[i, "volume"] / avg_volume
-            if volume_ratio < config.break_volume_ratio:
-                continue
-            return True, i, df.loc[i, "datetime"], break_price, (
-                f"突破颈线确认，突破价 {break_price:.2f}，颈线价 {neckline_price:.2f}，"
-                f"成交量放大 {volume_ratio:.2f} 倍"
-            ), 20
         return True, i, df.loc[i, "datetime"], break_price, (
             f"突破颈线确认，突破价 {break_price:.2f}，颈线价 {neckline_price:.2f}"
         ), 15
@@ -616,12 +569,6 @@ def scan_inverse_head_shoulders(
         if not ok:
             continue
 
-        ok, reason, score = check_right_shoulder_volume_weak(df, p3, p5, config)
-        if not ok:
-            continue
-        reasons.append(reason)
-        total_score += score
-
         ok, reason, score = check_macd_bottom_divergence(df, p1, p3, config)
         reasons.append(reason)
         if ok:
@@ -706,6 +653,18 @@ def signal_overlap_ratio(first: HeadShoulderTopSignal, second: HeadShoulderTopSi
     return overlap / max(1, shorter)
 
 
+def signals_conflict(first: HeadShoulderTopSignal, second: HeadShoulderTopSignal) -> bool:
+    if signal_overlap_ratio(first, second) >= 0.7:
+        return True
+    return (
+        first.pattern == second.pattern
+        and first.confirmed
+        and second.confirmed
+        and first.break_time is not None
+        and first.break_time == second.break_time
+    )
+
+
 def deduplicate_overlapping_signals(signals: list[HeadShoulderTopSignal]) -> list[HeadShoulderTopSignal]:
     def shoulder_diff(signal: HeadShoulderTopSignal) -> float:
         return abs(signal.left_shoulder.price - signal.right_shoulder.price) / max(signal.left_shoulder.price, signal.right_shoulder.price)
@@ -723,9 +682,9 @@ def deduplicate_overlapping_signals(signals: list[HeadShoulderTopSignal]) -> lis
         signals,
         key=lambda signal: (
             signal.confirmed,
-            signal.head.price,
-            -left_neck_distance(signal),
-            -left_setup_distance(signal),
+            signal.head.price if signal.pattern == "head_shoulders_top" else -signal.head.price,
+            -left_neck_distance(signal) if signal.pattern == "head_shoulders_top" else left_neck_distance(signal),
+            -left_setup_distance(signal) if signal.pattern == "head_shoulders_top" else left_setup_distance(signal),
             signal.right_neck.index,
             signal.right_shoulder.index,
             -shoulder_diff(signal),
@@ -737,7 +696,7 @@ def deduplicate_overlapping_signals(signals: list[HeadShoulderTopSignal]) -> lis
     )
     selected: list[HeadShoulderTopSignal] = []
     for signal in ranked:
-        if any(signal_overlap_ratio(signal, existing) >= 0.7 for existing in selected):
+        if any(signals_conflict(signal, existing) for existing in selected):
             continue
         selected.append(signal)
     selected.sort(key=lambda signal: signal.break_time or signal.right_shoulder.time)
@@ -751,6 +710,7 @@ def scan_head_shoulders(
     config: HeadShoulderTopConfig,
 ) -> list[HeadShoulderTopSignal]:
     signals = scan_head_shoulders_top(df, symbol=symbol, timeframe=timeframe, config=config)
+    signals.extend(scan_inverse_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config))
     if config.max_signal_age_bars > 0:
         min_right_shoulder_index = max(0, len(df) - config.max_signal_age_bars)
         signals = [
