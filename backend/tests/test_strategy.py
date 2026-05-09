@@ -364,6 +364,42 @@ def test_deduplicate_prefers_nearest_left_setup_when_head_matches() -> None:
     assert deduplicate_overlapping_signals([asymmetric, symmetric]) == [asymmetric]
 
 
+def test_deduplicate_prefers_later_right_setup_when_left_and_head_match() -> None:
+    times = pd.date_range("2026-05-07 22:00:00", periods=10, freq="h")
+    left_shoulder = PivotPoint(10, times[0], 5466, "high")
+    left_neck = PivotPoint(18, times[1], 5450, "low")
+    head = PivotPoint(32, times[2], 5480, "high")
+    early_right = HeadShoulderTopSignal(
+        symbol="SR2609",
+        timeframe="5m",
+        pattern="head_shoulders_top",
+        left_shoulder=left_shoulder,
+        left_neck=left_neck,
+        head=head,
+        right_neck=PivotPoint(48, times[4], 5442, "low"),
+        right_shoulder=PivotPoint(52, times[5], 5452, "high"),
+        neckline_price=5446,
+        confirmed=False,
+        score=95,
+        reasons=[],
+    )
+    later_right = HeadShoulderTopSignal(
+        symbol="SR2609",
+        timeframe="5m",
+        pattern="head_shoulders_top",
+        left_shoulder=left_shoulder,
+        left_neck=left_neck,
+        head=head,
+        right_neck=PivotPoint(58, times[7], 5439, "low"),
+        right_shoulder=PivotPoint(64, times[8], 5462, "high"),
+        neckline_price=5444,
+        confirmed=False,
+        score=80,
+        reasons=[],
+    )
+    assert deduplicate_overlapping_signals([early_right, later_right]) == [later_right]
+
+
 def test_api_scan() -> None:
     client = TestClient(app)
     with SAMPLE.open("rb") as f:

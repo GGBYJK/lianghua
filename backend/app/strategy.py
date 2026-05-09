@@ -15,8 +15,8 @@ class HeadShoulderTopConfig:
     max_neck_diff_pct: float = 0.004
     min_right_leg_to_left_leg_ratio: float = 0.6
     max_right_leg_to_left_leg_ratio: float = 2.0
-    min_head_to_right_neck_to_left_neck_to_head_ratio: float = 0.8
-    max_head_to_right_neck_to_left_neck_to_head_ratio: float = 1.6
+    min_head_to_right_neck_to_left_neck_to_head_ratio: float = 0.6
+    max_head_to_right_neck_to_left_neck_to_head_ratio: float = 2.0
     min_right_shoulder_ratio_to_left: float = 0.85
     right_shoulder_must_below_head: bool = True
     enable_right_shoulder_volume_weak: bool = True
@@ -726,6 +726,8 @@ def deduplicate_overlapping_signals(signals: list[HeadShoulderTopSignal]) -> lis
             signal.head.price,
             -left_neck_distance(signal),
             -left_setup_distance(signal),
+            signal.right_neck.index,
+            signal.right_shoulder.index,
             -shoulder_diff(signal),
             -neck_diff(signal),
             signal.score,

@@ -6,8 +6,8 @@ default:
   max_neck_diff_pct: 0.004
   min_right_leg_to_left_leg_ratio: 0.6
   max_right_leg_to_left_leg_ratio: 2.0
-  min_head_to_right_neck_to_left_neck_to_head_ratio: 0.8
-  max_head_to_right_neck_to_left_neck_to_head_ratio: 1.6
+  min_head_to_right_neck_to_left_neck_to_head_ratio: 0.6
+  max_head_to_right_neck_to_left_neck_to_head_ratio: 2.0
   min_right_shoulder_ratio_to_left: 0.85
   right_shoulder_must_below_head: true
   enable_right_shoulder_volume_weak: true
