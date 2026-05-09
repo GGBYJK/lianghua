@@ -28,6 +28,7 @@ from app.strategy import (
     deduplicate_overlapping_signals,
     find_pivots,
     iter_pattern_candidates,
+    validate_head_shoulders_structure,
     scan_head_shoulders,
     scan_head_shoulders_top,
     scan_inverse_head_shoulders,
@@ -241,6 +242,48 @@ def test_pattern_candidates_can_skip_minor_swings() -> None:
     )
 
 
+def test_head_shoulders_requires_shoulders_and_necks_within_0_4_pct() -> None:
+    times = pd.date_range("2026-03-18 10:00:00", periods=5, freq="h")
+    config = HeadShoulderTopConfig(
+        min_head_above_shoulder_pct=0.005,
+        max_shoulder_diff_pct=0.004,
+        max_neck_diff_pct=0.004,
+        min_right_leg_to_left_leg_ratio=0.1,
+        max_right_leg_to_left_leg_ratio=10,
+        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
+        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
+    )
+
+    ok, _, _ = validate_head_shoulders_structure([
+        PivotPoint(0, times[0], 100.00, "high"),
+        PivotPoint(1, times[1], 95.00, "low"),
+        PivotPoint(2, times[2], 101.20, "high"),
+        PivotPoint(3, times[3], 95.30, "low"),
+        PivotPoint(4, times[4], 100.35, "high"),
+    ], config)
+    assert ok
+
+    shoulder_too_far = [
+        PivotPoint(0, times[0], 100.00, "high"),
+        PivotPoint(1, times[1], 95.00, "low"),
+        PivotPoint(2, times[2], 101.20, "high"),
+        PivotPoint(3, times[3], 95.30, "low"),
+        PivotPoint(4, times[4], 100.45, "high"),
+    ]
+    ok, _, _ = validate_head_shoulders_structure(shoulder_too_far, config)
+    assert not ok
+
+    neck_too_far = [
+        PivotPoint(0, times[0], 100.00, "high"),
+        PivotPoint(1, times[1], 95.00, "low"),
+        PivotPoint(2, times[2], 101.20, "high"),
+        PivotPoint(3, times[3], 95.40, "low"),
+        PivotPoint(4, times[4], 100.35, "high"),
+    ]
+    ok, _, _ = validate_head_shoulders_structure(neck_too_far, config)
+    assert not ok
+
+
 def test_deduplicate_overlapping_signals_keeps_highest_ranked() -> None:
     times = pd.date_range("2026-03-18 10:00:00", periods=7, freq="h")
     left_shoulder = PivotPoint(604, times[0], 3330, "high")
@@ -332,6 +375,8 @@ def test_api_scan() -> None:
                 "config_overrides": json.dumps({
                     "pivot_left": 2,
                     "pivot_right": 2,
+                    "max_shoulder_diff_pct": 0.06,
+                    "max_neck_diff_pct": 0.04,
                     "min_score_to_alert": 70,
                     "min_head_to_right_neck_to_left_neck_to_head_ratio": 0.5,
                     "require_ma_bearish_alignment": False,

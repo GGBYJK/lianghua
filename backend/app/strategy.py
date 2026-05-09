@@ -11,8 +11,8 @@ class HeadShoulderTopConfig:
     pivot_left: int = 3
     pivot_right: int = 3
     min_head_above_shoulder_pct: float = 0.03
-    max_shoulder_diff_pct: float = 0.05
-    max_neck_diff_pct: float = 0.05
+    max_shoulder_diff_pct: float = 0.004
+    max_neck_diff_pct: float = 0.004
     min_right_leg_to_left_leg_ratio: float = 0.8
     max_right_leg_to_left_leg_ratio: float = 1.6
     min_head_to_right_neck_to_left_neck_to_head_ratio: float = 0.8
