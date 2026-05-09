@@ -13,8 +13,8 @@ class HeadShoulderTopConfig:
     min_head_above_shoulder_pct: float = 0.03
     max_shoulder_diff_pct: float = 0.004
     max_neck_diff_pct: float = 0.004
-    min_right_leg_to_left_leg_ratio: float = 0.8
-    max_right_leg_to_left_leg_ratio: float = 1.6
+    min_right_leg_to_left_leg_ratio: float = 0.6
+    max_right_leg_to_left_leg_ratio: float = 2.0
     min_head_to_right_neck_to_left_neck_to_head_ratio: float = 0.8
     max_head_to_right_neck_to_left_neck_to_head_ratio: float = 1.6
     min_right_shoulder_ratio_to_left: float = 0.85
@@ -713,15 +713,22 @@ def deduplicate_overlapping_signals(signals: list[HeadShoulderTopSignal]) -> lis
     def neck_diff(signal: HeadShoulderTopSignal) -> float:
         return abs(signal.left_neck.price - signal.right_neck.price) / max(signal.left_neck.price, signal.right_neck.price)
 
+    def left_setup_distance(signal: HeadShoulderTopSignal) -> int:
+        return signal.head.index - signal.left_shoulder.index
+
+    def left_neck_distance(signal: HeadShoulderTopSignal) -> int:
+        return signal.head.index - signal.left_neck.index
+
     ranked = sorted(
         signals,
         key=lambda signal: (
             signal.confirmed,
             signal.head.price,
+            -left_neck_distance(signal),
+            -left_setup_distance(signal),
             -shoulder_diff(signal),
             -neck_diff(signal),
             signal.score,
-            -(signal.right_shoulder.index - signal.left_shoulder.index),
             signal.break_time or signal.right_shoulder.time,
         ),
         reverse=True,

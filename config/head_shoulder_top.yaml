@@ -4,8 +4,8 @@ default:
   min_head_above_shoulder_pct: 0.03
   max_shoulder_diff_pct: 0.004
   max_neck_diff_pct: 0.004
-  min_right_leg_to_left_leg_ratio: 0.8
-  max_right_leg_to_left_leg_ratio: 1.6
+  min_right_leg_to_left_leg_ratio: 0.6
+  max_right_leg_to_left_leg_ratio: 2.0
   min_head_to_right_neck_to_left_neck_to_head_ratio: 0.8
   max_head_to_right_neck_to_left_neck_to_head_ratio: 1.6
   min_right_shoulder_ratio_to_left: 0.85

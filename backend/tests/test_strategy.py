@@ -326,7 +326,7 @@ def test_deduplicate_overlapping_signals_keeps_highest_ranked() -> None:
     assert deduplicate_overlapping_signals([weaker, stronger]) == [stronger]
 
 
-def test_deduplicate_prefers_symmetric_signal_when_head_matches() -> None:
+def test_deduplicate_prefers_nearest_left_setup_when_head_matches() -> None:
     times = pd.date_range("2026-02-25 10:00:00", periods=10, freq="h")
     shared_head = PivotPoint(623, times[4], 3342, "high")
     asymmetric = HeadShoulderTopSignal(
@@ -361,7 +361,7 @@ def test_deduplicate_prefers_symmetric_signal_when_head_matches() -> None:
         break_time=times[9],
         break_price=3296,
     )
-    assert deduplicate_overlapping_signals([asymmetric, symmetric]) == [symmetric]
+    assert deduplicate_overlapping_signals([asymmetric, symmetric]) == [asymmetric]
 
 
 def test_api_scan() -> None:
