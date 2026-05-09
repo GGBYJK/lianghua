@@ -546,6 +546,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
     const start = focusZoom?.start ?? defaultStart;
     const end = focusZoom?.end ?? 100;
     const chartEl = chartRef.current;
+    const useLongPressTooltip = window.matchMedia?.("(hover: none), (pointer: coarse)").matches ?? false;
     let zoomStart = start;
     let zoomEnd = end;
 
@@ -568,6 +569,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
       },
       tooltip: {
         trigger: "axis",
+        triggerOn: useLongPressTooltip ? "none" : "mousemove",
         axisPointer: { type: "cross" },
         borderWidth: 1,
         borderColor: "rgba(148,163,184,0.32)",
@@ -693,6 +695,23 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
       zoomEnd = Number(dataZoom?.end ?? zoomEnd);
     });
 
+    const showTooltipAt = (offsetX: number, offsetY: number) => {
+      if (!chart.containPixel({ gridIndex: 0 }, [offsetX, offsetY]) && !chart.containPixel({ gridIndex: 1 }, [offsetX, offsetY])) {
+        return;
+      }
+      const converted = chart.convertFromPixel({ xAxisIndex: 0 }, [offsetX, offsetY]);
+      const rawIndex = Array.isArray(converted) ? converted[0] : converted;
+      const dataIndex = Math.round(Number(rawIndex));
+      if (!Number.isFinite(dataIndex)) {
+        return;
+      }
+      chart.dispatchAction({
+        type: "showTip",
+        seriesIndex: 0,
+        dataIndex: Math.max(0, Math.min(candles.length - 1, dataIndex)),
+      });
+    };
+
     let dragState: {
       pointerId: number;
       x: number;
@@ -704,8 +723,24 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
     const activePointers = new Set<number>();
     let pendingZoom: { start: number; end: number } | null = null;
     let zoomFrame = 0;
+    let longPressTimer = 0;
+    let longPressStart: { pointerId: number; x: number; y: number } | null = null;
 
     const clampZoomStart = (value: number, span: number) => Math.max(0, Math.min(100 - span, value));
+    const clearLongPress = () => {
+      if (longPressTimer) {
+        window.clearTimeout(longPressTimer);
+        longPressTimer = 0;
+      }
+      longPressStart = null;
+    };
+    const getChartOffset = (event: PointerEvent) => {
+      const rect = chartEl.getBoundingClientRect();
+      return {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      };
+    };
     const flushZoom = () => {
       zoomFrame = 0;
       if (!pendingZoom) {
@@ -729,7 +764,17 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
       activePointers.add(event.pointerId);
       if (activePointers.size > 1) {
         dragState = null;
+        clearLongPress();
         return;
+      }
+      if (useLongPressTooltip && event.pointerType !== "mouse") {
+        const offset = getChartOffset(event);
+        longPressStart = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+        longPressTimer = window.setTimeout(() => {
+          showTooltipAt(offset.x, offset.y);
+          longPressTimer = 0;
+          longPressStart = null;
+        }, 560);
       }
       if (event.pointerType === "mouse" || candles.length <= 1) {
         return;
@@ -749,10 +794,17 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
       }
       if (activePointers.size > 1) {
         dragState = null;
+        clearLongPress();
         return;
       }
       const dx = event.clientX - dragState.x;
       const dy = event.clientY - dragState.y;
+      if (
+        longPressStart?.pointerId === event.pointerId
+        && Math.hypot(event.clientX - longPressStart.x, event.clientY - longPressStart.y) > 10
+      ) {
+        clearLongPress();
+      }
       if (!dragState.active) {
         if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
           return;
@@ -772,15 +824,24 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
     };
     const onPointerEnd = (event: PointerEvent) => {
       activePointers.delete(event.pointerId);
+      if (longPressStart?.pointerId === event.pointerId) {
+        clearLongPress();
+      }
       if (dragState?.pointerId === event.pointerId) {
         chartEl.releasePointerCapture?.(event.pointerId);
         dragState = null;
+      }
+    };
+    const onContextMenu = (event: MouseEvent) => {
+      if (useLongPressTooltip) {
+        event.preventDefault();
       }
     };
     chartEl.addEventListener("pointerdown", onPointerDown);
     chartEl.addEventListener("pointermove", onPointerMove);
     chartEl.addEventListener("pointerup", onPointerEnd);
     chartEl.addEventListener("pointercancel", onPointerEnd);
+    chartEl.addEventListener("contextmenu", onContextMenu);
 
     const observer = new ResizeObserver(() => chart.resize());
     observer.observe(chartEl);
@@ -789,6 +850,8 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
       chartEl.removeEventListener("pointermove", onPointerMove);
       chartEl.removeEventListener("pointerup", onPointerEnd);
       chartEl.removeEventListener("pointercancel", onPointerEnd);
+      chartEl.removeEventListener("contextmenu", onContextMenu);
+      clearLongPress();
       if (zoomFrame) {
         window.cancelAnimationFrame(zoomFrame);
       }
