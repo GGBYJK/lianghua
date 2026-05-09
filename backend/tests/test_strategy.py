@@ -22,8 +22,12 @@ from app.market_client import (
 )
 from app.strategy import (
     HeadShoulderTopConfig,
+    HeadShoulderTopSignal,
+    PivotPoint,
     calculate_neckline_price,
+    deduplicate_overlapping_signals,
     find_pivots,
+    iter_pattern_candidates,
     scan_head_shoulders,
     scan_head_shoulders_top,
     scan_inverse_head_shoulders,
@@ -215,6 +219,106 @@ def test_pivots_and_neckline() -> None:
     lows = [p for p in pivots if p.kind == "low"]
     price = calculate_neckline_price(lows[0], lows[1], lows[1].index)
     assert price == lows[1].price
+
+
+def test_pattern_candidates_can_skip_minor_swings() -> None:
+    times = pd.date_range("2026-03-18 10:00:00", periods=9, freq="h")
+    pivots = [
+        PivotPoint(604, times[0], 3330, "high"),
+        PivotPoint(614, times[1], 3291, "low"),
+        PivotPoint(623, times[2], 3342, "high"),
+        PivotPoint(626, times[3], 3315, "low"),
+        PivotPoint(632, times[4], 3340, "high"),
+        PivotPoint(638, times[5], 3311, "low"),
+        PivotPoint(640, times[6], 3327, "high"),
+        PivotPoint(646, times[7], 3301, "low"),
+        PivotPoint(652, times[8], 3329, "high"),
+    ]
+    candidates = iter_pattern_candidates(pivots, ["high", "low", "high", "low", "high"])
+    assert any(
+        [point.index for point in candidate] == [604, 614, 623, 646, 652]
+        for candidate in candidates
+    )
+
+
+def test_deduplicate_overlapping_signals_keeps_highest_ranked() -> None:
+    times = pd.date_range("2026-03-18 10:00:00", periods=7, freq="h")
+    left_shoulder = PivotPoint(604, times[0], 3330, "high")
+    left_neck = PivotPoint(614, times[1], 3291, "low")
+    head = PivotPoint(623, times[2], 3342, "high")
+    right_neck = PivotPoint(646, times[3], 3301, "low")
+    right_shoulder = PivotPoint(652, times[4], 3329, "high")
+    weaker = HeadShoulderTopSignal(
+        symbol="hc2610",
+        timeframe="1h",
+        pattern="head_shoulders_top",
+        left_shoulder=left_shoulder,
+        left_neck=left_neck,
+        head=head,
+        right_neck=right_neck,
+        right_shoulder=right_shoulder,
+        neckline_price=3300,
+        confirmed=True,
+        score=80,
+        reasons=[],
+        break_time=times[5],
+        break_price=3296,
+    )
+    stronger = HeadShoulderTopSignal(
+        symbol="hc2610",
+        timeframe="1h",
+        pattern="head_shoulders_top",
+        left_shoulder=left_shoulder,
+        left_neck=left_neck,
+        head=head,
+        right_neck=right_neck,
+        right_shoulder=right_shoulder,
+        neckline_price=3300,
+        confirmed=True,
+        score=90,
+        reasons=[],
+        break_time=times[6],
+        break_price=3292,
+    )
+    assert deduplicate_overlapping_signals([weaker, stronger]) == [stronger]
+
+
+def test_deduplicate_prefers_symmetric_signal_when_head_matches() -> None:
+    times = pd.date_range("2026-02-25 10:00:00", periods=10, freq="h")
+    shared_head = PivotPoint(623, times[4], 3342, "high")
+    asymmetric = HeadShoulderTopSignal(
+        symbol="hc2610",
+        timeframe="1h",
+        pattern="head_shoulders_top",
+        left_shoulder=PivotPoint(616, times[0], 3310, "high"),
+        left_neck=PivotPoint(620, times[1], 3293, "low"),
+        head=shared_head,
+        right_neck=PivotPoint(638, times[6], 3311, "low"),
+        right_shoulder=PivotPoint(640, times[7], 3327, "high"),
+        neckline_price=3300,
+        confirmed=True,
+        score=105,
+        reasons=[],
+        break_time=times[8],
+        break_price=3296,
+    )
+    symmetric = HeadShoulderTopSignal(
+        symbol="hc2610",
+        timeframe="1h",
+        pattern="head_shoulders_top",
+        left_shoulder=PivotPoint(604, times[2], 3330, "high"),
+        left_neck=PivotPoint(614, times[3], 3291, "low"),
+        head=shared_head,
+        right_neck=PivotPoint(646, times[6], 3301, "low"),
+        right_shoulder=PivotPoint(652, times[7], 3329, "high"),
+        neckline_price=3300,
+        confirmed=True,
+        score=90,
+        reasons=[],
+        break_time=times[9],
+        break_price=3296,
+    )
+    assert deduplicate_overlapping_signals([asymmetric, symmetric]) == [symmetric]
 
 
 def test_api_scan() -> None:

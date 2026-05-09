@@ -72,14 +72,6 @@ const MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache_v6";
 const LEGACY_MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache";
 const MARKET_SCAN_CACHE_VERSION = 6;
 
-type AlertItem = {
-  key: string;
-  time: string;
-  title: string;
-  message: string;
-  confirmed: boolean;
-};
-
 type CachedMarketScan = {
   version: number;
   savedAt: string;
@@ -96,7 +88,8 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [cursor, setCursor] = useState(0);
   const [latestBar, setLatestBar] = useState<Candle | null>(null);
-  const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [selectedSignalKeys, setSelectedSignalKeys] = useState<Set<string>>(new Set());
+  const [focusedSignalKey, setFocusedSignalKey] = useState<string | null>(null);
   const [marketSettings, setMarketSettings] = useState<MarketSettings | null>(null);
   const [marketLimit, setMarketLimit] = useState(420);
   const [marketLastFetch, setMarketLastFetch] = useState<string | null>(null);
@@ -140,6 +133,8 @@ function App() {
 
   function applyScanResponse(response: ScanResponse) {
     setResult(response);
+    setSelectedSignalKeys(new Set());
+    setFocusedSignalKey(null);
     setCursor(response.rows);
     setLatestBar(response.chart.candles[response.chart.candles.length - 1] ?? null);
   }
@@ -159,7 +154,6 @@ function App() {
   }
 
   function pushNewAlerts(signals: Signal[]) {
-    const newAlerts: AlertItem[] = [];
     for (const signal of signals) {
       const key = signalKey(signal);
       if (seenSignalKeys.current.has(key)) {
@@ -168,22 +162,17 @@ function App() {
       seenSignalKeys.current.add(key);
       const title = `${patternLabel(signal.pattern)}${signal.confirmed ? "确认信号" : "疑似信号"}`;
       const message = translateResultText(signal.message);
-      newAlerts.push({
-        key,
-        time: signal.break_time ?? signal.right_shoulder.time,
-        title,
-        message,
-        confirmed: signal.confirmed,
-      });
       sendBrowserNotification(title, message);
-    }
-    if (newAlerts.length > 0) {
-      setAlerts((prev) => [...newAlerts, ...prev].slice(0, 20));
     }
   }
 
   const confirmed = result?.signals.filter((signal) => signal.confirmed) ?? [];
   const suspected = result?.signals.filter((signal) => !signal.confirmed) ?? [];
+  const selectedSignals = result?.signals.filter((signal) => selectedSignalKeys.has(signalKey(signal))) ?? [];
+  const focusedSignal = selectedSignals.find((signal) => signalKey(signal) === focusedSignalKey) ?? null;
+  const allSignals = result?.signals ?? [];
+  const allSignalKeys = allSignals.map(signalKey);
+  const selectedCount = selectedSignals.length;
   const visibleFuturesSymbolOptions = futuresSymbolOptions.filter((item) => {
     const keyword = symbol.trim().toLowerCase();
     if (!keyword) {
@@ -193,6 +182,31 @@ function App() {
   });
   const totalRows = result?.rows ?? 0;
   const progress = totalRows > 0 ? Math.round((cursor / totalRows) * 100) : 0;
+
+  function toggleSignalSelection(signal: Signal) {
+    const key = signalKey(signal);
+    setSelectedSignalKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+        setFocusedSignalKey((current) => (current === key ? null : current));
+      } else {
+        next.add(key);
+        setFocusedSignalKey(key);
+      }
+      return next;
+    });
+  }
+
+  function showAllSignals() {
+    setSelectedSignalKeys(new Set(allSignalKeys));
+    setFocusedSignalKey(allSignalKeys[0] ?? null);
+  }
+
+  function clearSelectedSignals() {
+    setSelectedSignalKeys(new Set());
+    setFocusedSignalKey(null);
+  }
 
   return (
     <main className="app-shell">
@@ -273,7 +287,7 @@ function App() {
             </label>
             <label>
               每次拉取K线数量
-              <input type="number" min={30} max={500} value={marketLimit} onChange={(event) => setMarketLimit(Number(event.target.value))} />
+              <input type="number" min={30} max={1000} value={marketLimit} onChange={(event) => setMarketLimit(Number(event.target.value))} />
             </label>
           </div>
           <button className="primary-action" disabled={loading} onClick={() => void pollMarket()}>{loading ? "拉取中..." : "获取实盘K线并扫描"}</button>
@@ -300,28 +314,36 @@ function App() {
             candles={result?.chart.candles ?? []}
             pivots={result?.chart.pivots ?? []}
             necklines={result?.chart.necklines ?? []}
-            signals={result?.signals ?? []}
+            signals={selectedSignals}
+            focusedSignal={focusedSignal}
           />
 
-          <div className="alert-feed">
-            <div className="panel-head compact">
-              <h2>信号发送记录</h2>
-              <span className="badge">{alerts.length} 条</span>
+          <div className="signal-display-controls">
+            <div>
+              <strong>图上显示</strong>
+              <span>{selectedCount} / {allSignals.length} 个信号</span>
             </div>
-            {alerts.length === 0 ? (
-              <p className="empty">暂无发送记录。实盘扫描中出现新信号后会显示在这里。</p>
-            ) : alerts.map((alert) => (
-              <article className={`alert-item ${alert.confirmed ? "confirmed" : ""}`} key={alert.key}>
-                <strong>{alert.title}</strong>
-                <span>{formatTime(alert.time)}</span>
-                <p>{alert.message}</p>
-              </article>
-            ))}
+            <div className="signal-display-actions">
+              <button type="button" className="compact-button" onClick={showAllSignals} disabled={allSignals.length === 0}>显示全部</button>
+              <button type="button" className="compact-button muted-button" onClick={clearSelectedSignals} disabled={selectedCount === 0}>清空</button>
+            </div>
           </div>
 
           <div className="signal-columns">
-            <SignalGroup title="确认信号" signals={confirmed} empty="暂无确认头肩顶" />
-            <SignalGroup title="疑似信号" signals={suspected} empty="暂无疑似结构" />
+            <SignalGroup
+              title="确认信号"
+              signals={confirmed}
+              empty="暂无确认头肩顶"
+              selectedSignalKeys={selectedSignalKeys}
+              onToggleSignal={toggleSignalSelection}
+            />
+            <SignalGroup
+              title="疑似信号"
+              signals={suspected}
+              empty="暂无疑似结构"
+              selectedSignalKeys={selectedSignalKeys}
+              onToggleSignal={toggleSignalSelection}
+            />
           </div>
         </section>
       </section>
@@ -390,17 +412,45 @@ function Metric({ label, value, tone }: { label: string; value: React.ReactNode;
   );
 }
 
-function SignalGroup({ title, signals, empty }: { title: string; signals: Signal[]; empty: string }) {
+function SignalGroup({
+  title,
+  signals,
+  empty,
+  selectedSignalKeys,
+  onToggleSignal,
+}: {
+  title: string;
+  signals: Signal[];
+  empty: string;
+  selectedSignalKeys: Set<string>;
+  onToggleSignal: (signal: Signal) => void;
+}) {
   return (
     <div className="signal-group">
       <h3>{title}</h3>
-      {signals.length === 0 ? <p className="empty">{empty}</p> : signals.map((signal, index) => (
-        <article className={`signal-card ${signal.confirmed ? "confirmed" : ""}`} key={`${signal.head.time}-${index}`}>
+      {signals.length === 0 ? <p className="empty">{empty}</p> : signals.map((signal, index) => {
+        const key = signalKey(signal);
+        const selected = selectedSignalKeys.has(key);
+        return (
+        <button
+          type="button"
+          className={`signal-card ${signal.confirmed ? "confirmed" : ""} ${selected ? "selected" : ""}`}
+          key={`${signal.head.time}-${index}`}
+          onClick={() => onToggleSignal(signal)}
+          aria-pressed={selected}
+        >
           <div className="signal-top">
             <strong>{signal.score}</strong>
-            <span>{patternLabel(signal.pattern)} · {signal.confirmed ? "已确认" : "疑似"}</span>
+            <span>{patternLabel(signal.pattern)} · {signal.confirmed ? "已确认" : "疑似"} · {selected ? "图上显示" : "点击显示"}</span>
           </div>
           <p>{translateResultText(signal.message)}</p>
+          <div className="signal-times">
+            <div><span>左肩</span><strong>{formatTime(signal.left_shoulder.time)}</strong></div>
+            <div><span>左颈</span><strong>{formatTime(signal.left_neck.time)}</strong></div>
+            <div><span>头部</span><strong>{formatTime(signal.head.time)}</strong></div>
+            <div><span>右颈</span><strong>{formatTime(signal.right_neck.time)}</strong></div>
+            <div><span>右肩</span><strong>{formatTime(signal.right_shoulder.time)}</strong></div>
+          </div>
           <dl>
             <div><dt>左肩</dt><dd>{formatPrice(signal.left_shoulder.price)}</dd></div>
             <div><dt>头部</dt><dd>{formatPrice(signal.head.price)}</dd></div>
@@ -410,17 +460,19 @@ function SignalGroup({ title, signals, empty }: { title: string; signals: Signal
           <ul>
             {signal.reasons.slice(0, 8).map((reason) => <li key={reason}>{translateResultText(reason)}</li>)}
           </ul>
-        </article>
-      ))}
+        </button>
+      );
+      })}
     </div>
   );
 }
 
-function KlineChartEcharts({ candles, signals }: {
+function KlineChartEcharts({ candles, signals, focusedSignal }: {
   candles: Candle[];
   pivots: PivotPoint[];
   necklines: Neckline[];
   signals: Signal[];
+  focusedSignal: Signal | null;
 }) {
   const chartRef = useRef<HTMLDivElement | null>(null);
 
@@ -489,10 +541,13 @@ function KlineChartEcharts({ candles, signals }: {
         { coord: [toIndex, calculateChartNeckline(signal.left_neck, signal.right_neck, toIndex)] },
       ];
     });
-    const start = candles.length > 160 ? Math.max(0, 100 - (160 / candles.length) * 100) : 0;
+    const defaultStart = candles.length > 160 ? Math.max(0, 100 - (160 / candles.length) * 100) : 0;
+    const focusZoom = focusedSignal ? calculateSignalZoom(focusedSignal, candles) : null;
+    const start = focusZoom?.start ?? defaultStart;
+    const end = focusZoom?.end ?? 100;
     const chartEl = chartRef.current;
     let zoomStart = start;
-    let zoomEnd = 100;
+    let zoomEnd = end;
 
     chart.setOption({
       backgroundColor: "#07100d",
@@ -570,7 +625,7 @@ function KlineChartEcharts({ candles, signals }: {
           type: "inside",
           xAxisIndex: [0, 1],
           start,
-          end: 100,
+          end,
           zoomOnMouseWheel: true,
           moveOnMouseWheel: true,
           moveOnMouseMove: true,
@@ -740,7 +795,7 @@ function KlineChartEcharts({ candles, signals }: {
       observer.disconnect();
       chart.dispose();
     };
-  }, [candles, signals]);
+  }, [candles, signals, focusedSignal]);
 
   if (candles.length === 0) {
     return <div className="chart-empty">等待 K 线数据</div>;
@@ -922,6 +977,27 @@ function calculateChartNeckline(leftNeck: PivotPoint, rightNeck: PivotPoint, cur
   }
   const slope = (rightNeck.price - leftNeck.price) / (rightNeck.index - leftNeck.index);
   return leftNeck.price + slope * (currentIndex - leftNeck.index);
+}
+
+function calculateSignalZoom(signal: Signal, candles: Candle[]) {
+  const candleCount = candles.length;
+  if (candleCount <= 0) {
+    return { start: 0, end: 100 };
+  }
+  const breakIndex = signal.break_time
+    ? candles.findIndex((candle) => candle.time === signal.break_time)
+    : -1;
+  const fromIndex = Math.max(0, signal.left_shoulder.index - 8);
+  const toIndex = Math.min(candleCount - 1, Math.max(signal.right_shoulder.index, breakIndex) + 14);
+  const minWindow = Math.min(candleCount, 36);
+  const currentWindow = toIndex - fromIndex + 1;
+  const extra = Math.max(0, minWindow - currentWindow);
+  const paddedFrom = Math.max(0, fromIndex - Math.floor(extra / 2));
+  const paddedTo = Math.min(candleCount - 1, toIndex + Math.ceil(extra / 2));
+  return {
+    start: (paddedFrom / candleCount) * 100,
+    end: ((paddedTo + 1) / candleCount) * 100,
+  };
 }
 
 function formatChartTooltip(params: unknown, candles: Candle[]) {

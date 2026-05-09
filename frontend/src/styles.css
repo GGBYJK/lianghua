@@ -434,6 +434,12 @@ button:disabled {
   font-size: 13px;
 }
 
+.muted-button {
+  border: 1px solid rgba(145, 163, 154, 0.28);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--ink);
+}
+
 .cache-note {
   margin: 8px 0 14px;
   color: var(--muted);
@@ -797,6 +803,35 @@ text {
   margin-top: 18px;
 }
 
+.signal-display-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 14px;
+}
+
+.signal-display-controls strong,
+.signal-display-controls span {
+  display: block;
+}
+
+.signal-display-controls span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.signal-display-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(96px, 1fr));
+  gap: 10px;
+}
+
 .alert-feed {
   margin-top: 18px;
 }
@@ -854,16 +889,30 @@ text {
 }
 
 .signal-card {
+  display: block;
+  width: 100%;
   border: 1px solid var(--line);
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
   padding: 16px;
   margin-bottom: 12px;
+  text-align: left;
+  font-weight: 400;
 }
 
 .signal-card.confirmed {
   border-color: rgba(216, 168, 79, 0.42);
   background: rgba(216, 168, 79, 0.075);
+}
+
+.signal-card.selected {
+  border-color: rgba(250, 204, 21, 0.78);
+  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.14);
+}
+
+.signal-card:hover {
+  filter: none;
 }
 
 .signal-top {
@@ -888,6 +937,35 @@ text {
 .signal-card p {
   color: var(--muted);
   line-height: 1.55;
+}
+
+.signal-times {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.signal-times div {
+  min-width: 0;
+  border: 1px solid rgba(231, 239, 232, 0.09);
+  border-radius: 10px;
+  background: rgba(7, 16, 13, 0.42);
+  padding: 8px;
+}
+
+.signal-times span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.signal-times strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.25;
 }
 
 dl {
@@ -966,8 +1044,14 @@ ul {
   }
 
   .signal-columns,
+  .signal-times,
   dl {
     grid-template-columns: 1fr;
+  }
+
+  .signal-display-controls {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .modal-backdrop {

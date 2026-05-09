@@ -175,6 +175,16 @@ def iter_pattern_candidates(
     candidates: list[tuple[PivotPoint, PivotPoint, PivotPoint, PivotPoint, PivotPoint]] = []
     seen: set[tuple[int, int, int, int, int]] = set()
 
+    def span_preserves_swing(start_pos: int, end_pos: int, start: PivotPoint, end: PivotPoint) -> bool:
+        skipped = pivots[start_pos + 1 : end_pos]
+        if not skipped:
+            return True
+        if start.kind == "high" and end.kind == "low":
+            return all(point.price <= start.price if point.kind == "high" else point.price >= end.price for point in skipped)
+        if start.kind == "low" and end.kind == "high":
+            return all(point.price >= start.price if point.kind == "low" else point.price <= end.price for point in skipped)
+        return False
+
     for left_shoulder_index in range(len(pivots) - 4):
         left_shoulder = pivots[left_shoulder_index]
         left_neck = pivots[left_shoulder_index + 1]
@@ -183,15 +193,24 @@ def iter_pattern_candidates(
 
         for head_index in range(left_shoulder_index + 2, len(pivots) - 2):
             head = pivots[head_index]
-            right_neck = pivots[head_index + 1]
-            right_shoulder = pivots[head_index + 2]
-            if head.kind != kinds[2] or right_neck.kind != kinds[3] or right_shoulder.kind != kinds[4]:
+            if head.kind != kinds[2] or not span_preserves_swing(left_shoulder_index + 1, head_index, left_neck, head):
                 continue
-            key = (left_shoulder.index, left_neck.index, head.index, right_neck.index, right_shoulder.index)
-            if key in seen:
-                continue
-            seen.add(key)
-            candidates.append((left_shoulder, left_neck, head, right_neck, right_shoulder))
+            for right_neck_index in range(head_index + 1, len(pivots) - 1):
+                right_neck = pivots[right_neck_index]
+                if right_neck.kind != kinds[3] or not span_preserves_swing(head_index, right_neck_index, head, right_neck):
+                    continue
+                for right_shoulder_index in range(right_neck_index + 1, len(pivots)):
+                    right_shoulder = pivots[right_shoulder_index]
+                    if (
+                        right_shoulder.kind != kinds[4]
+                        or not span_preserves_swing(right_neck_index, right_shoulder_index, right_neck, right_shoulder)
+                    ):
+                        continue
+                    key = (left_shoulder.index, left_neck.index, head.index, right_neck.index, right_shoulder.index)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    candidates.append((left_shoulder, left_neck, head, right_neck, right_shoulder))
 
     return candidates
 
@@ -518,12 +537,6 @@ def scan_head_shoulders_top(
         if not ok:
             continue
 
-        ok, reason, score = check_right_shoulder_volume_weak(df, p3, p5, config)
-        if not ok:
-            continue
-        reasons.append(reason)
-        total_score += score
-
         ok, reason, score = check_macd_top_divergence(df, p1, p3, config)
         reasons.append(reason)
         if ok:
@@ -671,6 +684,57 @@ def scan_inverse_head_shoulders(
     return signals
 
 
+def signal_end_index(signal: HeadShoulderTopSignal) -> int:
+    if signal.break_time is None:
+        return signal.right_shoulder.index
+    return max(signal.right_shoulder.index, signal.right_neck.index)
+
+
+def signal_range(signal: HeadShoulderTopSignal) -> tuple[int, int]:
+    return signal.left_shoulder.index, signal_end_index(signal)
+
+
+def signal_overlap_ratio(first: HeadShoulderTopSignal, second: HeadShoulderTopSignal) -> float:
+    first_start, first_end = signal_range(first)
+    second_start, second_end = signal_range(second)
+    overlap_start = max(first_start, second_start)
+    overlap_end = min(first_end, second_end)
+    if overlap_end < overlap_start:
+        return 0.0
+    overlap = overlap_end - overlap_start + 1
+    shorter = min(first_end - first_start + 1, second_end - second_start + 1)
+    return overlap / max(1, shorter)
+
+
+def deduplicate_overlapping_signals(signals: list[HeadShoulderTopSignal]) -> list[HeadShoulderTopSignal]:
+    def shoulder_diff(signal: HeadShoulderTopSignal) -> float:
+        return abs(signal.left_shoulder.price - signal.right_shoulder.price) / max(signal.left_shoulder.price, signal.right_shoulder.price)
+
+    def neck_diff(signal: HeadShoulderTopSignal) -> float:
+        return abs(signal.left_neck.price - signal.right_neck.price) / max(signal.left_neck.price, signal.right_neck.price)
+
+    ranked = sorted(
+        signals,
+        key=lambda signal: (
+            signal.confirmed,
+            signal.head.price,
+            -shoulder_diff(signal),
+            -neck_diff(signal),
+            signal.score,
+            -(signal.right_shoulder.index - signal.left_shoulder.index),
+            signal.break_time or signal.right_shoulder.time,
+        ),
+        reverse=True,
+    )
+    selected: list[HeadShoulderTopSignal] = []
+    for signal in ranked:
+        if any(signal_overlap_ratio(signal, existing) >= 0.7 for existing in selected):
+            continue
+        selected.append(signal)
+    selected.sort(key=lambda signal: signal.break_time or signal.right_shoulder.time)
+    return selected
+
+
 def scan_head_shoulders(
     df: pd.DataFrame,
     symbol: str,
@@ -678,13 +742,13 @@ def scan_head_shoulders(
     config: HeadShoulderTopConfig,
 ) -> list[HeadShoulderTopSignal]:
     signals = scan_head_shoulders_top(df, symbol=symbol, timeframe=timeframe, config=config)
-    signals.extend(scan_inverse_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config))
     if config.max_signal_age_bars > 0:
         min_right_shoulder_index = max(0, len(df) - config.max_signal_age_bars)
         signals = [
             signal for signal in signals
             if signal.right_shoulder.index >= min_right_shoulder_index
         ]
+    signals = deduplicate_overlapping_signals(signals)
     signals.sort(key=lambda signal: signal.break_time or signal.right_shoulder.time)
     return signals
 
