@@ -316,6 +316,93 @@ def test_head_shoulders_requires_shoulders_and_necks_within_0_4_pct() -> None:
     assert not ok
 
 
+def test_head_shoulders_requires_shoulder_height_at_least_30_pct_of_head_leg() -> None:
+    times = pd.date_range("2026-03-18 10:00:00", periods=5, freq="h")
+    config = HeadShoulderTopConfig(
+        min_head_above_shoulder_pct=0.005,
+        min_shoulder_to_head_height_ratio=0.3,
+        max_shoulder_diff_pct=0.5,
+        max_neck_diff_pct=0.5,
+        min_right_leg_to_left_leg_ratio=0.1,
+        max_right_leg_to_left_leg_ratio=10,
+        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
+        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
+    )
+
+    ok, _, _ = validate_head_shoulders_structure([
+        PivotPoint(0, times[0], 96.5, "high"),
+        PivotPoint(1, times[1], 95.0, "low"),
+        PivotPoint(2, times[2], 100.0, "high"),
+        PivotPoint(3, times[3], 95.0, "low"),
+        PivotPoint(4, times[4], 96.5, "high"),
+    ], config)
+    assert ok
+
+    left_side_too_small = [
+        PivotPoint(0, times[0], 96.4, "high"),
+        PivotPoint(1, times[1], 95.0, "low"),
+        PivotPoint(2, times[2], 100.0, "high"),
+        PivotPoint(3, times[3], 95.0, "low"),
+        PivotPoint(4, times[4], 96.5, "high"),
+    ]
+    ok, _, _ = validate_head_shoulders_structure(left_side_too_small, config)
+    assert not ok
+
+    right_side_too_small = [
+        PivotPoint(0, times[0], 96.5, "high"),
+        PivotPoint(1, times[1], 95.0, "low"),
+        PivotPoint(2, times[2], 100.0, "high"),
+        PivotPoint(3, times[3], 95.0, "low"),
+        PivotPoint(4, times[4], 96.4, "high"),
+    ]
+    ok, _, _ = validate_head_shoulders_structure(right_side_too_small, config)
+    assert not ok
+
+
+def test_head_shoulders_limits_neck_to_head_bars() -> None:
+    times = pd.date_range("2026-03-18 10:00:00", periods=5, freq="h")
+    config = HeadShoulderTopConfig(
+        min_head_above_shoulder_pct=0.005,
+        min_shoulder_to_head_height_ratio=0.3,
+        max_shoulder_diff_pct=0.5,
+        max_neck_diff_pct=0.5,
+        min_right_leg_to_left_leg_ratio=0.01,
+        max_right_leg_to_left_leg_ratio=100,
+        min_head_to_right_neck_to_left_neck_to_head_ratio=0.01,
+        max_head_to_right_neck_to_left_neck_to_head_ratio=100,
+        max_neck_to_head_bars=30,
+    )
+
+    ok, _, _ = validate_head_shoulders_structure([
+        PivotPoint(0, times[0], 97.0, "high"),
+        PivotPoint(1, times[1], 95.0, "low"),
+        PivotPoint(31, times[2], 100.0, "high"),
+        PivotPoint(61, times[3], 95.0, "low"),
+        PivotPoint(62, times[4], 97.0, "high"),
+    ], config)
+    assert ok
+
+    left_span_too_long = [
+        PivotPoint(0, times[0], 97.0, "high"),
+        PivotPoint(1, times[1], 95.0, "low"),
+        PivotPoint(32, times[2], 100.0, "high"),
+        PivotPoint(62, times[3], 95.0, "low"),
+        PivotPoint(63, times[4], 97.0, "high"),
+    ]
+    ok, _, _ = validate_head_shoulders_structure(left_span_too_long, config)
+    assert not ok
+
+    right_span_too_long = [
+        PivotPoint(0, times[0], 97.0, "high"),
+        PivotPoint(1, times[1], 95.0, "low"),
+        PivotPoint(31, times[2], 100.0, "high"),
+        PivotPoint(62, times[3], 95.0, "low"),
+        PivotPoint(63, times[4], 97.0, "high"),
+    ]
+    ok, _, _ = validate_head_shoulders_structure(right_span_too_long, config)
+    assert not ok
+
+
 def test_deduplicate_overlapping_signals_keeps_highest_ranked() -> None:
     times = pd.date_range("2026-03-18 10:00:00", periods=7, freq="h")
     left_shoulder = PivotPoint(604, times[0], 3330, "high")

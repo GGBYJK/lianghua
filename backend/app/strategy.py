@@ -11,6 +11,7 @@ class HeadShoulderTopConfig:
     pivot_left: int = 3
     pivot_right: int = 3
     min_head_above_shoulder_pct: float = 0.03
+    min_shoulder_to_head_height_ratio: float = 0.3
     max_shoulder_diff_pct: float = 0.004
     max_neck_diff_pct: float = 0.004
     min_right_leg_to_left_leg_ratio: float = 0.6
@@ -19,14 +20,14 @@ class HeadShoulderTopConfig:
     max_head_to_right_neck_to_left_neck_to_head_ratio: float = 2.0
     min_right_shoulder_ratio_to_left: float = 0.85
     right_shoulder_must_below_head: bool = True
-    enable_ma_filter: bool = True
+    enable_ma_filter: bool = False
     ma_short: int = 3
     ma_mid: int = 5
     ma_long: int = 8
     ma_periods: list[int] = field(default_factory=lambda: [5, 10, 20, 30, 60, 250])
     require_ma_bearish_alignment: bool = True
     require_close_below_ma_long: bool = True
-    enable_macd_divergence: bool = True
+    enable_macd_divergence: bool = False
     macd_fast: int = 12
     macd_slow: int = 26
     macd_signal: int = 9
@@ -34,6 +35,7 @@ class HeadShoulderTopConfig:
     use_macd_hist_for_divergence: bool = True
     break_by: str = "close"
     neckline_break_pct: float = 0.002
+    max_neck_to_head_bars: int = 30
     max_bars_after_right_shoulder: int = 30
     max_signal_age_bars: int = 0
     enable_score: bool = True
@@ -238,6 +240,28 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
     if config.right_shoulder_must_below_head and p5.price >= p3.price:
         return False, ["右肩高于或等于头部，头肩顶结构不成立"], 0
 
+    left_shoulder_to_neck_height = p1.price - p2.price
+    left_neck_to_head_height = p3.price - p2.price
+    if left_shoulder_to_neck_height <= 0 or left_neck_to_head_height <= 0:
+        return False, ["左肩、左颈、头部高度关系不成立"], 0
+    left_shoulder_height_ratio = left_shoulder_to_neck_height / left_neck_to_head_height
+    if left_shoulder_height_ratio < config.min_shoulder_to_head_height_ratio:
+        return False, [
+            f"左肩到左颈高度占左颈到头部高度不足，当前 {left_shoulder_height_ratio * 100:.2f}%，"
+            f"要求至少 {config.min_shoulder_to_head_height_ratio * 100:.2f}%"
+        ], 0
+
+    right_shoulder_to_neck_height = p5.price - p4.price
+    right_neck_to_head_height = p3.price - p4.price
+    if right_shoulder_to_neck_height <= 0 or right_neck_to_head_height <= 0:
+        return False, ["右肩、右颈、头部高度关系不成立"], 0
+    right_shoulder_height_ratio = right_shoulder_to_neck_height / right_neck_to_head_height
+    if right_shoulder_height_ratio < config.min_shoulder_to_head_height_ratio:
+        return False, [
+            f"右肩到右颈高度占右颈到头部高度不足，当前 {right_shoulder_height_ratio * 100:.2f}%，"
+            f"要求至少 {config.min_shoulder_to_head_height_ratio * 100:.2f}%"
+        ], 0
+
     left_leg_bars = max(1, p2.index - p1.index)
     right_leg_bars = max(1, p5.index - p4.index)
     leg_ratio = right_leg_bars / left_leg_bars
@@ -249,6 +273,11 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
 
     left_neck_to_head_bars = max(1, p3.index - p2.index)
     head_to_right_neck_bars = max(1, p4.index - p3.index)
+    if left_neck_to_head_bars > config.max_neck_to_head_bars:
+        return False, [f"左颈到头部超过 {config.max_neck_to_head_bars} 根K线，当前 {left_neck_to_head_bars} 根"], 0
+    if head_to_right_neck_bars > config.max_neck_to_head_bars:
+        return False, [f"头部到右颈超过 {config.max_neck_to_head_bars} 根K线，当前 {head_to_right_neck_bars} 根"], 0
+
     neck_head_ratio = head_to_right_neck_bars / left_neck_to_head_bars
     if (
         neck_head_ratio < config.min_head_to_right_neck_to_left_neck_to_head_ratio
@@ -264,7 +293,10 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
         "头部明显高于左右肩",
         f"左右肩高度接近，差异 {shoulder_diff * 100:.2f}%",
         f"两个颈线低点接近，差异 {neck_diff * 100:.2f}%",
+        f"左肩高度占左颈到头部高度 {left_shoulder_height_ratio * 100:.2f}%",
+        f"右肩高度占右颈到头部高度 {right_shoulder_height_ratio * 100:.2f}%",
         f"右颈到右肩K线数量为左肩到左颈的 {leg_ratio:.2f} 倍",
+        f"左颈到头部 {left_neck_to_head_bars} 根K线，头部到右颈 {head_to_right_neck_bars} 根K线",
         f"头部到右颈K线数量为左颈到头部的 {neck_head_ratio:.2f} 倍",
         "右肩没有过度走弱",
         "右肩低于头部",
@@ -300,6 +332,28 @@ def validate_inverse_head_shoulders_structure(
     if config.right_shoulder_must_below_head and p5.price <= p3.price:
         return False, ["Right shoulder is lower than or equal to the head; inverse structure is invalid"], 0
 
+    left_shoulder_to_neck_height = p2.price - p1.price
+    left_neck_to_head_height = p2.price - p3.price
+    if left_shoulder_to_neck_height <= 0 or left_neck_to_head_height <= 0:
+        return False, ["Left shoulder, left neck, and head height relationship is invalid"], 0
+    left_shoulder_height_ratio = left_shoulder_to_neck_height / left_neck_to_head_height
+    if left_shoulder_height_ratio < config.min_shoulder_to_head_height_ratio:
+        return False, [
+            f"Left shoulder-to-neck height is only {left_shoulder_height_ratio * 100:.2f}% of left-neck-to-head height; "
+            f"required at least {config.min_shoulder_to_head_height_ratio * 100:.2f}%"
+        ], 0
+
+    right_shoulder_to_neck_height = p4.price - p5.price
+    right_neck_to_head_height = p4.price - p3.price
+    if right_shoulder_to_neck_height <= 0 or right_neck_to_head_height <= 0:
+        return False, ["Right shoulder, right neck, and head height relationship is invalid"], 0
+    right_shoulder_height_ratio = right_shoulder_to_neck_height / right_neck_to_head_height
+    if right_shoulder_height_ratio < config.min_shoulder_to_head_height_ratio:
+        return False, [
+            f"Right shoulder-to-neck height is only {right_shoulder_height_ratio * 100:.2f}% of right-neck-to-head height; "
+            f"required at least {config.min_shoulder_to_head_height_ratio * 100:.2f}%"
+        ], 0
+
     left_leg_bars = max(1, p2.index - p1.index)
     right_leg_bars = max(1, p5.index - p4.index)
     leg_ratio = right_leg_bars / left_leg_bars
@@ -311,6 +365,11 @@ def validate_inverse_head_shoulders_structure(
 
     left_neck_to_head_bars = max(1, p3.index - p2.index)
     head_to_right_neck_bars = max(1, p4.index - p3.index)
+    if left_neck_to_head_bars > config.max_neck_to_head_bars:
+        return False, [f"Left neck to head exceeds {config.max_neck_to_head_bars} bars: {left_neck_to_head_bars}"], 0
+    if head_to_right_neck_bars > config.max_neck_to_head_bars:
+        return False, [f"Head to right neck exceeds {config.max_neck_to_head_bars} bars: {head_to_right_neck_bars}"], 0
+
     neck_head_ratio = head_to_right_neck_bars / left_neck_to_head_bars
     if (
         neck_head_ratio < config.min_head_to_right_neck_to_left_neck_to_head_ratio
@@ -326,7 +385,10 @@ def validate_inverse_head_shoulders_structure(
         "Head is clearly below both shoulders",
         f"Left and right shoulders are close; diff {shoulder_diff * 100:.2f}%",
         f"Two neckline highs are close; diff {neck_diff * 100:.2f}%",
+        f"Left shoulder height is {left_shoulder_height_ratio * 100:.2f}% of left-neck-to-head height",
+        f"Right shoulder height is {right_shoulder_height_ratio * 100:.2f}% of right-neck-to-head height",
         f"Right-neck to right-shoulder bar count is {leg_ratio:.2f}x of left-shoulder to left-neck",
+        f"Left neck to head is {left_neck_to_head_bars} bars; head to right neck is {head_to_right_neck_bars} bars",
         f"Head to right-neck bar count is {neck_head_ratio:.2f}x of left-neck to head",
         "Right shoulder has not rebounded too far",
         "Right shoulder is above the head",
@@ -490,11 +552,6 @@ def scan_head_shoulders_top(
         if not ok:
             continue
 
-        ok, reason, score = check_macd_top_divergence(df, p1, p3, config)
-        reasons.append(reason)
-        if ok:
-            total_score += score
-
         confirmed, break_index, break_time, break_price, reason, score = check_neckline_break(df, p2, p4, p5, config)
         if not confirmed:
             neckline_price = calculate_neckline_price(p2, p4, p5.index)
@@ -518,11 +575,6 @@ def scan_head_shoulders_top(
         total_score += score
         reasons.append(reason)
         assert break_index is not None
-        ok, reason, score = check_ma_bearish_filter(df, break_index, config)
-        if not ok:
-            continue
-        reasons.append(reason)
-        total_score += score
 
         if config.enable_score and total_score < config.min_score_to_alert:
             continue
@@ -569,11 +621,6 @@ def scan_inverse_head_shoulders(
         if not ok:
             continue
 
-        ok, reason, score = check_macd_bottom_divergence(df, p1, p3, config)
-        reasons.append(reason)
-        if ok:
-            total_score += score
-
         confirmed, break_index, break_time, break_price, reason, score = check_neckline_break_up(df, p2, p4, p5, config)
         if not confirmed:
             neckline_price = calculate_neckline_price(p2, p4, p5.index)
@@ -597,11 +644,6 @@ def scan_inverse_head_shoulders(
         total_score += score
         reasons.append(reason)
         assert break_index is not None
-        ok, reason, score = check_ma_bullish_filter(df, break_index, config)
-        if not ok:
-            continue
-        reasons.append(reason)
-        total_score += score
 
         if config.enable_score and total_score < config.min_score_to_alert:
             continue

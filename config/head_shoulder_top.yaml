@@ -2,6 +2,7 @@ default:
   pivot_left: 3
   pivot_right: 3
   min_head_above_shoulder_pct: 0.03
+  min_shoulder_to_head_height_ratio: 0.3
   max_shoulder_diff_pct: 0.004
   max_neck_diff_pct: 0.004
   min_right_leg_to_left_leg_ratio: 0.6
@@ -10,14 +11,14 @@ default:
   max_head_to_right_neck_to_left_neck_to_head_ratio: 2.0
   min_right_shoulder_ratio_to_left: 0.85
   right_shoulder_must_below_head: true
-  enable_ma_filter: true
+  enable_ma_filter: false
   ma_short: 3
   ma_mid: 5
   ma_long: 8
   ma_periods: [5, 10, 20, 30, 60, 250]
   require_ma_bearish_alignment: false
   require_close_below_ma_long: true
-  enable_macd_divergence: true
+  enable_macd_divergence: false
   macd_fast: 12
   macd_slow: 26
   macd_signal: 9
@@ -25,6 +26,7 @@ default:
   use_macd_hist_for_divergence: true
   break_by: close
   neckline_break_pct: 0.002
+  max_neck_to_head_bars: 30
   max_bars_after_right_shoulder: 30
   max_signal_age_bars: 0
   enable_score: true

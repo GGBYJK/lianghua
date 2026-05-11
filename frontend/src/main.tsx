@@ -26,6 +26,7 @@ const numericFields = [
   "pivot_left",
   "pivot_right",
   "min_head_above_shoulder_pct",
+  "min_shoulder_to_head_height_ratio",
   "max_shoulder_diff_pct",
   "max_neck_diff_pct",
   "min_right_leg_to_left_leg_ratio",
@@ -33,17 +34,13 @@ const numericFields = [
   "min_head_to_right_neck_to_left_neck_to_head_ratio",
   "max_head_to_right_neck_to_left_neck_to_head_ratio",
   "neckline_break_pct",
+  "max_neck_to_head_bars",
   "max_bars_after_right_shoulder",
   "max_signal_age_bars",
   "min_score_to_alert",
 ];
 
-const booleanFields = [
-  "enable_ma_filter",
-  "require_ma_bearish_alignment",
-  "require_close_below_ma_long",
-  "enable_macd_divergence",
-];
+const booleanFields: string[] = [];
 
 const futuresSymbolOptions = [
   { symbol: "SR2609", name: "白糖2609" },
@@ -376,18 +373,20 @@ function App() {
                   </label>
                 ))}
               </div>
-              <div className="switch-list">
-                {booleanFields.map((field) => (
-                  <label key={field} className="switch-row">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(config[field])}
-                      onChange={(event) => setConfig((prev) => ({ ...prev, [field]: event.target.checked }))}
-                    />
-                    {fieldLabel(field)}
-                  </label>
-                ))}
-              </div>
+              {booleanFields.length > 0 && (
+                <div className="switch-list">
+                  {booleanFields.map((field) => (
+                    <label key={field} className="switch-row">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(config[field])}
+                        onChange={(event) => setConfig((prev) => ({ ...prev, [field]: event.target.checked }))}
+                      />
+                      {fieldLabel(field)}
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="modal-actions">
               <button type="button" onClick={() => setConfigOpen(false)}>保存配置</button>
@@ -1152,6 +1151,7 @@ function fieldLabel(field: string) {
     pivot_left: "左侧拐点窗口",
     pivot_right: "右侧拐点窗口",
     min_head_above_shoulder_pct: "头部高于肩部比例",
+    min_shoulder_to_head_height_ratio: "肩颈高度/颈头高度下限",
     max_shoulder_diff_pct: "左右肩最大差异",
     max_neck_diff_pct: "颈线低点最大差异",
     min_right_leg_to_left_leg_ratio: "右颈到右肩/左肩到左颈下限",
@@ -1159,13 +1159,10 @@ function fieldLabel(field: string) {
     min_head_to_right_neck_to_left_neck_to_head_ratio: "头部到右颈/左颈到头部下限",
     max_head_to_right_neck_to_left_neck_to_head_ratio: "头部到右颈/左颈到头部上限",
     neckline_break_pct: "颈线跌破幅度",
+    max_neck_to_head_bars: "颈部到头部最大K线数",
     max_bars_after_right_shoulder: "右肩后观察K线数",
     max_signal_age_bars: "仅返回最近N根内信号",
     min_score_to_alert: "最低提醒评分",
-    enable_ma_filter: "启用均线过滤",
-    require_ma_bearish_alignment: "要求均线空头排列",
-    require_close_below_ma_long: "要求收盘价低于长均线",
-    enable_macd_divergence: "启用 MACD 顶背离",
   };
   return labels[field] ?? field;
 }
