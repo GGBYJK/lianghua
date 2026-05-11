@@ -1,7 +1,6 @@
 default:
   pivot_left: 3
   pivot_right: 3
-  min_head_above_shoulder_pct: 0.03
   min_shoulder_to_head_height_ratio: 0.3
   max_shoulder_diff_pct: 0.004
   max_neck_diff_pct: 0.004
@@ -36,7 +35,6 @@ timeframes:
   1m:
     pivot_left: 5
     pivot_right: 5
-    min_head_above_shoulder_pct: 0.0005
     min_right_leg_to_left_leg_ratio: 0.35
     max_right_leg_to_left_leg_ratio: 3.0
     min_head_to_right_neck_to_left_neck_to_head_ratio: 0.35
@@ -46,43 +44,36 @@ timeframes:
   5m:
     pivot_left: 3
     pivot_right: 3
-    min_head_above_shoulder_pct: 0.0005
     macd_price_new_high_pct: 0.0005
     max_signal_age_bars: 80
     min_score_to_alert: 70
   15m:
     pivot_left: 3
     pivot_right: 3
-    min_head_above_shoulder_pct: 0.001
     max_bars_after_right_shoulder: 40
     min_score_to_alert: 70
   30m:
     pivot_left: 3
     pivot_right: 3
-    min_head_above_shoulder_pct: 0.006
     macd_price_new_high_pct: 0.003
     min_score_to_alert: 70
   1h:
     pivot_left: 3
     pivot_right: 3
-    min_head_above_shoulder_pct: 0.008
     macd_price_new_high_pct: 0.004
     min_score_to_alert: 70
 
 symbols:
   rb:
     5m:
-      min_head_above_shoulder_pct: 0.025
       max_shoulder_diff_pct: 0.004
       max_neck_diff_pct: 0.004
   ag:
     5m:
-      min_head_above_shoulder_pct: 0.035
       max_shoulder_diff_pct: 0.004
       max_neck_diff_pct: 0.004
   hc:
     1h:
-      min_head_above_shoulder_pct: 0.003
       min_right_leg_to_left_leg_ratio: 0.2
       max_right_leg_to_left_leg_ratio: 5.0
       min_head_to_right_neck_to_left_neck_to_head_ratio: 0.2

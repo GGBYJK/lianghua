@@ -25,7 +25,6 @@ echarts.use([
 const numericFields = [
   "pivot_left",
   "pivot_right",
-  "min_head_above_shoulder_pct",
   "min_shoulder_to_head_height_ratio",
   "max_shoulder_diff_pct",
   "max_neck_diff_pct",
@@ -1150,7 +1149,6 @@ function fieldLabel(field: string) {
   const labels: Record<string, string> = {
     pivot_left: "左侧拐点窗口",
     pivot_right: "右侧拐点窗口",
-    min_head_above_shoulder_pct: "头部高于肩部比例",
     min_shoulder_to_head_height_ratio: "肩颈高度/颈头高度下限",
     max_shoulder_diff_pct: "左右肩最大差异",
     max_neck_diff_pct: "颈线低点最大差异",
@@ -1179,6 +1177,7 @@ function translateResultText(text: string) {
     .replace("neckline", "颈线")
     .replace("Neckline", "颈线")
     .replace("head is clearly above both shoulders", "头部明显高于左右肩")
+    .replace("Head is below both shoulders", "头部低于左右肩")
     .replace(/shoulders are close, diff ([\d.]+)%/g, "左右肩高度接近，差异 $1%")
     .replace(/neck lows are close, diff ([\d.]+)%/g, "两个颈线低点接近，差异 $1%")
     .replace("right shoulder is not excessively weak", "右肩没有过度走弱")

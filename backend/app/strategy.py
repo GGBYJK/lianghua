@@ -10,7 +10,6 @@ import pandas as pd
 class HeadShoulderTopConfig:
     pivot_left: int = 3
     pivot_right: int = 3
-    min_head_above_shoulder_pct: float = 0.03
     min_shoulder_to_head_height_ratio: float = 0.3
     max_shoulder_diff_pct: float = 0.004
     max_neck_diff_pct: float = 0.004
@@ -222,9 +221,8 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
     if [p.kind for p in points] != ["high", "low", "high", "low", "high"]:
         return False, ["结构不是高-低-高-低-高"], 0
 
-    min_required_head = max(p1.price, p5.price) * (1 + config.min_head_above_shoulder_pct)
-    if p3.price < min_required_head:
-        return False, [f"头部不够明显，要求至少高于肩部 {config.min_head_above_shoulder_pct * 100:.2f}%"], 0
+    if p3.price < max(p1.price, p5.price):
+        return False, ["头部低于左肩或右肩，头肩顶结构不成立"], 0
 
     shoulder_diff = abs(p1.price - p5.price) / max(p1.price, p5.price)
     if shoulder_diff > config.max_shoulder_diff_pct:
@@ -290,7 +288,7 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
         ], 0
 
     return True, [
-        "头部明显高于左右肩",
+        "头部高于左右肩",
         f"左右肩高度接近，差异 {shoulder_diff * 100:.2f}%",
         f"两个颈线低点接近，差异 {neck_diff * 100:.2f}%",
         f"左肩高度占左颈到头部高度 {left_shoulder_height_ratio * 100:.2f}%",
@@ -313,9 +311,8 @@ def validate_inverse_head_shoulders_structure(
     if [p.kind for p in points] != ["low", "high", "low", "high", "low"]:
         return False, ["Structure is not low-high-low-high-low"], 0
 
-    max_required_head = min(p1.price, p5.price) * (1 - config.min_head_above_shoulder_pct)
-    if p3.price > max_required_head:
-        return False, [f"Head is not low enough; require at least {config.min_head_above_shoulder_pct * 100:.2f}% below shoulders"], 0
+    if p3.price > min(p1.price, p5.price):
+        return False, ["Head is above the left or right shoulder; inverse structure is invalid"], 0
 
     shoulder_diff = abs(p1.price - p5.price) / max(p1.price, p5.price)
     if shoulder_diff > config.max_shoulder_diff_pct:
@@ -382,7 +379,7 @@ def validate_inverse_head_shoulders_structure(
         ], 0
 
     return True, [
-        "Head is clearly below both shoulders",
+        "Head is below both shoulders",
         f"Left and right shoulders are close; diff {shoulder_diff * 100:.2f}%",
         f"Two neckline highs are close; diff {neck_diff * 100:.2f}%",
         f"Left shoulder height is {left_shoulder_height_ratio * 100:.2f}% of left-neck-to-head height",

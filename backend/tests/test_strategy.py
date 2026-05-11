@@ -59,7 +59,7 @@ def test_csv_aliases() -> None:
 
 def test_config_merge_override() -> None:
     config = load_head_shoulder_config("rb2405", "5m", {"min_score_to_alert": 65})
-    assert config.min_head_above_shoulder_pct == 0.025
+    assert config.min_shoulder_to_head_height_ratio == 0.3
     assert config.min_score_to_alert == 65
 
 
@@ -139,7 +139,6 @@ def test_sample_scan_finds_confirmed_signal() -> None:
     config = HeadShoulderTopConfig(
         pivot_left=2,
         pivot_right=2,
-        min_head_above_shoulder_pct=0.03,
         max_shoulder_diff_pct=0.06,
         max_neck_diff_pct=0.04,
         ma_short=3,
@@ -165,7 +164,6 @@ def test_mirrored_sample_finds_confirmed_inverse_signal() -> None:
     config = HeadShoulderTopConfig(
         pivot_left=2,
         pivot_right=2,
-        min_head_above_shoulder_pct=0.03,
         max_shoulder_diff_pct=0.06,
         max_neck_diff_pct=0.04,
         ma_short=3,
@@ -185,7 +183,6 @@ def test_combined_scan_returns_pattern_field() -> None:
     config = HeadShoulderTopConfig(
         pivot_left=2,
         pivot_right=2,
-        min_head_above_shoulder_pct=0.03,
         max_shoulder_diff_pct=0.06,
         max_neck_diff_pct=0.04,
         ma_short=3,
@@ -211,7 +208,6 @@ def test_combined_scan_includes_inverse_pattern() -> None:
     config = HeadShoulderTopConfig(
         pivot_left=2,
         pivot_right=2,
-        min_head_above_shoulder_pct=0.03,
         max_shoulder_diff_pct=0.06,
         max_neck_diff_pct=0.04,
         ma_short=3,
@@ -277,7 +273,6 @@ def test_pattern_candidates_can_skip_minor_swings_between_left_shoulder_and_neck
 def test_head_shoulders_requires_shoulders_and_necks_within_0_4_pct() -> None:
     times = pd.date_range("2026-03-18 10:00:00", periods=5, freq="h")
     config = HeadShoulderTopConfig(
-        min_head_above_shoulder_pct=0.005,
         max_shoulder_diff_pct=0.004,
         max_neck_diff_pct=0.004,
         min_right_leg_to_left_leg_ratio=0.1,
@@ -319,7 +314,6 @@ def test_head_shoulders_requires_shoulders_and_necks_within_0_4_pct() -> None:
 def test_head_shoulders_requires_shoulder_height_at_least_30_pct_of_head_leg() -> None:
     times = pd.date_range("2026-03-18 10:00:00", periods=5, freq="h")
     config = HeadShoulderTopConfig(
-        min_head_above_shoulder_pct=0.005,
         min_shoulder_to_head_height_ratio=0.3,
         max_shoulder_diff_pct=0.5,
         max_neck_diff_pct=0.5,
@@ -362,7 +356,6 @@ def test_head_shoulders_requires_shoulder_height_at_least_30_pct_of_head_leg() -
 def test_head_shoulders_limits_neck_to_head_bars() -> None:
     times = pd.date_range("2026-03-18 10:00:00", periods=5, freq="h")
     config = HeadShoulderTopConfig(
-        min_head_above_shoulder_pct=0.005,
         min_shoulder_to_head_height_ratio=0.3,
         max_shoulder_diff_pct=0.5,
         max_neck_diff_pct=0.5,
