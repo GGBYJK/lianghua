@@ -76,6 +76,9 @@ class HeadShoulderTopSignal:
     reasons: list[str]
     break_time: pd.Timestamp | None = None
     break_price: float | None = None
+    retest_time: pd.Timestamp | None = None
+    retest_price: float | None = None
+    alert_type: str = "neckline_break"
     message: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -83,6 +86,7 @@ class HeadShoulderTopSignal:
             "symbol": self.symbol,
             "timeframe": self.timeframe,
             "pattern": self.pattern,
+            "alert_type": self.alert_type,
             "left_shoulder": self.left_shoulder.to_dict(),
             "left_neck": self.left_neck.to_dict(),
             "head": self.head.to_dict(),
@@ -94,6 +98,8 @@ class HeadShoulderTopSignal:
             "reasons": self.reasons,
             "break_time": self.break_time.isoformat() if self.break_time is not None else None,
             "break_price": self.break_price,
+            "retest_time": self.retest_time.isoformat() if self.retest_time is not None else None,
+            "retest_price": self.retest_price,
             "message": self.message,
         }
 
@@ -163,6 +169,14 @@ def calculate_neckline_price(left_neck: PivotPoint, right_neck: PivotPoint, curr
     return left_neck.price + slope * (current_index - left_neck.index)
 
 
+def min_head_to_neck_height_by_price(head_price: float) -> float:
+    if head_price <= 2000:
+        return 5
+    if head_price < 5000:
+        return 8
+    return 10
+
+
 def iter_pattern_candidates(
     pivots: list[PivotPoint],
     kinds: list[str],
@@ -223,6 +237,15 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
 
     if p3.price < max(p1.price, p5.price):
         return False, ["头部低于左肩或右肩，头肩顶结构不成立"], 0
+
+    min_head_to_neck_height = min_head_to_neck_height_by_price(p3.price)
+    left_head_to_neck_height = p3.price - p2.price
+    right_head_to_neck_height = p3.price - p4.price
+    if left_head_to_neck_height <= min_head_to_neck_height and right_head_to_neck_height <= min_head_to_neck_height:
+        return False, [
+            f"C到A1/A2高度不足：C-A1 {left_head_to_neck_height:.2f}，C-A2 {right_head_to_neck_height:.2f}，"
+            f"要求至少一侧大于 {min_head_to_neck_height:.2f}"
+        ], 0
 
     shoulder_diff = abs(p1.price - p5.price) / max(p1.price, p5.price)
     if shoulder_diff > config.max_shoulder_diff_pct:
@@ -509,6 +532,26 @@ def check_neckline_break(
     return False, None, None, None, "尚未有效跌破颈线", 0
 
 
+def check_right_shoulder_retest(
+    df: pd.DataFrame,
+    right_shoulder: PivotPoint,
+    config: HeadShoulderTopConfig,
+) -> tuple[bool, int | None, pd.Timestamp | None, float | None, str, int]:
+    start_index = right_shoulder.index + 1
+    end_index = min(len(df) - 1, right_shoulder.index + config.max_bars_after_right_shoulder)
+    if start_index >= len(df):
+        return False, None, None, None, "右肩确认后没有足够K线观察是否重新触及右肩价", 0
+    for i in range(start_index, end_index + 1):
+        retest_price = float(df.loc[i, "high"])
+        if retest_price < right_shoulder.price:
+            continue
+        return True, i, df.loc[i, "datetime"], retest_price, (
+            f"右肩确认后{config.max_bars_after_right_shoulder}根K线内，价格重新触及或超过右肩价："
+            f"当前最高 {retest_price:.2f}，右肩价 {right_shoulder.price:.2f}"
+        ), 0
+    return False, None, None, None, "右肩确认后观察期内未重新触及右肩价", 0
+
+
 def check_neckline_break_up(
     df: pd.DataFrame,
     left_neck: PivotPoint,
@@ -549,24 +592,55 @@ def scan_head_shoulders_top(
         if not ok:
             continue
 
-        confirmed, break_index, break_time, break_price, reason, score = check_neckline_break(df, p2, p4, p5, config)
-        if not confirmed:
-            neckline_price = calculate_neckline_price(p2, p4, p5.index)
+        neckline_price = calculate_neckline_price(p2, p4, p5.index)
+        signals.append(HeadShoulderTopSignal(
+            symbol=symbol,
+            timeframe=timeframe,
+            pattern="head_shoulders_top",
+            alert_type="right_shoulder_confirmed",
+            left_shoulder=p1,
+            left_neck=p2,
+            head=p3,
+            right_neck=p4,
+            right_shoulder=p5,
+            neckline_price=neckline_price,
+            confirmed=False,
+            score=total_score,
+            reasons=reasons + ["右肩已确认，等待跌破颈线确认"],
+            message=(
+                f"{symbol} {timeframe} 头肩顶右肩确认，当前评分 {total_score}。"
+                f"右肩价 {p5.price:.2f}，颈线价 {neckline_price:.2f}。"
+            ),
+        ))
+
+        retested, retest_index, retest_time, retest_price, retest_reason, _ = check_right_shoulder_retest(df, p5, config)
+        if retested:
+            assert retest_index is not None
+            retest_neckline_price = calculate_neckline_price(p2, p4, retest_index)
             signals.append(HeadShoulderTopSignal(
                 symbol=symbol,
                 timeframe=timeframe,
                 pattern="head_shoulders_top",
+                alert_type="right_shoulder_retest",
                 left_shoulder=p1,
                 left_neck=p2,
                 head=p3,
                 right_neck=p4,
                 right_shoulder=p5,
-                neckline_price=neckline_price,
+                neckline_price=retest_neckline_price,
                 confirmed=False,
                 score=total_score,
-                reasons=reasons + [reason],
-                message=f"{symbol} {timeframe} 疑似头肩顶，等待跌破颈线确认，当前评分 {total_score}",
+                reasons=reasons + [retest_reason],
+                retest_time=retest_time,
+                retest_price=retest_price,
+                message=(
+                    f"{symbol} {timeframe} 头肩顶右肩确认后价格重新触及或超过右肩价。"
+                    f"当前最高 {retest_price:.2f}，右肩价 {p5.price:.2f}。"
+                ),
             ))
+
+        confirmed, break_index, break_time, break_price, reason, score = check_neckline_break(df, p2, p4, p5, config)
+        if not confirmed:
             continue
 
         total_score += score
@@ -581,6 +655,7 @@ def scan_head_shoulders_top(
             symbol=symbol,
             timeframe=timeframe,
             pattern="head_shoulders_top",
+            alert_type="neckline_break",
             left_shoulder=p1,
             left_neck=p2,
             head=p3,
@@ -693,6 +768,8 @@ def signal_overlap_ratio(first: HeadShoulderTopSignal, second: HeadShoulderTopSi
 
 
 def signals_conflict(first: HeadShoulderTopSignal, second: HeadShoulderTopSignal) -> bool:
+    if first.alert_type != second.alert_type:
+        return False
     if signal_overlap_ratio(first, second) >= 0.7:
         return True
     return (

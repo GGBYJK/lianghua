@@ -152,7 +152,7 @@ function App() {
         continue;
       }
       seenSignalKeys.current.add(key);
-      const title = `${patternLabel(signal.pattern)}${signal.confirmed ? "确认信号" : "疑似信号"}`;
+      const title = `${patternLabel(signal.pattern)}${alertTypeLabel(signal.alert_type)}`;
       const message = translateResultText(signal.message);
       sendBrowserNotification(title, message);
     }
@@ -1013,12 +1013,23 @@ function KlineChart({ candles, pivots, necklines, signals }: {
 function signalKey(signal: Signal) {
   return [
     signal.pattern,
-    signal.confirmed ? "确认" : "疑似",
+    signal.alert_type,
     signal.left_shoulder.index,
     signal.head.index,
     signal.right_shoulder.index,
     signal.break_time ?? "未跌破",
+    signal.retest_time ?? "未回测",
   ].join("-");
+}
+
+function alertTypeLabel(alertType: Signal["alert_type"]) {
+  if (alertType === "right_shoulder_confirmed") {
+    return "右肩确认";
+  }
+  if (alertType === "right_shoulder_retest") {
+    return "右肩价触及";
+  }
+  return "跌破颈线";
 }
 
 function patternLabel(pattern: Signal["pattern"]) {
