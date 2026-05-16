@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,8 +15,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import load_head_shoulder_config
 from .csv_loader import read_csv_bytes
 from .market_client import MarketApiError, fetch_kline_from_market, fetch_market_symbols, get_market_settings
-from .schemas import DefaultConfigResponse, HealthResponse, ScanResponse
+from .monitor import monitor_watch_pool_loop, scan_watch_pool_once
+from .schemas import DefaultConfigResponse, HeadShouldersAlertResponse, HeadShouldersAlertSummaryResponse, HealthResponse, ScanResponse, WatchPoolItemCreate, WatchPoolItemResponse, WatchPoolItemUpdate
 from .strategy import add_macd_columns, add_ma_columns, find_pivots, prepare_chart_payload, scan_head_shoulders
+from .watch_pool_store import (
+    WatchPoolStoreError,
+    create_watch_pool_item,
+    delete_watch_pool_item,
+    get_head_shoulders_alert,
+    init_watch_pool_store,
+    list_head_shoulders_alerts,
+    list_watch_pool_items,
+    update_watch_pool_item,
+)
 
 
 @dataclass
@@ -26,10 +39,34 @@ class SimulationSession:
     cursor: int = 0
 
 
-app = FastAPI(title="头肩顶识别服务", version="0.2.0")
-simulation_sessions: dict[str, SimulationSession] = {}
 ROOT_DIR = Path(__file__).resolve().parents[2]
 SAMPLE_DATA_PATH = ROOT_DIR / "sample_data" / "head_shoulders_sample.csv"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    stop_event = asyncio.Event()
+    monitor_task: asyncio.Task[None] | None = None
+    try:
+        init_watch_pool_store()
+        monitor_task = asyncio.create_task(monitor_watch_pool_loop(stop_event))
+    except WatchPoolStoreError:
+        # 数据库不可用时保留行情扫描能力；检测池接口会返回明确错误。
+        pass
+    try:
+        yield
+    finally:
+        stop_event.set()
+        if monitor_task is not None:
+            monitor_task.cancel()
+            try:
+                await monitor_task
+            except asyncio.CancelledError:
+                pass
+
+
+app = FastAPI(title="头肩顶识别服务", version="0.2.0", lifespan=lifespan)
+simulation_sessions: dict[str, SimulationSession] = {}
 
 app.add_middleware(
     CORSMiddleware,
@@ -107,6 +144,69 @@ async def market_symbols(symbol_type: str = "FUTURES", symbols: str | None = Non
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"产品列表查询失败：{exc}") from exc
+
+
+@app.get("/api/watch-pool", response_model=list[WatchPoolItemResponse])
+def get_watch_pool() -> list[WatchPoolItemResponse]:
+    try:
+        return [WatchPoolItemResponse(**item) for item in list_watch_pool_items()]
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/api/watch-pool", response_model=WatchPoolItemResponse)
+def create_watch_pool(payload: WatchPoolItemCreate) -> WatchPoolItemResponse:
+    try:
+        item = create_watch_pool_item(payload.model_dump())
+        return WatchPoolItemResponse(**item)
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.put("/api/watch-pool/{item_id}", response_model=WatchPoolItemResponse)
+def update_watch_pool(item_id: str, payload: WatchPoolItemUpdate) -> WatchPoolItemResponse:
+    try:
+        item = update_watch_pool_item(item_id, payload.model_dump())
+        return WatchPoolItemResponse(**item)
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=404 if "不存在" in str(exc) else 503, detail=str(exc)) from exc
+
+
+@app.delete("/api/watch-pool/{item_id}")
+def delete_watch_pool(item_id: str) -> dict[str, Any]:
+    try:
+        delete_watch_pool_item(item_id)
+        return {"id": item_id, "deleted": True}
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=404 if "不存在" in str(exc) else 503, detail=str(exc)) from exc
+
+
+@app.get("/api/alerts", response_model=list[HeadShouldersAlertSummaryResponse])
+def get_alerts(symbol: str | None = None, timeframe: str | None = None, limit: int = 100) -> list[HeadShouldersAlertSummaryResponse]:
+    try:
+        return [
+            HeadShouldersAlertSummaryResponse(**item)
+            for item in list_head_shoulders_alerts(symbol=symbol, timeframe=timeframe, limit=limit)
+        ]
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/alerts/{alert_id}", response_model=HeadShouldersAlertResponse)
+def get_alert(alert_id: str) -> HeadShouldersAlertResponse:
+    try:
+        return HeadShouldersAlertResponse(**get_head_shoulders_alert(alert_id))
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=404 if "不存在" in str(exc) else 503, detail=str(exc)) from exc
+
+
+@app.post("/api/alerts/scan-once")
+async def scan_alerts_once(limit: int = 420) -> dict[str, Any]:
+    try:
+        inserted = await scan_watch_pool_once(limit=limit)
+        return {"inserted": inserted}
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/market/scan", response_model=ScanResponse)

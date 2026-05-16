@@ -96,3 +96,39 @@ export type MarketSymbolsResponse = {
   symbol_type: string;
   symbols: MarketSymbol[];
 };
+
+export type WatchPoolItem = {
+  id: string;
+  name: string;
+  symbol: string;
+  timeframe: string;
+  enabled: boolean;
+  monitor_minutes: number;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type WatchPoolPayload = {
+  name: string;
+  symbol: string;
+  timeframe: string;
+  enabled: boolean;
+  monitor_minutes: number;
+};
+
+export type HeadShouldersAlert = {
+  id: string;
+  watch_pool_id: string;
+  symbol: string;
+  timeframe: string;
+  pattern: Signal["pattern"];
+  alert_type: Signal["alert_type"];
+  score: number;
+  message: string;
+  unique_key: string;
+  signal_payload: Signal;
+  chart_payload: ScanResponse["chart"];
+  created_at: string | null;
+};
+
+export type HeadShouldersAlertSummary = Omit<HeadShouldersAlert, "chart_payload">;

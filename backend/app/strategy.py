@@ -78,7 +78,7 @@ class HeadShoulderTopSignal:
     break_price: float | None = None
     retest_time: pd.Timestamp | None = None
     retest_price: float | None = None
-    alert_type: str = "neckline_break"
+    alert_type: str = "right_shoulder_confirmed"
     message: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -266,21 +266,19 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
     if left_shoulder_to_neck_height <= 0 or left_neck_to_head_height <= 0:
         return False, ["左肩、左颈、头部高度关系不成立"], 0
     left_shoulder_height_ratio = left_shoulder_to_neck_height / left_neck_to_head_height
-    if left_shoulder_height_ratio < config.min_shoulder_to_head_height_ratio:
-        return False, [
-            f"左肩到左颈高度占左颈到头部高度不足，当前 {left_shoulder_height_ratio * 100:.2f}%，"
-            f"要求至少 {config.min_shoulder_to_head_height_ratio * 100:.2f}%"
-        ], 0
-
     right_shoulder_to_neck_height = p5.price - p4.price
     right_neck_to_head_height = p3.price - p4.price
     if right_shoulder_to_neck_height <= 0 or right_neck_to_head_height <= 0:
         return False, ["右肩、右颈、头部高度关系不成立"], 0
     right_shoulder_height_ratio = right_shoulder_to_neck_height / right_neck_to_head_height
-    if right_shoulder_height_ratio < config.min_shoulder_to_head_height_ratio:
+    if (
+        left_shoulder_height_ratio < config.min_shoulder_to_head_height_ratio
+        and right_shoulder_height_ratio < config.min_shoulder_to_head_height_ratio
+    ):
         return False, [
-            f"右肩到右颈高度占右颈到头部高度不足，当前 {right_shoulder_height_ratio * 100:.2f}%，"
-            f"要求至少 {config.min_shoulder_to_head_height_ratio * 100:.2f}%"
+            f"左右肩到颈线高度占颈线到头部高度均不足，左侧 {left_shoulder_height_ratio * 100:.2f}%，"
+            f"右侧 {right_shoulder_height_ratio * 100:.2f}%，要求至少一侧达到 "
+            f"{config.min_shoulder_to_head_height_ratio * 100:.2f}%"
         ], 0
 
     left_leg_bars = max(1, p2.index - p1.index)
@@ -337,6 +335,15 @@ def validate_inverse_head_shoulders_structure(
     if p3.price > min(p1.price, p5.price):
         return False, ["Head is above the left or right shoulder; inverse structure is invalid"], 0
 
+    min_head_to_neck_height = min_head_to_neck_height_by_price(p3.price)
+    left_head_to_neck_height = p2.price - p3.price
+    right_head_to_neck_height = p4.price - p3.price
+    if left_head_to_neck_height <= min_head_to_neck_height and right_head_to_neck_height <= min_head_to_neck_height:
+        return False, [
+            f"C to A1/A2 height is insufficient: A1-C {left_head_to_neck_height:.2f}, "
+            f"A2-C {right_head_to_neck_height:.2f}; at least one side must be greater than {min_head_to_neck_height:.2f}"
+        ], 0
+
     shoulder_diff = abs(p1.price - p5.price) / max(p1.price, p5.price)
     if shoulder_diff > config.max_shoulder_diff_pct:
         return False, [f"Left and right shoulder diff too large: {shoulder_diff * 100:.2f}%"], 0
@@ -357,21 +364,20 @@ def validate_inverse_head_shoulders_structure(
     if left_shoulder_to_neck_height <= 0 or left_neck_to_head_height <= 0:
         return False, ["Left shoulder, left neck, and head height relationship is invalid"], 0
     left_shoulder_height_ratio = left_shoulder_to_neck_height / left_neck_to_head_height
-    if left_shoulder_height_ratio < config.min_shoulder_to_head_height_ratio:
-        return False, [
-            f"Left shoulder-to-neck height is only {left_shoulder_height_ratio * 100:.2f}% of left-neck-to-head height; "
-            f"required at least {config.min_shoulder_to_head_height_ratio * 100:.2f}%"
-        ], 0
 
     right_shoulder_to_neck_height = p4.price - p5.price
     right_neck_to_head_height = p4.price - p3.price
     if right_shoulder_to_neck_height <= 0 or right_neck_to_head_height <= 0:
         return False, ["Right shoulder, right neck, and head height relationship is invalid"], 0
     right_shoulder_height_ratio = right_shoulder_to_neck_height / right_neck_to_head_height
-    if right_shoulder_height_ratio < config.min_shoulder_to_head_height_ratio:
+    if (
+        left_shoulder_height_ratio < config.min_shoulder_to_head_height_ratio
+        and right_shoulder_height_ratio < config.min_shoulder_to_head_height_ratio
+    ):
         return False, [
-            f"Right shoulder-to-neck height is only {right_shoulder_height_ratio * 100:.2f}% of right-neck-to-head height; "
-            f"required at least {config.min_shoulder_to_head_height_ratio * 100:.2f}%"
+            f"Both shoulder-to-neck height ratios are insufficient: left {left_shoulder_height_ratio * 100:.2f}%, "
+            f"right {right_shoulder_height_ratio * 100:.2f}%; at least one side must reach "
+            f"{config.min_shoulder_to_head_height_ratio * 100:.2f}%"
         ], 0
 
     left_leg_bars = max(1, p2.index - p1.index)
@@ -639,6 +645,8 @@ def scan_head_shoulders_top(
                 ),
             ))
 
+        continue
+
         confirmed, break_index, break_time, break_price, reason, score = check_neckline_break(df, p2, p4, p5, config)
         if not confirmed:
             continue
@@ -692,6 +700,25 @@ def scan_inverse_head_shoulders(
         ok, reasons, total_score = validate_inverse_head_shoulders_structure([p1, p2, p3, p4, p5], config)
         if not ok:
             continue
+
+        neckline_price = calculate_neckline_price(p2, p4, p5.index)
+        signals.append(HeadShoulderTopSignal(
+            symbol=symbol,
+            timeframe=timeframe,
+            pattern="inverse_head_shoulders",
+            alert_type="right_shoulder_confirmed",
+            left_shoulder=p1,
+            left_neck=p2,
+            head=p3,
+            right_neck=p4,
+            right_shoulder=p5,
+            neckline_price=neckline_price,
+            confirmed=False,
+            score=total_score,
+            reasons=reasons,
+            message=f"{symbol} {timeframe} inverse head-and-shoulders right shoulder confirmed, score {total_score}",
+        ))
+        continue
 
         confirmed, break_index, break_time, break_price, reason, score = check_neckline_break_up(df, p2, p4, p5, config)
         if not confirmed:
@@ -768,6 +795,8 @@ def signal_overlap_ratio(first: HeadShoulderTopSignal, second: HeadShoulderTopSi
 
 
 def signals_conflict(first: HeadShoulderTopSignal, second: HeadShoulderTopSignal) -> bool:
+    if first.pattern != second.pattern:
+        return False
     if first.alert_type != second.alert_type:
         return False
     if signal_overlap_ratio(first, second) >= 0.7:
@@ -794,11 +823,20 @@ def deduplicate_overlapping_signals(signals: list[HeadShoulderTopSignal]) -> lis
     def left_neck_distance(signal: HeadShoulderTopSignal) -> int:
         return signal.head.index - signal.left_neck.index
 
+    def inverse_neck_priority(signal: HeadShoulderTopSignal) -> tuple[float, float]:
+        if signal.pattern != "inverse_head_shoulders":
+            return (0.0, 0.0)
+        return (
+            signal.right_neck.price,
+            -abs(signal.left_neck.price - signal.right_neck.price),
+        )
+
     ranked = sorted(
         signals,
         key=lambda signal: (
             signal.confirmed,
             signal.head.price if signal.pattern == "head_shoulders_top" else -signal.head.price,
+            *inverse_neck_priority(signal),
             -left_neck_distance(signal) if signal.pattern == "head_shoulders_top" else left_neck_distance(signal),
             -left_setup_distance(signal) if signal.pattern == "head_shoulders_top" else left_setup_distance(signal),
             signal.right_neck.index,

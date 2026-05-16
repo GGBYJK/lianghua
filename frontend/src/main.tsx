@@ -1,11 +1,11 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import * as echarts from "echarts/core";
 import { BarChart, CandlestickChart, LineChart } from "echarts/charts";
 import { AxisPointerComponent, DataZoomComponent, GridComponent, LegendComponent, MarkLineComponent, MarkPointComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { getDefaultConfig, getMarketSettings, scanMarket } from "./api";
-import type { Candle, MarketSettings, Neckline, PivotPoint, ScanResponse, Signal } from "./types";
+import { createWatchPoolItem, deleteWatchPoolItem, getDefaultConfig, getHeadShouldersAlert, getMarketSettings, listHeadShouldersAlerts, listWatchPool, scanMarket, scanWatchPoolOnce, updateWatchPoolItem } from "./api";
+import type { Candle, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, Neckline, PivotPoint, ScanResponse, Signal, WatchPoolItem as ApiWatchPoolItem } from "./types";
 import "./styles.css";
 
 echarts.use([
@@ -63,6 +63,9 @@ const futuresSymbolOptions = [
 const MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache_v6";
 const LEGACY_MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache";
 const MARKET_SCAN_CACHE_VERSION = 6;
+const EMPTY_CANDLES: Candle[] = [];
+const EMPTY_PIVOTS: PivotPoint[] = [];
+const EMPTY_NECKLINES: Neckline[] = [];
 
 type CachedMarketScan = {
   version: number;
@@ -70,6 +73,43 @@ type CachedMarketScan = {
   limit: number;
   result: ScanResponse;
 };
+
+type WatchPoolItem = {
+  id: string;
+  name: string;
+  symbol: string;
+  timeframe: string;
+  enabled: boolean;
+  monitorMinutes: number;
+  updatedAt: string;
+};
+
+type WatchPoolDraft = Omit<WatchPoolItem, "id" | "updatedAt">;
+type FeedbackTab = "alerts" | "current" | "detail";
+type DetailSource =
+  | { kind: "alert"; alert: HeadShouldersAlert }
+  | { kind: "current"; signal: Signal }
+  | null;
+
+const emptyWatchDraft: WatchPoolDraft = {
+  name: "",
+  symbol: "",
+  timeframe: "1m",
+  enabled: true,
+  monitorMinutes: 30,
+};
+
+function mapWatchPoolItem(item: ApiWatchPoolItem): WatchPoolItem {
+  return {
+    id: item.id,
+    name: item.name,
+    symbol: item.symbol,
+    timeframe: item.timeframe,
+    enabled: item.enabled,
+    monitorMinutes: item.monitor_minutes,
+    updatedAt: item.updated_at ? formatTime(item.updated_at) : "--",
+  };
+}
 
 function App() {
   const [symbol, setSymbol] = useState("c0");
@@ -87,6 +127,14 @@ function App() {
   const [marketLastFetch, setMarketLastFetch] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [symbolPickerOpen, setSymbolPickerOpen] = useState(false);
+  const [watchPool, setWatchPool] = useState<WatchPoolItem[]>([]);
+  const [watchDraft, setWatchDraft] = useState<WatchPoolDraft>(emptyWatchDraft);
+  const [editingWatchId, setEditingWatchId] = useState<string | null>(null);
+  const [watchEditorOpen, setWatchEditorOpen] = useState(false);
+  const [feedbackTab, setFeedbackTab] = useState<FeedbackTab>("alerts");
+  const [monitorAlerts, setMonitorAlerts] = useState<HeadShouldersAlertSummary[]>([]);
+  const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
+  const [detailSource, setDetailSource] = useState<DetailSource>(null);
   const seenSignalKeys = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -102,9 +150,23 @@ function App() {
   }, []);
 
   useEffect(() => {
-    document.body.classList.toggle("modal-open", configOpen);
+    listWatchPool()
+      .then((items) => setWatchPool(items.map(mapWatchPoolItem)))
+      .catch((err) => setError(`检测池数据库读取失败：${err.message}`));
+  }, []);
+
+  useEffect(() => {
+    refreshMonitorAlerts();
+    const timer = window.setInterval(() => {
+      void refreshMonitorAlerts();
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    document.body.classList.toggle("modal-open", configOpen || watchEditorOpen);
     return () => document.body.classList.remove("modal-open");
-  }, [configOpen]);
+  }, [configOpen, watchEditorOpen]);
 
   async function pollMarket() {
     setLoading(true);
@@ -158,12 +220,18 @@ function App() {
     }
   }
 
-  const confirmed = result?.signals.filter((signal) => signal.confirmed) ?? [];
-  const suspected = result?.signals.filter((signal) => !signal.confirmed) ?? [];
-  const selectedSignals = result?.signals.filter((signal) => selectedSignalKeys.has(signalKey(signal))) ?? [];
-  const focusedSignal = selectedSignals.find((signal) => signalKey(signal) === focusedSignalKey) ?? null;
-  const allSignals = result?.signals ?? [];
-  const allSignalKeys = allSignals.map(signalKey);
+  const currentSignals = useMemo(() => result?.signals ?? [], [result]);
+  const confirmed = useMemo(() => currentSignals.filter((signal) => signal.confirmed), [currentSignals]);
+  const suspected = useMemo(() => currentSignals.filter((signal) => !signal.confirmed), [currentSignals]);
+  const selectedSignals = useMemo(
+    () => currentSignals.filter((signal) => selectedSignalKeys.has(signalKey(signal))),
+    [currentSignals, selectedSignalKeys],
+  );
+  const focusedSignal = useMemo(
+    () => selectedSignals.find((signal) => signalKey(signal) === focusedSignalKey) ?? null,
+    [focusedSignalKey, selectedSignals],
+  );
+  const currentSignalKeys = useMemo(() => currentSignals.map(signalKey), [currentSignals]);
   const selectedCount = selectedSignals.length;
   const visibleFuturesSymbolOptions = futuresSymbolOptions.filter((item) => {
     const keyword = symbol.trim().toLowerCase();
@@ -191,8 +259,8 @@ function App() {
   }
 
   function showAllSignals() {
-    setSelectedSignalKeys(new Set(allSignalKeys));
-    setFocusedSignalKey(allSignalKeys[0] ?? null);
+    setSelectedSignalKeys(new Set(currentSignalKeys));
+    setFocusedSignalKey(currentSignalKeys[0] ?? null);
   }
 
   function clearSelectedSignals() {
@@ -200,31 +268,166 @@ function App() {
     setFocusedSignalKey(null);
   }
 
+  async function refreshMonitorAlerts() {
+    try {
+      const alerts = await listHeadShouldersAlerts(100);
+      setMonitorAlerts(alerts);
+    } catch (err) {
+      setError(err instanceof Error ? `监控消息读取失败：${err.message}` : "监控消息读取失败");
+    }
+  }
+
+  function startCreateWatch() {
+    setEditingWatchId(null);
+    setWatchDraft(emptyWatchDraft);
+    setWatchEditorOpen(true);
+  }
+
+  function startEditWatch(item: WatchPoolItem) {
+    setEditingWatchId(item.id);
+    setWatchDraft({
+      name: item.name,
+      symbol: item.symbol,
+      timeframe: item.timeframe,
+      enabled: item.enabled,
+      monitorMinutes: item.monitorMinutes,
+    });
+    setWatchEditorOpen(true);
+  }
+
+  function resetWatchDraft() {
+    setEditingWatchId(null);
+    setWatchDraft(emptyWatchDraft);
+    setWatchEditorOpen(false);
+  }
+
+  async function saveWatchPoolItem() {
+    const normalizedSymbol = watchDraft.symbol.trim();
+    if (!normalizedSymbol) {
+      setError("监控品种不能为空");
+      return;
+    }
+    const payload = {
+      name: watchDraft.name.trim() || normalizedSymbol,
+      symbol: normalizedSymbol,
+      timeframe: watchDraft.timeframe,
+      enabled: watchDraft.enabled,
+      monitor_minutes: Math.max(1, Number(watchDraft.monitorMinutes) || 1),
+    };
+    try {
+      const saved = editingWatchId
+        ? await updateWatchPoolItem(editingWatchId, payload)
+        : await createWatchPoolItem(payload);
+      const nextItem = mapWatchPoolItem(saved);
+      setWatchPool((items) => {
+        if (!editingWatchId) {
+          return [nextItem, ...items];
+        }
+        return items.map((item) => item.id === editingWatchId ? nextItem : item);
+      });
+      resetWatchDraft();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "检测池保存失败");
+    }
+  }
+
+  async function removeWatchPoolItem(id: string) {
+    try {
+      await deleteWatchPoolItem(id);
+      setWatchPool((items) => items.filter((item) => item.id !== id));
+      if (editingWatchId === id) {
+        resetWatchDraft();
+      }
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "检测池删除失败");
+    }
+  }
+
+  async function toggleWatchPoolEnabled(item: WatchPoolItem) {
+    try {
+      const saved = await updateWatchPoolItem(item.id, {
+        name: item.name,
+        symbol: item.symbol,
+        timeframe: item.timeframe,
+        enabled: !item.enabled,
+        monitor_minutes: item.monitorMinutes,
+      });
+      const nextItem = mapWatchPoolItem(saved);
+      setWatchPool((items) => items.map((current) => current.id === item.id ? nextItem : current));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "检测池状态切换失败");
+    }
+  }
+
+  function selectCurrentSignal(signal: Signal) {
+    const key = signalKey(signal);
+    setSelectedSignalKeys(new Set([key]));
+    setFocusedSignalKey(key);
+    setDetailSource({ kind: "current", signal });
+    setFeedbackTab("detail");
+  }
+
+  async function selectMonitorAlert(alert: HeadShouldersAlertSummary) {
+    try {
+      const fullAlert = await getHeadShouldersAlert(alert.id);
+      setSelectedAlertId(fullAlert.id);
+      setResult((current) => ({
+        symbol: fullAlert.symbol,
+        timeframe: fullAlert.timeframe,
+        rows: fullAlert.chart_payload.candles.length,
+        start_time: fullAlert.chart_payload.candles[0]?.time ?? current?.start_time ?? null,
+        end_time: fullAlert.chart_payload.candles[fullAlert.chart_payload.candles.length - 1]?.time ?? current?.end_time ?? null,
+        config: current?.config ?? {},
+        signals: [fullAlert.signal_payload],
+        chart: fullAlert.chart_payload,
+      }));
+      const key = signalKey(fullAlert.signal_payload);
+      setSelectedSignalKeys(new Set([key]));
+      setFocusedSignalKey(key);
+      setDetailSource({ kind: "alert", alert: fullAlert });
+      setFeedbackTab("detail");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "监控消息详情读取失败");
+    }
+  }
+
+  async function scanWatchPoolNow() {
+    try {
+      await scanWatchPoolOnce(marketLimit);
+      await refreshMonitorAlerts();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "监控池扫描失败");
+    }
+  }
+
   return (
     <main className="app-shell">
-
-      <section className="workspace">
+      <section className="trading-desk">
         <aside className="control-panel">
           <div className="control-head">
             <div>
-              <p className="eyebrow">Live Scan</p>
-              <h2>实盘操作</h2>
+              <p className="eyebrow">Kline Config</p>
+              <h2>K线图配置</h2>
             </div>
             <button className="icon-button" type="button" onClick={() => setConfigOpen(true)} aria-label="打开配置">
-              配置
+              策略参数
             </button>
           </div>
           <div className="progress-box">
             <div className="progress-meta">
-              <span>接口地址</span>
+              <span>行情接口</span>
               <strong>{marketSettings?.api_key_set === "是" ? "已配置" : "未配置"}</strong>
             </div>
-            <p>{marketSettings?.provider ?? "行情源"}：{marketSettings?.base_url ?? "未知"}，参数 {marketSettings?.market_module ?? "period"}。未配置时，请先设置对应密钥。</p>
+            <p>{marketSettings?.provider ?? "行情源"}：{marketSettings?.base_url ?? "未知"}</p>
             {marketLastFetch && <p>最近拉取：{marketLastFetch}</p>}
           </div>
           <div className="market-form">
             <div className="symbol-combobox">
-              <label htmlFor="symbol-input">合约代码</label>
+              <label htmlFor="symbol-input">监控品种</label>
               <div className="symbol-input-row">
                 <input
                   id="symbol-input"
@@ -234,7 +437,7 @@ function App() {
                     setSymbolPickerOpen(true);
                   }}
                   onFocus={() => setSymbolPickerOpen(true)}
-                  placeholder="选择合约或手动输入，例如 hc2610"
+                  placeholder="例如 c0 / m2609"
                   autoComplete="off"
                 />
                 <button
@@ -267,26 +470,26 @@ function App() {
               )}
             </div>
             <label>
-              周期
+              监控周期
               <select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}>
-                <option value="1m">1m</option>
-                <option value="5m">5m</option>
-                <option value="15m">15m</option>
-                <option value="30m">30m</option>
-                <option value="1h">1h</option>
-                <option value="1d">1d</option>
+                <option value="1m">1分钟</option>
+                <option value="5m">5分钟</option>
+                <option value="15m">15分钟</option>
+                <option value="30m">30分钟</option>
+                <option value="1h">1小时</option>
+                <option value="1d">日线</option>
               </select>
             </label>
             <label>
-              每次拉取K线数量
+              拉取K线数量
               <input type="number" min={30} max={1000} value={marketLimit} onChange={(event) => setMarketLimit(Number(event.target.value))} />
             </label>
           </div>
-          <button className="primary-action" disabled={loading} onClick={() => void pollMarket()}>{loading ? "拉取中..." : "获取实盘K线并扫描"}</button>
+          <button className="primary-action" disabled={loading} onClick={() => void pollMarket()}>{loading ? "扫描中..." : "获取K线并检测"}</button>
           {error && <div className="error-box">{error}</div>}
           <div className="progress-box">
             <div className="progress-meta">
-              <span>{result ? "本次扫描完成" : "等待实盘拉取"}</span>
+              <span>{result ? "本次扫描完成" : "等待扫描"}</span>
               <strong>{progress}%</strong>
             </div>
             <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
@@ -294,50 +497,63 @@ function App() {
           </div>
         </aside>
 
-        <section className="result-panel">
-          <div className="panel-head">
-            <div>
-              <h2>实时K线结构</h2>
-              <p>{result ? `${result.start_time} - ${result.end_time}` : "输入合约代码和周期后，点击获取实盘K线开始扫描。"} </p>
+        <section className="main-stage">
+          <section className="result-panel chart-panel">
+            <div className="panel-head">
+              <div>
+                <h2>实时K线结构</h2>
+                <p>{result ? `${result.start_time} - ${result.end_time}` : "选择左侧配置后获取K线，点击右侧消息可定位头肩顶区间。"} </p>
+              </div>
+              <span className="badge">{result?.symbol ?? symbol} / {result?.timeframe ?? timeframe}</span>
             </div>
-            <span className="badge">{result?.symbol ?? symbol} / {result?.timeframe ?? timeframe}</span>
-          </div>
-          <KlineChartEcharts
-            candles={result?.chart.candles ?? []}
-            pivots={result?.chart.pivots ?? []}
-            necklines={result?.chart.necklines ?? []}
-            signals={selectedSignals}
-            focusedSignal={focusedSignal}
-          />
-
-          <div className="signal-display-controls">
-            <div>
-              <strong>图上显示</strong>
-              <span>{selectedCount} / {allSignals.length} 个信号</span>
-            </div>
-            <div className="signal-display-actions">
-              <button type="button" className="compact-button" onClick={showAllSignals} disabled={allSignals.length === 0}>显示全部</button>
-              <button type="button" className="compact-button muted-button" onClick={clearSelectedSignals} disabled={selectedCount === 0}>清空</button>
-            </div>
-          </div>
-
-          <div className="signal-columns">
-            <SignalGroup
-              title="确认信号"
-              signals={confirmed}
-              empty="暂无确认头肩顶"
-              selectedSignalKeys={selectedSignalKeys}
-              onToggleSignal={toggleSignalSelection}
+            <KlineChartEcharts
+              candles={result?.chart.candles ?? EMPTY_CANDLES}
+              pivots={result?.chart.pivots ?? EMPTY_PIVOTS}
+              necklines={result?.chart.necklines ?? EMPTY_NECKLINES}
+              signals={selectedSignals}
+              focusedSignal={focusedSignal}
             />
-            <SignalGroup
-              title="疑似信号"
-              signals={suspected}
-              empty="暂无疑似结构"
-              selectedSignalKeys={selectedSignalKeys}
-              onToggleSignal={toggleSignalSelection}
-            />
-          </div>
+            <div className="signal-display-controls">
+              <div>
+                <strong>图上显示</strong>
+                <span>{selectedCount} / {currentSignals.length} 条当前图结果</span>
+              </div>
+              <div className="signal-display-actions">
+                <button type="button" className="compact-button" onClick={showAllSignals} disabled={currentSignals.length === 0}>显示全部</button>
+                <button type="button" className="compact-button muted-button" onClick={clearSelectedSignals} disabled={selectedCount === 0}>清空</button>
+              </div>
+            </div>
+          </section>
+
+      <WatchPool
+        items={watchPool}
+        draft={watchDraft}
+        editingId={editingWatchId}
+        editorOpen={watchEditorOpen}
+        onDraftChange={setWatchDraft}
+        onNew={startCreateWatch}
+        onSave={saveWatchPoolItem}
+        onCancel={resetWatchDraft}
+        onEdit={startEditWatch}
+        onDelete={removeWatchPoolItem}
+        onToggleEnabled={toggleWatchPoolEnabled}
+      />
         </section>
+
+        <aside className="feedback-panel">
+          <FeedbackTabs
+            activeTab={feedbackTab}
+            onTabChange={setFeedbackTab}
+            monitorAlerts={monitorAlerts}
+            currentSignals={currentSignals}
+            selectedAlertId={selectedAlertId}
+            selectedSignalKey={focusedSignalKey}
+            detailSource={detailSource}
+            onSelectAlert={(alert) => void selectMonitorAlert(alert)}
+            onSelectCurrentSignal={selectCurrentSignal}
+            onScanNow={() => void scanWatchPoolNow()}
+          />
+        </aside>
       </section>
 
       {configOpen && (
@@ -403,6 +619,333 @@ function Metric({ label, value, tone }: { label: string; value: React.ReactNode;
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function WatchPool({
+  items,
+  draft,
+  editingId,
+  editorOpen,
+  onDraftChange,
+  onNew,
+  onSave,
+  onCancel,
+  onEdit,
+  onDelete,
+  onToggleEnabled,
+}: {
+  items: WatchPoolItem[];
+  draft: WatchPoolDraft;
+  editingId: string | null;
+  editorOpen: boolean;
+  onDraftChange: React.Dispatch<React.SetStateAction<WatchPoolDraft>>;
+  onNew: () => void;
+  onSave: () => void;
+  onCancel: () => void;
+  onEdit: (item: WatchPoolItem) => void;
+  onDelete: (id: string) => void;
+  onToggleEnabled: (item: WatchPoolItem) => void;
+}) {
+  return (
+    <section className="result-panel pool-panel">
+      <div className="pool-head">
+        <div>
+          <p className="eyebrow">Watch Pool</p>
+          <h2>品种检测池子</h2>
+        </div>
+        <div className="pool-head-actions">
+          <span className="badge">{items.filter((item) => item.enabled).length} 个监控中</span>
+          <button type="button" className="compact-button" onClick={onNew}>新增品种</button>
+        </div>
+      </div>
+      <div className="pool-card-grid" aria-label="品种检测池子">
+        {items.map((item) => (
+          <article className="pool-card" key={item.id}>
+            <div className="pool-card-top">
+              <div>
+                <strong>{item.name}</strong>
+                <small>{item.symbol}</small>
+              </div>
+              <span className={item.enabled ? "status-pill on" : "status-pill"}>{item.enabled ? "开启" : "关闭"}</span>
+            </div>
+            <div className="pool-card-meta">
+              <span>周期 <b>{item.timeframe}</b></span>
+              <span>时长 <b>{item.monitorMinutes} 分钟</b></span>
+              <span>更新 <b>{item.updatedAt}</b></span>
+            </div>
+            <div className="row-actions">
+              <button type="button" className={item.enabled ? "muted-button" : ""} onClick={() => onToggleEnabled(item)}>
+                {item.enabled ? "关闭监控" : "开启监控"}
+              </button>
+              <button type="button" onClick={() => onEdit(item)}>修改</button>
+              <button type="button" className="muted-button" onClick={() => onDelete(item.id)}>删除</button>
+            </div>
+          </article>
+        ))}
+      </div>
+      {items.length === 0 && <p className="empty">暂无检测品种，点击“新增品种”创建监控项。</p>}
+      {editorOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}>
+          <section
+            className="watch-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="watch-editor-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">Watch Pool</p>
+                <h2 id="watch-editor-title">{editingId ? "修改检测品种" : "新增检测品种"}</h2>
+              </div>
+              <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭检测品种编辑">
+                关闭
+              </button>
+            </div>
+            <div className="pool-editor modal-form">
+              <label>
+                品种名称
+                <input
+                  value={draft.name}
+                  onChange={(event) => onDraftChange((prev) => ({ ...prev, name: event.target.value }))}
+                  placeholder="玉米"
+                />
+              </label>
+              <label>
+                监控品种
+                <input
+                  value={draft.symbol}
+                  onChange={(event) => onDraftChange((prev) => ({ ...prev, symbol: event.target.value }))}
+                  placeholder="c0"
+                />
+              </label>
+              <label>
+                监控周期
+                <select
+                  value={draft.timeframe}
+                  onChange={(event) => onDraftChange((prev) => ({ ...prev, timeframe: event.target.value }))}
+                >
+                  <option value="1m">1分钟</option>
+                  <option value="5m">5分钟</option>
+                  <option value="15m">15分钟</option>
+                  <option value="30m">30分钟</option>
+                  <option value="1h">1小时</option>
+                </select>
+              </label>
+              <label>
+                检测时长
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.monitorMinutes}
+                  onChange={(event) => onDraftChange((prev) => ({ ...prev, monitorMinutes: Number(event.target.value) }))}
+                />
+              </label>
+              <label className="pool-toggle">
+                <input
+                  type="checkbox"
+                  checked={draft.enabled}
+                  onChange={(event) => onDraftChange((prev) => ({ ...prev, enabled: event.target.checked }))}
+                />
+                监控开关
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="muted-button" onClick={onCancel}>取消</button>
+              <button type="button" onClick={onSave}>{editingId ? "保存修改" : "新增品种"}</button>
+            </div>
+          </section>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function FeedbackTabs({
+  activeTab,
+  onTabChange,
+  monitorAlerts,
+  currentSignals,
+  selectedAlertId,
+  selectedSignalKey,
+  detailSource,
+  onSelectAlert,
+  onSelectCurrentSignal,
+  onScanNow,
+}: {
+  activeTab: FeedbackTab;
+  onTabChange: (tab: FeedbackTab) => void;
+  monitorAlerts: HeadShouldersAlertSummary[];
+  currentSignals: Signal[];
+  selectedAlertId: string | null;
+  selectedSignalKey: string | null;
+  detailSource: DetailSource;
+  onSelectAlert: (alert: HeadShouldersAlertSummary) => void;
+  onSelectCurrentSignal: (signal: Signal) => void;
+  onScanNow: () => void;
+}) {
+  return (
+    <section className="message-panel feedback-tabs-panel">
+      <div className="feedback-head">
+        <div>
+          <p className="eyebrow">Feedback</p>
+          <h2>右侧反馈</h2>
+        </div>
+        <span className="badge">{monitorAlerts.length} 条监控消息</span>
+      </div>
+      <div className="feedback-tabs" role="tablist">
+        <button type="button" className={activeTab === "alerts" ? "active" : ""} onClick={() => onTabChange("alerts")}>监控消息</button>
+        <button type="button" className={activeTab === "current" ? "active" : ""} onClick={() => onTabChange("current")}>当前图结果</button>
+        <button type="button" className={activeTab === "detail" ? "active" : ""} onClick={() => onTabChange("detail")}>详情</button>
+      </div>
+      {activeTab === "alerts" && (
+        <MonitorAlertFeed
+          alerts={monitorAlerts}
+          selectedId={selectedAlertId}
+          onSelect={onSelectAlert}
+          onScanNow={onScanNow}
+        />
+      )}
+      {activeTab === "current" && (
+        <CurrentSignalFeed
+          signals={currentSignals}
+          selectedKey={selectedSignalKey}
+          onSelect={onSelectCurrentSignal}
+        />
+      )}
+      {activeTab === "detail" && <FeedbackDetail source={detailSource} />}
+    </section>
+  );
+}
+
+function MonitorAlertFeed({
+  alerts,
+  selectedId,
+  onSelect,
+  onScanNow,
+}: {
+  alerts: HeadShouldersAlertSummary[];
+  selectedId: string | null;
+  onSelect: (alert: HeadShouldersAlertSummary) => void;
+  onScanNow: () => void;
+}) {
+  return (
+    <>
+      <div className="message-filter">
+        <span>来源：品种检测池子</span>
+        <span>去重：形态关键点</span>
+        <button type="button" className="compact-button" onClick={onScanNow}>立即扫描</button>
+      </div>
+      <div className="message-list">
+        {alerts.length === 0 ? (
+          <p className="empty">暂无监控消息。开启检测池品种后，后台识别到头肩顶会写入这里。</p>
+        ) : alerts.map((alert) => (
+          <button
+            type="button"
+            className={`message-item ${alert.alert_type === "neckline_break" ? "confirmed" : ""} ${selectedId === alert.id ? "selected" : ""}`}
+            key={alert.id}
+            onClick={() => onSelect(alert)}
+          >
+            <div>
+              <strong>{alert.symbol} / {alert.timeframe}</strong>
+              <span>{patternLabel(alert.pattern)} · {alertTypeLabel(alert.alert_type)}</span>
+            </div>
+            <b>{alert.score}</b>
+            <small>{alert.created_at ? formatTime(alert.created_at) : "--"}</small>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function CurrentSignalFeed({
+  signals,
+  selectedKey,
+  onSelect,
+}: {
+  signals: Signal[];
+  selectedKey: string | null;
+  onSelect: (signal: Signal) => void;
+}) {
+  return (
+    <>
+      <div className="message-filter">
+        <span>来源：当前K线图搜索</span>
+        <span>不会写入监控消息</span>
+      </div>
+      <div className="message-list">
+        {signals.length === 0 ? (
+          <p className="empty">当前图暂无头肩顶结果。左侧直接搜索识别到的结果会显示在这里。</p>
+        ) : signals.map((signal) => {
+          const key = signalKey(signal);
+          return (
+            <button
+              type="button"
+              className={`message-item ${signal.confirmed ? "confirmed" : ""} ${selectedKey === key ? "selected" : ""}`}
+              key={key}
+              onClick={() => onSelect(signal)}
+            >
+              <div>
+                <strong>{signal.symbol} / {signal.timeframe}</strong>
+                <span>{patternLabel(signal.pattern)} · {alertTypeLabel(signal.alert_type)}</span>
+              </div>
+              <b>{signal.score}</b>
+              <small>{formatTime(signal.break_time ?? signal.retest_time ?? signal.right_shoulder.time)}</small>
+            </button>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function FeedbackDetail({ source }: { source: DetailSource }) {
+  const signal = source?.kind === "alert" ? source.alert.signal_payload : source?.signal ?? null;
+  const sourceLabel = source?.kind === "alert" ? "监控消息" : source?.kind === "current" ? "当前图结果" : "";
+  return (
+    <SignalDetail signal={signal} sourceLabel={sourceLabel} />
+  );
+}
+
+function SignalDetail({ signal, sourceLabel = "" }: { signal: Signal | null; sourceLabel?: string }) {
+  if (!signal) {
+    return (
+      <section className="detail-panel inline-detail-panel">
+        <div className="feedback-head">
+          <h2>详情</h2>
+        </div>
+        <p className="empty">选择一条监控消息或当前图结果后显示头肩顶区间、价格和检测原因。</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="detail-panel inline-detail-panel">
+      <div className="feedback-head">
+        <div>
+          <p className="eyebrow">Detail</p>
+          <h2>检测详情</h2>
+        </div>
+        <span className="badge">{sourceLabel || alertTypeLabel(signal.alert_type)}</span>
+      </div>
+      <div className="detail-score">
+        <strong>{signal.score}</strong>
+        <p>{translateResultText(signal.message)}</p>
+      </div>
+      <div className="detail-grid">
+        <div><span>左肩</span><strong>{formatPrice(signal.left_shoulder.price)}</strong><small>{formatTime(signal.left_shoulder.time)}</small></div>
+        <div><span>左颈</span><strong>{formatPrice(signal.left_neck.price)}</strong><small>{formatTime(signal.left_neck.time)}</small></div>
+        <div><span>头部</span><strong>{formatPrice(signal.head.price)}</strong><small>{formatTime(signal.head.time)}</small></div>
+        <div><span>右颈</span><strong>{formatPrice(signal.right_neck.price)}</strong><small>{formatTime(signal.right_neck.time)}</small></div>
+        <div><span>右肩</span><strong>{formatPrice(signal.right_shoulder.price)}</strong><small>{formatTime(signal.right_shoulder.time)}</small></div>
+        <div><span>颈线价</span><strong>{formatPrice(signal.neckline_price)}</strong><small>{signal.confirmed ? "已触发" : "观察中"}</small></div>
+      </div>
+      <ul className="detail-reasons">
+        {signal.reasons.slice(0, 10).map((reason) => <li key={reason}>{translateResultText(reason)}</li>)}
+      </ul>
+    </section>
   );
 }
 

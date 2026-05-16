@@ -33,7 +33,9 @@ from app.strategy import (
     scan_head_shoulders,
     scan_head_shoulders_top,
     scan_inverse_head_shoulders,
+    validate_inverse_head_shoulders_structure,
 )
+from app.monitor import build_signal_unique_key
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -151,10 +153,29 @@ def test_sample_scan_finds_confirmed_signal() -> None:
         min_score_to_alert=70,
     )
     signals = scan_head_shoulders_top(df, "rb2405", "5m", config)
-    assert any(signal.confirmed for signal in signals)
+    assert any(signal.alert_type == "right_shoulder_confirmed" for signal in signals)
 
 
-def test_top_scan_emits_right_shoulder_and_neckline_alert_types() -> None:
+def test_monitor_unique_key_uses_pattern_key_points_and_trigger_time() -> None:
+    signal = {
+        "symbol": "c0",
+        "timeframe": "1m",
+        "pattern": "head_shoulders_top",
+        "alert_type": "neckline_break",
+        "left_shoulder": {"time": "2026-05-12T09:00:00"},
+        "head": {"time": "2026-05-12T09:10:00"},
+        "right_shoulder": {"time": "2026-05-12T09:20:00"},
+        "break_time": "2026-05-12T09:25:00",
+        "retest_time": None,
+    }
+    assert build_signal_unique_key(signal) == (
+        "c0|1m|head_shoulders_top|neckline_break|"
+        "2026-05-12T09:00:00|2026-05-12T09:10:00|"
+        "2026-05-12T09:20:00|2026-05-12T09:25:00"
+    )
+
+
+def test_top_scan_emits_right_shoulder_alert_type_only() -> None:
     df = pd.read_csv(SAMPLE)
     config = HeadShoulderTopConfig(
         pivot_left=2,
@@ -172,7 +193,7 @@ def test_top_scan_emits_right_shoulder_and_neckline_alert_types() -> None:
     signals = scan_head_shoulders_top(df, "rb2405", "5m", config)
     alert_types = {signal.alert_type for signal in signals}
     assert "right_shoulder_confirmed" in alert_types
-    assert "neckline_break" in alert_types
+    assert "neckline_break" not in alert_types
 
 
 def test_right_shoulder_retest_uses_first_touch_only() -> None:
@@ -238,7 +259,7 @@ def test_mirrored_sample_finds_confirmed_inverse_signal() -> None:
         min_score_to_alert=70,
     )
     signals = scan_inverse_head_shoulders(mirrored, "rb2405", "5m", config)
-    assert any(signal.confirmed for signal in signals)
+    assert any(signal.alert_type == "right_shoulder_confirmed" for signal in signals)
 
 
 def test_combined_scan_returns_pattern_field() -> None:
@@ -414,7 +435,70 @@ def test_head_shoulders_requires_price_tier_head_to_neck_height() -> None:
         assert ok
 
 
-def test_head_shoulders_requires_shoulder_height_at_least_30_pct_of_head_leg() -> None:
+def test_inverse_head_shoulders_requires_price_tier_head_to_neck_height() -> None:
+    times = pd.date_range("2026-05-15 13:33:00", periods=5, freq="min")
+    config = HeadShoulderTopConfig(
+        min_shoulder_to_head_height_ratio=0.01,
+        max_shoulder_diff_pct=0.5,
+        max_neck_diff_pct=0.5,
+        min_right_leg_to_left_leg_ratio=0.1,
+        max_right_leg_to_left_leg_ratio=10,
+        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
+        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
+    )
+
+    ok, reasons, _ = validate_inverse_head_shoulders_structure([
+        PivotPoint(0, times[0], 3449, "low"),
+        PivotPoint(1, times[1], 3455, "high"),
+        PivotPoint(2, times[2], 3448, "low"),
+        PivotPoint(3, times[3], 3454, "high"),
+        PivotPoint(4, times[4], 3450, "low"),
+    ], config)
+
+    assert not ok
+    assert "height is insufficient" in reasons[0]
+
+
+def test_inverse_head_shoulders_price_tier_height_boundaries() -> None:
+    times = pd.date_range("2026-05-15 13:33:00", periods=5, freq="min")
+    config = HeadShoulderTopConfig(
+        min_shoulder_to_head_height_ratio=0.01,
+        max_shoulder_diff_pct=0.5,
+        max_neck_diff_pct=0.5,
+        min_right_leg_to_left_leg_ratio=0.1,
+        max_right_leg_to_left_leg_ratio=10,
+        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
+        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
+    )
+
+    cases = [
+        (2000, 5),
+        (3000, 8),
+        (5000, 10),
+    ]
+    for head_price, required_height in cases:
+        exact_threshold = [
+            PivotPoint(0, times[0], head_price + 1, "low"),
+            PivotPoint(1, times[1], head_price + required_height, "high"),
+            PivotPoint(2, times[2], head_price, "low"),
+            PivotPoint(3, times[3], head_price + required_height, "high"),
+            PivotPoint(4, times[4], head_price + 1, "low"),
+        ]
+        ok, _, _ = validate_inverse_head_shoulders_structure(exact_threshold, config)
+        assert not ok
+
+        one_side_above_threshold = [
+            PivotPoint(0, times[0], head_price + 1, "low"),
+            PivotPoint(1, times[1], head_price + required_height + 0.01, "high"),
+            PivotPoint(2, times[2], head_price, "low"),
+            PivotPoint(3, times[3], head_price + required_height, "high"),
+            PivotPoint(4, times[4], head_price + 1, "low"),
+        ]
+        ok, _, _ = validate_inverse_head_shoulders_structure(one_side_above_threshold, config)
+        assert ok
+
+
+def test_head_shoulders_requires_at_least_one_shoulder_height_ratio() -> None:
     times = pd.date_range("2026-03-18 10:00:00", periods=5, freq="h")
     config = HeadShoulderTopConfig(
         min_shoulder_to_head_height_ratio=0.3,
@@ -443,7 +527,7 @@ def test_head_shoulders_requires_shoulder_height_at_least_30_pct_of_head_leg() -
         PivotPoint(4, times[4], 96.5, "high"),
     ]
     ok, _, _ = validate_head_shoulders_structure(left_side_too_small, config)
-    assert not ok
+    assert ok
 
     right_side_too_small = [
         PivotPoint(0, times[0], 96.5, "high"),
@@ -453,7 +537,39 @@ def test_head_shoulders_requires_shoulder_height_at_least_30_pct_of_head_leg() -
         PivotPoint(4, times[4], 95.7, "high"),
     ]
     ok, _, _ = validate_head_shoulders_structure(right_side_too_small, config)
+    assert ok
+
+    both_sides_too_small = [
+        PivotPoint(0, times[0], 95.7, "high"),
+        PivotPoint(1, times[1], 94.0, "low"),
+        PivotPoint(2, times[2], 100.0, "high"),
+        PivotPoint(3, times[3], 94.0, "low"),
+        PivotPoint(4, times[4], 95.7, "high"),
+    ]
+    ok, _, _ = validate_head_shoulders_structure(both_sides_too_small, config)
     assert not ok
+
+
+def test_inverse_head_shoulders_requires_at_least_one_shoulder_height_ratio() -> None:
+    times = pd.date_range("2026-05-15 21:49:00", periods=5, freq="min")
+    config = HeadShoulderTopConfig(
+        min_shoulder_to_head_height_ratio=0.3,
+        max_shoulder_diff_pct=0.5,
+        max_neck_diff_pct=0.5,
+        min_right_leg_to_left_leg_ratio=0.1,
+        max_right_leg_to_left_leg_ratio=10,
+        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
+        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
+    )
+
+    ok, _, _ = validate_inverse_head_shoulders_structure([
+        PivotPoint(0, times[0], 5019, "low"),
+        PivotPoint(1, times[1], 5030, "high"),
+        PivotPoint(2, times[2], 5006, "low"),
+        PivotPoint(3, times[3], 5030, "high"),
+        PivotPoint(4, times[4], 5023, "low"),
+    ], config)
+    assert ok
 
 
 def test_head_shoulders_limits_neck_to_head_bars() -> None:
@@ -652,6 +768,45 @@ def test_deduplicate_prefers_broader_inverse_setup() -> None:
     assert deduplicate_overlapping_signals([narrow, broad]) == [broad]
 
 
+def test_deduplicate_inverse_prefers_higher_right_neck_near_left_neck() -> None:
+    times = pd.date_range("2026-05-15 21:00:00", periods=10, freq="min")
+    left_shoulder = PivotPoint(867, times[0], 3442, "low")
+    left_neck = PivotPoint(880, times[1], 3449, "high")
+    head = PivotPoint(888, times[2], 3437, "low")
+    early_right_neck = HeadShoulderTopSignal(
+        symbol="hc2610",
+        timeframe="1m",
+        pattern="inverse_head_shoulders",
+        alert_type="right_shoulder_confirmed",
+        left_shoulder=left_shoulder,
+        left_neck=left_neck,
+        head=head,
+        right_neck=PivotPoint(892, times[3], 3443, "high"),
+        right_shoulder=PivotPoint(900, times[4], 3439, "low"),
+        neckline_price=3439,
+        confirmed=False,
+        score=60,
+        reasons=[],
+    )
+    higher_right_neck = HeadShoulderTopSignal(
+        symbol="hc2610",
+        timeframe="1m",
+        pattern="inverse_head_shoulders",
+        alert_type="right_shoulder_confirmed",
+        left_shoulder=left_shoulder,
+        left_neck=left_neck,
+        head=head,
+        right_neck=PivotPoint(904, times[5], 3449, "high"),
+        right_shoulder=PivotPoint(910, times[6], 3443, "low"),
+        neckline_price=3449,
+        confirmed=False,
+        score=60,
+        reasons=[],
+    )
+
+    assert deduplicate_overlapping_signals([early_right_neck, higher_right_neck]) == [higher_right_neck]
+
+
 def test_api_scan() -> None:
     client = TestClient(app)
     with SAMPLE.open("rb") as f:
@@ -675,4 +830,4 @@ def test_api_scan() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["rows"] > 0
-    assert any(signal["confirmed"] for signal in body["signals"])
+    assert any(signal["alert_type"] == "right_shoulder_confirmed" for signal in body["signals"])

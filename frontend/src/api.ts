@@ -1,4 +1,4 @@
-import type { MarketSettings, MarketSymbolsResponse, ScanResponse, SimulationStartResponse, SimulationStepResponse } from "./types";
+import type { HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, MarketSymbolsResponse, ScanResponse, SimulationStartResponse, SimulationStepResponse, WatchPoolItem, WatchPoolPayload } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || window.location.origin;
 
@@ -121,6 +121,73 @@ export async function scanSample(symbol: string, timeframe: string): Promise<Sca
   url.searchParams.set("symbol", symbol);
   url.searchParams.set("timeframe", timeframe);
   const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function listWatchPool(): Promise<WatchPoolItem[]> {
+  const response = await fetch(`${API_BASE}/api/watch-pool`);
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function createWatchPoolItem(payload: WatchPoolPayload): Promise<WatchPoolItem> {
+  const response = await fetch(`${API_BASE}/api/watch-pool`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function updateWatchPoolItem(id: string, payload: WatchPoolPayload): Promise<WatchPoolItem> {
+  const response = await fetch(`${API_BASE}/api/watch-pool/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function deleteWatchPoolItem(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/watch-pool/${id}`, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+}
+
+export async function listHeadShouldersAlerts(limit = 100): Promise<HeadShouldersAlertSummary[]> {
+  const url = new URL("/api/alerts", API_BASE);
+  url.searchParams.set("limit", String(limit));
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function getHeadShouldersAlert(id: string): Promise<HeadShouldersAlert> {
+  const response = await fetch(`${API_BASE}/api/alerts/${id}`);
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function scanWatchPoolOnce(limit = 420): Promise<{ inserted: number }> {
+  const url = new URL("/api/alerts/scan-once", API_BASE);
+  url.searchParams.set("limit", String(limit));
+  const response = await fetch(url, { method: "POST" });
   if (!response.ok) {
     throw new Error(await readError(response));
   }
