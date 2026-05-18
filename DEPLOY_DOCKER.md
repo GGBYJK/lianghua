@@ -43,6 +43,13 @@ MARKET_DATA_PROVIDER=aliyun
 ALIYUN_MARKET_KLINE_URL=https://your-aliyun-market-kline-url
 ALIYUN_MARKET_APPCODE=your-app-code
 ALIYUN_MARKET_PERIOD_PARAM=type
+
+# Required for watch pool / alerts
+MYSQL_HOST=your-mysql-host-or-rds-endpoint
+MYSQL_PORT=3306
+MYSQL_USER=your-mysql-user
+MYSQL_PASSWORD=your-mysql-password
+MYSQL_DATABASE=lh_demo
 ```
 
 Then rerun:
@@ -58,6 +65,19 @@ docker compose ps
 docker compose logs -f backend
 docker compose logs -f frontend
 ```
+
+If the page shows `MySQL 连接失败 ... 127.0.0.1:3306`, the backend container did
+not receive the MySQL environment variables. Edit the project-root `.env` on the
+server, set `MYSQL_HOST` to the database address reachable from the container,
+then recreate the backend container:
+
+```bash
+docker compose up -d --build backend
+docker compose logs -f backend
+```
+
+For an external MySQL/RDS instance, also allow the server's public IP in the
+database security group/firewall and ensure the MySQL user permits remote login.
 
 Health check:
 
