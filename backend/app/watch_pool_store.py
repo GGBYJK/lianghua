@@ -176,6 +176,55 @@ def create_watch_pool_item(item: dict[str, Any]) -> dict[str, Any]:
     return get_watch_pool_item(str(item_id))
 
 
+def ensure_watch_pool_item(item: dict[str, Any]) -> dict[str, Any]:
+    with mysql_connection() as conn:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            """
+            SELECT id
+            FROM watch_pool_items
+            WHERE symbol = %s AND timeframe = %s
+            ORDER BY id ASC
+            LIMIT 1
+            """,
+            (item["symbol"], item["timeframe"]),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO watch_pool_items (name, symbol, timeframe, enabled, monitor_minutes)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    item["name"],
+                    item["symbol"],
+                    item["timeframe"],
+                    int(item["enabled"]),
+                    item["monitor_minutes"],
+                ),
+            )
+            item_id = cursor.lastrowid
+        else:
+            item_id = row["id"]
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE watch_pool_items
+                SET name = %s, enabled = %s, monitor_minutes = %s
+                WHERE id = %s
+                """,
+                (
+                    item["name"],
+                    int(item["enabled"]),
+                    item["monitor_minutes"],
+                    item_id,
+                ),
+            )
+    return get_watch_pool_item(str(item_id))
+
+
 def get_watch_pool_item(item_id: str) -> dict[str, Any]:
     with mysql_connection() as conn:
         cursor = conn.cursor(dictionary=True)

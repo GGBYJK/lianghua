@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import load_head_shoulder_config
 from .csv_loader import read_csv_bytes
 from .market_client import MarketApiError, fetch_kline_from_market, fetch_market_symbols, get_market_settings
-from .monitor import monitor_watch_pool_loop, scan_watch_pool_once
+from .monitor import ensure_default_watch_pool_items, monitor_watch_pool_loop, scan_watch_pool_once
 from .schemas import DefaultConfigResponse, HeadShouldersAlertResponse, HeadShouldersAlertSummaryResponse, HealthResponse, ScanResponse, WatchPoolItemCreate, WatchPoolItemResponse, WatchPoolItemUpdate
 from .strategy import add_macd_columns, add_ma_columns, find_pivots, prepare_chart_payload, scan_head_shoulders
 from .watch_pool_store import (
@@ -49,6 +49,7 @@ async def lifespan(app: FastAPI):
     monitor_task: asyncio.Task[None] | None = None
     try:
         init_watch_pool_store()
+        ensure_default_watch_pool_items()
         monitor_task = asyncio.create_task(monitor_watch_pool_loop(stop_event))
     except WatchPoolStoreError:
         # 数据库不可用时保留行情扫描能力；检测池接口会返回明确错误。
@@ -149,6 +150,7 @@ async def market_symbols(symbol_type: str = "FUTURES", symbols: str | None = Non
 @app.get("/api/watch-pool", response_model=list[WatchPoolItemResponse])
 def get_watch_pool() -> list[WatchPoolItemResponse]:
     try:
+        ensure_default_watch_pool_items()
         return [WatchPoolItemResponse(**item) for item in list_watch_pool_items()]
     except WatchPoolStoreError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
