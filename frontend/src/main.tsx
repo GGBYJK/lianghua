@@ -886,7 +886,7 @@ function MonitorAlertFeed({
               <span>{patternLabel(alert.pattern)} · {alertTypeLabel(alert.alert_type)}</span>
             </div>
             <b>{alert.score}</b>
-            <small>{alert.created_at ? formatTime(alert.created_at) : "--"}</small>
+            <small>{alert.created_at ? formatAlertTime(alert.created_at) : "--"}</small>
             <button type="button" className="message-detail-button" onClick={() => onSelect(alert)}>详情</button>
           </article>
         ))}
@@ -1746,7 +1746,37 @@ function formatPrice(value: number) {
 }
 
 function formatTime(value: string) {
+  if (/[zZ]|[+-]\d{2}:\d{2}$/.test(value)) {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) {
+      return formatDateInShanghai(date);
+    }
+  }
   return value.replace("T", " ").slice(0, 19);
+}
+
+function formatAlertTime(value: string) {
+  const normalized = /[zZ]|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) {
+    return formatTime(value);
+  }
+  return formatDateInShanghai(date);
+}
+
+function formatDateInShanghai(date: Date) {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}`;
 }
 
 function formatShortTime(value: string) {

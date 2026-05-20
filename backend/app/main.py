@@ -150,7 +150,6 @@ async def market_symbols(symbol_type: str = "FUTURES", symbols: str | None = Non
 @app.get("/api/watch-pool", response_model=list[WatchPoolItemResponse])
 def get_watch_pool() -> list[WatchPoolItemResponse]:
     try:
-        ensure_default_watch_pool_items()
         return [WatchPoolItemResponse(**item) for item in list_watch_pool_items()]
     except WatchPoolStoreError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

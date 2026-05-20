@@ -4,6 +4,7 @@ import os
 import json
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import timezone
 from typing import Any, Iterator
 
 from dotenv import load_dotenv
@@ -27,6 +28,14 @@ class MySQLSettings:
 
 class WatchPoolStoreError(RuntimeError):
     pass
+
+
+def _isoformat_utc(value: Any) -> str | None:
+    if value is None:
+        return None
+    if getattr(value, "tzinfo", None) is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
 
 
 def get_mysql_settings() -> MySQLSettings:
@@ -124,8 +133,8 @@ def _row_to_item(row: dict[str, Any]) -> dict[str, Any]:
         "timeframe": row["timeframe"],
         "enabled": bool(row["enabled"]),
         "monitor_minutes": int(row["monitor_minutes"]),
-        "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
-        "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
+        "created_at": _isoformat_utc(row.get("created_at")),
+        "updated_at": _isoformat_utc(row.get("updated_at")),
     }
 
 
@@ -212,12 +221,11 @@ def ensure_watch_pool_item(item: dict[str, Any]) -> dict[str, Any]:
             cursor.execute(
                 """
                 UPDATE watch_pool_items
-                SET name = %s, enabled = %s, monitor_minutes = %s
+                SET name = %s, monitor_minutes = %s
                 WHERE id = %s
                 """,
                 (
                     item["name"],
-                    int(item["enabled"]),
                     item["monitor_minutes"],
                     item_id,
                 ),
@@ -286,7 +294,7 @@ def _row_to_alert(row: dict[str, Any]) -> dict[str, Any]:
         "unique_key": row["unique_key"],
         "signal_payload": json.loads(row["signal_payload"]),
         "chart_payload": json.loads(row["chart_payload"]),
-        "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+        "created_at": _isoformat_utc(row.get("created_at")),
     }
 
 
@@ -302,7 +310,7 @@ def _row_to_alert_summary(row: dict[str, Any]) -> dict[str, Any]:
         "message": row["message"],
         "unique_key": row["unique_key"],
         "signal_payload": json.loads(row["signal_payload"]),
-        "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+        "created_at": _isoformat_utc(row.get("created_at")),
     }
 
 
