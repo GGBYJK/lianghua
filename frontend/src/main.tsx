@@ -83,6 +83,7 @@ type WatchPoolItem = {
   enabled: boolean;
   monitorMinutes: number;
   tradingSessions: string;
+  minHeadToNeckHeight: number;
   createdAt: string;
 };
 
@@ -106,6 +107,7 @@ const emptyWatchDraft: WatchPoolDraft = {
   enabled: true,
   monitorMinutes: 30,
   tradingSessions: DEFAULT_TRADING_SESSIONS,
+  minHeadToNeckHeight: 0,
 };
 
 function normalizeTradingSessions(value: string) {
@@ -127,6 +129,7 @@ function mapWatchPoolItem(item: ApiWatchPoolItem): WatchPoolItem {
     enabled: item.enabled,
     monitorMinutes: item.monitor_minutes,
     tradingSessions: item.trading_sessions || DEFAULT_TRADING_SESSIONS,
+    minHeadToNeckHeight: item.min_head_to_neck_height ?? 0,
     createdAt: item.created_at ? formatAlertTime(item.created_at) : "--",
   };
 }
@@ -327,6 +330,7 @@ function App() {
       enabled: item.enabled,
       monitorMinutes: item.monitorMinutes,
       tradingSessions: item.tradingSessions,
+      minHeadToNeckHeight: item.minHeadToNeckHeight,
     });
     setWatchEditorOpen(true);
   }
@@ -357,6 +361,7 @@ function App() {
       enabled: watchDraft.enabled,
       monitor_minutes: Math.max(1, Number(watchDraft.monitorMinutes) || 1),
       trading_sessions: normalizedTradingSessions,
+      min_head_to_neck_height: Math.max(0, Number(watchDraft.minHeadToNeckHeight) || 0),
     };
     try {
       const saved = editingWatchId
@@ -398,6 +403,7 @@ function App() {
         enabled: !item.enabled,
         monitor_minutes: item.monitorMinutes,
         trading_sessions: normalizeTradingSessions(item.tradingSessions) || DEFAULT_TRADING_SESSIONS,
+        min_head_to_neck_height: item.minHeadToNeckHeight,
       });
       const nextItem = mapWatchPoolItem(saved);
       setWatchPool((items) => items.map((current) => current.id === item.id ? nextItem : current));
@@ -962,6 +968,17 @@ function WatchPool({
                   min={1}
                   value={draft.monitorMinutes}
                   onChange={(event) => onDraftChange((prev) => ({ ...prev, monitorMinutes: Number(event.target.value) }))}
+                />
+              </label>
+              <label>
+                头部到颈线最小高度
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.minHeadToNeckHeight}
+                  onChange={(event) => onDraftChange((prev) => ({ ...prev, minHeadToNeckHeight: Number(event.target.value) }))}
+                  placeholder="0 表示使用策略默认值"
                 />
               </label>
               <div className="pool-session-field">

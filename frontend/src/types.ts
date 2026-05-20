@@ -105,6 +105,7 @@ export type WatchPoolItem = {
   enabled: boolean;
   monitor_minutes: number;
   trading_sessions: string;
+  min_head_to_neck_height: number;
   monitor_started_at: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -117,6 +118,7 @@ export type WatchPoolPayload = {
   enabled: boolean;
   monitor_minutes: number;
   trading_sessions: string;
+  min_head_to_neck_height: number;
 };
 
 export type HeadShouldersAlert = {

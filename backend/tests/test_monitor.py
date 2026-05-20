@@ -94,7 +94,7 @@ def test_ensure_watch_pool_item_does_not_reenable_existing_item(monkeypatch) -> 
     })
 
     update_calls = [params for sql, params in calls if "UPDATE watch_pool_items" in sql]
-    assert update_calls == [("热卷2610 5分钟", 3, "day,night", 4)]
+    assert update_calls == [("热卷2610 5分钟", 3, "day,night", 0.0, 4)]
 
 
 def test_watch_pool_list_orders_by_created_at(monkeypatch) -> None:

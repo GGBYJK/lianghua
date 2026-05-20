@@ -134,7 +134,10 @@ async def scan_watch_pool_once(limit: int = 420) -> int:
     for item in list_enabled_watch_pool_items():
         try:
             df = await fetch_kline_from_market(symbol=item["symbol"], period=item["timeframe"], limit=limit)
-            signals, chart = scan_dataframe_payload(df, symbol=item["symbol"], timeframe=item["timeframe"])
+            config_overrides = {}
+            if float(item.get("min_head_to_neck_height", 0)) > 0:
+                config_overrides["min_head_to_neck_height"] = float(item["min_head_to_neck_height"])
+            signals, chart = scan_dataframe_payload(df, symbol=item["symbol"], timeframe=item["timeframe"], config_overrides=config_overrides or None)
             for signal in signals:
                 if not should_emit_signal_for_item(signal, item):
                     continue
@@ -175,7 +178,10 @@ async def monitor_watch_pool_loop(stop_event: asyncio.Event) -> None:
                 last_scan_by_item[item["id"]] = now
                 try:
                     df = await fetch_kline_from_market(symbol=item["symbol"], period=item["timeframe"], limit=kline_limit)
-                    signals, chart = scan_dataframe_payload(df, symbol=item["symbol"], timeframe=item["timeframe"])
+                    config_overrides = {}
+                    if float(item.get("min_head_to_neck_height", 0)) > 0:
+                        config_overrides["min_head_to_neck_height"] = float(item["min_head_to_neck_height"])
+                    signals, chart = scan_dataframe_payload(df, symbol=item["symbol"], timeframe=item["timeframe"], config_overrides=config_overrides or None)
                     for signal in signals:
                         if not should_emit_signal_for_item(signal, item):
                             continue

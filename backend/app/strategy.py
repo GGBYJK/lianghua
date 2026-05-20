@@ -18,6 +18,7 @@ class HeadShoulderTopConfig:
     min_head_to_right_neck_to_left_neck_to_head_ratio: float = 0.6
     max_head_to_right_neck_to_left_neck_to_head_ratio: float = 2.0
     min_right_shoulder_ratio_to_left: float = 0.85
+    min_head_to_neck_height: float = 0.0
     right_shoulder_must_below_head: bool = True
     enable_ma_filter: bool = False
     ma_short: int = 3
@@ -238,7 +239,7 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
     if p3.price < max(p1.price, p5.price):
         return False, ["头部低于左肩或右肩，头肩顶结构不成立"], 0
 
-    min_head_to_neck_height = min_head_to_neck_height_by_price(p3.price)
+    min_head_to_neck_height = config.min_head_to_neck_height if config.min_head_to_neck_height > 0 else min_head_to_neck_height_by_price(p3.price)
     left_head_to_neck_height = p3.price - p2.price
     right_head_to_neck_height = p3.price - p4.price
     if left_head_to_neck_height <= min_head_to_neck_height and right_head_to_neck_height <= min_head_to_neck_height:
@@ -335,7 +336,7 @@ def validate_inverse_head_shoulders_structure(
     if p3.price > min(p1.price, p5.price):
         return False, ["Head is above the left or right shoulder; inverse structure is invalid"], 0
 
-    min_head_to_neck_height = min_head_to_neck_height_by_price(p3.price)
+    min_head_to_neck_height = config.min_head_to_neck_height if config.min_head_to_neck_height > 0 else min_head_to_neck_height_by_price(p3.price)
     left_head_to_neck_height = p2.price - p3.price
     right_head_to_neck_height = p4.price - p3.price
     if left_head_to_neck_height <= min_head_to_neck_height and right_head_to_neck_height <= min_head_to_neck_height:
