@@ -145,7 +145,7 @@ def list_watch_pool_items() -> list[dict[str, Any]]:
             """
             SELECT id, name, symbol, timeframe, enabled, monitor_minutes, created_at, updated_at
             FROM watch_pool_items
-            ORDER BY updated_at DESC, id DESC
+            ORDER BY created_at DESC, id DESC
             """
         )
         return [_row_to_item(row) for row in cursor.fetchall()]

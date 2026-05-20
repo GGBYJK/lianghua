@@ -83,10 +83,10 @@ type WatchPoolItem = {
   enabled: boolean;
   monitorMinutes: number;
   tradingSessions: string;
-  updatedAt: string;
+  createdAt: string;
 };
 
-type WatchPoolDraft = Omit<WatchPoolItem, "id" | "updatedAt">;
+type WatchPoolDraft = Omit<WatchPoolItem, "id" | "createdAt">;
 type FeedbackTab = "alerts" | "current";
 type DetailSource =
   | { kind: "alert"; alert: HeadShouldersAlert }
@@ -111,7 +111,7 @@ function mapWatchPoolItem(item: ApiWatchPoolItem): WatchPoolItem {
     enabled: item.enabled,
     monitorMinutes: item.monitor_minutes,
     tradingSessions: DEFAULT_TRADING_SESSIONS,
-    updatedAt: item.updated_at ? formatTime(item.updated_at) : "--",
+    createdAt: item.created_at ? formatAlertTime(item.created_at) : "--",
   };
 }
 
@@ -710,7 +710,7 @@ function WatchPool({
               <span>周期 <b>{item.timeframe}</b></span>
               <span>时长 <b>{item.monitorMinutes} 分钟</b></span>
               <span className="pool-session-row">交易时段 <b>{item.tradingSessions}</b></span>
-              <span>更新 <b>{item.updatedAt}</b></span>
+              <span>创建 <b>{item.createdAt}</b></span>
             </div>
             <div className="row-actions">
               <button type="button" className={item.enabled ? "muted-button" : ""} onClick={() => onToggleEnabled(item)}>

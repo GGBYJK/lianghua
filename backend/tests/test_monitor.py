@@ -86,3 +86,34 @@ def test_ensure_watch_pool_item_does_not_reenable_existing_item(monkeypatch) -> 
 
     update_calls = [params for sql, params in calls if "UPDATE watch_pool_items" in sql]
     assert update_calls == [("热卷2610 5分钟", 3, 4)]
+
+
+def test_watch_pool_list_orders_by_created_at(monkeypatch) -> None:
+    from app import watch_pool_store
+
+    executed_sql: list[str] = []
+
+    class Cursor:
+        def execute(self, sql: str, params=None) -> None:
+            executed_sql.append(sql)
+
+        def fetchall(self) -> list[dict[str, object]]:
+            return []
+
+    class Conn:
+        def cursor(self, dictionary: bool = False) -> Cursor:
+            return Cursor()
+
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(watch_pool_store, "_connect", lambda database=None: Conn())
+
+    assert watch_pool_store.list_watch_pool_items() == []
+    assert any("ORDER BY created_at DESC, id DESC" in sql for sql in executed_sql)
