@@ -104,6 +104,8 @@ export type WatchPoolItem = {
   timeframe: string;
   enabled: boolean;
   monitor_minutes: number;
+  trading_sessions: string;
+  monitor_started_at: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -114,6 +116,7 @@ export type WatchPoolPayload = {
   timeframe: string;
   enabled: boolean;
   monitor_minutes: number;
+  trading_sessions: string;
 };
 
 export type HeadShouldersAlert = {
@@ -132,3 +135,21 @@ export type HeadShouldersAlert = {
 };
 
 export type HeadShouldersAlertSummary = Omit<HeadShouldersAlert, "chart_payload">;
+
+export type AlertFeedback = {
+  id: string;
+  alert_id: string;
+  symbol: string;
+  timeframe: string;
+  pattern: Signal["pattern"];
+  alert_type: Signal["alert_type"];
+  score: number;
+  message: string;
+  unique_key: string;
+  signal_payload: Signal;
+  chart_payload: ScanResponse["chart"];
+  feedback_note: string;
+  alert_created_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};

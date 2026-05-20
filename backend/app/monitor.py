@@ -22,21 +22,33 @@ from .watch_pool_store import (
 
 logger = logging.getLogger("app.monitor")
 WATCH_POOL_TIMEZONE = ZoneInfo(os.getenv("WATCH_POOL_TIMEZONE", "Asia/Shanghai"))
-WATCH_POOL_TRADING_SESSIONS = (
-    (time(9, 0), time(11, 30)),
-    (time(13, 30), time(15, 0)),
-    (time(21, 0), time(23, 0)),
-)
+WATCH_POOL_TRADING_SESSIONS: dict[str, tuple[tuple[time, time], ...]] = {
+    "day": (
+        (time(9, 0), time(11, 30)),
+        (time(13, 30), time(15, 0)),
+    ),
+    "night": (
+        (time(21, 0), time(23, 0)),
+    ),
+}
 DEFAULT_WATCH_POOL_ITEMS = (
-    {"name": "热卷2610 1分钟", "symbol": "hc2610", "timeframe": "1m", "enabled": True, "monitor_minutes": 3},
-    {"name": "热卷2610 5分钟", "symbol": "hc2610", "timeframe": "5m", "enabled": True, "monitor_minutes": 3},
+    {"name": "热卷2610 1分钟", "symbol": "hc2610", "timeframe": "1m", "enabled": True, "monitor_minutes": 3, "trading_sessions": "day,night"},
+    {"name": "热卷2610 5分钟", "symbol": "hc2610", "timeframe": "5m", "enabled": True, "monitor_minutes": 3, "trading_sessions": "day,night"},
 )
 
 
-def is_in_trading_session(now: datetime | None = None) -> bool:
+def selected_trading_windows(trading_sessions: str | None = None) -> tuple[tuple[time, time], ...]:
+    keys = [part.strip() for part in (trading_sessions or "day,night").split(",") if part.strip()]
+    windows: list[tuple[time, time]] = []
+    for key in keys:
+        windows.extend(WATCH_POOL_TRADING_SESSIONS.get(key, ()))
+    return tuple(windows) or tuple(window for group in WATCH_POOL_TRADING_SESSIONS.values() for window in group)
+
+
+def is_in_trading_session(now: datetime | None = None, trading_sessions: str | None = None) -> bool:
     current = now or datetime.now(WATCH_POOL_TIMEZONE)
     current_time = current.astimezone(WATCH_POOL_TIMEZONE).time()
-    return any(start <= current_time <= end for start, end in WATCH_POOL_TRADING_SESSIONS)
+    return any(start <= current_time <= end for start, end in selected_trading_windows(trading_sessions))
 
 
 def ensure_default_watch_pool_items() -> None:
@@ -57,6 +69,48 @@ def build_signal_unique_key(signal: dict[str, Any]) -> str:
         trigger_time,
     ]
     return "|".join(str(part) for part in parts)
+
+
+def parse_signal_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=WATCH_POOL_TIMEZONE)
+    return parsed.astimezone(ZoneInfo("UTC"))
+
+
+def parse_monitor_started_at(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo("UTC"))
+    return parsed.astimezone(ZoneInfo("UTC"))
+
+
+def signal_latest_detection_time(signal: dict[str, Any]) -> datetime | None:
+    values = [
+        signal.get("left_shoulder", {}).get("time"),
+        signal.get("left_neck", {}).get("time"),
+        signal.get("head", {}).get("time"),
+        signal.get("right_neck", {}).get("time"),
+        signal.get("right_shoulder", {}).get("time"),
+        signal.get("break_time"),
+        signal.get("retest_time"),
+    ]
+    times = [parsed for value in values if (parsed := parse_signal_time(value))]
+    return max(times) if times else None
+
+
+def should_emit_signal_for_item(signal: dict[str, Any], item: dict[str, Any]) -> bool:
+    monitor_started_at = parse_monitor_started_at(item.get("monitor_started_at"))
+    if monitor_started_at is None:
+        return True
+    latest_detection_time = signal_latest_detection_time(signal)
+    if latest_detection_time is None:
+        return True
+    return latest_detection_time > monitor_started_at
 
 
 def scan_dataframe_payload(
@@ -82,6 +136,8 @@ async def scan_watch_pool_once(limit: int = 420) -> int:
             df = await fetch_kline_from_market(symbol=item["symbol"], period=item["timeframe"], limit=limit)
             signals, chart = scan_dataframe_payload(df, symbol=item["symbol"], timeframe=item["timeframe"])
             for signal in signals:
+                if not should_emit_signal_for_item(signal, item):
+                    continue
                 if insert_head_shoulders_alert_if_new({
                     "watch_pool_id": item["id"],
                     "symbol": signal["symbol"],
@@ -108,15 +164,10 @@ async def monitor_watch_pool_loop(stop_event: asyncio.Event) -> None:
 
     while not stop_event.is_set():
         try:
-            if not is_in_trading_session():
-                try:
-                    await asyncio.wait_for(stop_event.wait(), timeout=poll_seconds)
-                except asyncio.TimeoutError:
-                    pass
-                continue
-
             now = loop.time()
             for item in list_enabled_watch_pool_items():
+                if not is_in_trading_session(trading_sessions=item.get("trading_sessions")):
+                    continue
                 interval = max(1, int(item["monitor_minutes"])) * 60
                 last_scan = last_scan_by_item.get(item["id"], 0)
                 if now - last_scan < interval:
@@ -126,6 +177,8 @@ async def monitor_watch_pool_loop(stop_event: asyncio.Event) -> None:
                     df = await fetch_kline_from_market(symbol=item["symbol"], period=item["timeframe"], limit=kline_limit)
                     signals, chart = scan_dataframe_payload(df, symbol=item["symbol"], timeframe=item["timeframe"])
                     for signal in signals:
+                        if not should_emit_signal_for_item(signal, item):
+                            continue
                         insert_head_shoulders_alert_if_new({
                             "watch_pool_id": item["id"],
                             "symbol": signal["symbol"],

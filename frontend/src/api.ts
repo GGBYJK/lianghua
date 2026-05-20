@@ -1,4 +1,4 @@
-import type { HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, MarketSymbolsResponse, ScanResponse, SimulationStartResponse, SimulationStepResponse, WatchPoolItem, WatchPoolPayload } from "./types";
+import type { AlertFeedback, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, MarketSymbolsResponse, ScanResponse, SimulationStartResponse, SimulationStepResponse, WatchPoolItem, WatchPoolPayload } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || window.location.origin;
 
@@ -182,6 +182,42 @@ export async function getHeadShouldersAlert(id: string): Promise<HeadShouldersAl
     throw new Error(await readError(response));
   }
   return response.json();
+}
+
+export async function hideHeadShouldersAlert(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/alerts/${id}/hide`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+}
+
+export async function listAlertFeedbacks(limit = 100): Promise<AlertFeedback[]> {
+  const url = new URL("/api/feedbacks", API_BASE);
+  url.searchParams.set("limit", String(limit));
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function createAlertFeedback(alertId: string, note: string): Promise<AlertFeedback> {
+  const response = await fetch(`${API_BASE}/api/feedbacks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ alert_id: alertId, note }),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function deleteAlertFeedback(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/feedbacks/${id}`, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
 }
 
 export async function scanWatchPoolOnce(limit = 420): Promise<{ inserted: number }> {

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from app.monitor import is_in_trading_session
+from app.monitor import is_in_trading_session, should_emit_signal_for_item
 from app.watch_pool_store import _isoformat_utc
 
 
@@ -17,6 +17,13 @@ def test_monitor_runs_during_day_and_night_trading_sessions() -> None:
     assert is_in_trading_session(datetime(2026, 5, 19, 15, 0, tzinfo=TZ))
     assert is_in_trading_session(datetime(2026, 5, 19, 21, 0, tzinfo=TZ))
     assert is_in_trading_session(datetime(2026, 5, 19, 23, 0, tzinfo=TZ))
+
+
+def test_monitor_respects_selected_trading_session() -> None:
+    assert is_in_trading_session(datetime(2026, 5, 19, 10, 0, tzinfo=TZ), "day")
+    assert not is_in_trading_session(datetime(2026, 5, 19, 22, 0, tzinfo=TZ), "day")
+    assert is_in_trading_session(datetime(2026, 5, 19, 22, 0, tzinfo=TZ), "night")
+    assert not is_in_trading_session(datetime(2026, 5, 19, 10, 0, tzinfo=TZ), "night")
 
 
 def test_monitor_skips_outside_trading_sessions() -> None:
@@ -71,6 +78,7 @@ def test_ensure_watch_pool_item_does_not_reenable_existing_item(monkeypatch) -> 
             "timeframe": "5m",
             "enabled": False,
             "monitor_minutes": 3,
+            "trading_sessions": "day,night",
             "created_at": None,
             "updated_at": None,
         },
@@ -82,10 +90,11 @@ def test_ensure_watch_pool_item_does_not_reenable_existing_item(monkeypatch) -> 
         "timeframe": "5m",
         "enabled": True,
         "monitor_minutes": 3,
+        "trading_sessions": "day,night",
     })
 
     update_calls = [params for sql, params in calls if "UPDATE watch_pool_items" in sql]
-    assert update_calls == [("热卷2610 5分钟", 3, 4)]
+    assert update_calls == [("热卷2610 5分钟", 3, "day,night", 4)]
 
 
 def test_watch_pool_list_orders_by_created_at(monkeypatch) -> None:
@@ -117,3 +126,37 @@ def test_watch_pool_list_orders_by_created_at(monkeypatch) -> None:
 
     assert watch_pool_store.list_watch_pool_items() == []
     assert any("ORDER BY created_at DESC, id DESC" in sql for sql in executed_sql)
+
+
+def make_signal(**overrides):
+    signal = {
+        "left_shoulder": {"time": "2026-05-20T08:55:00"},
+        "left_neck": {"time": "2026-05-20T08:56:00"},
+        "head": {"time": "2026-05-20T08:57:00"},
+        "right_neck": {"time": "2026-05-20T08:58:00"},
+        "right_shoulder": {"time": "2026-05-20T08:59:00"},
+        "break_time": None,
+        "retest_time": None,
+    }
+    signal.update(overrides)
+    return signal
+
+
+def test_signal_before_monitor_start_is_skipped() -> None:
+    item = {"monitor_started_at": "2026-05-20T01:00:00+00:00"}
+
+    assert not should_emit_signal_for_item(make_signal(), item)
+
+
+def test_signal_with_right_shoulder_after_monitor_start_is_emitted() -> None:
+    item = {"monitor_started_at": "2026-05-20T01:00:00+00:00"}
+    signal = make_signal(right_shoulder={"time": "2026-05-20T09:01:00"})
+
+    assert should_emit_signal_for_item(signal, item)
+
+
+def test_signal_with_break_after_monitor_start_is_emitted() -> None:
+    item = {"monitor_started_at": "2026-05-20T01:00:00+00:00"}
+    signal = make_signal(break_time="2026-05-20T09:02:00")
+
+    assert should_emit_signal_for_item(signal, item)

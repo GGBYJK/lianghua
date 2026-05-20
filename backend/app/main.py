@@ -16,14 +16,19 @@ from .config import load_head_shoulder_config
 from .csv_loader import read_csv_bytes
 from .market_client import MarketApiError, fetch_kline_from_market, fetch_market_symbols, get_market_settings
 from .monitor import ensure_default_watch_pool_items, monitor_watch_pool_loop, scan_watch_pool_once
-from .schemas import DefaultConfigResponse, HeadShouldersAlertResponse, HeadShouldersAlertSummaryResponse, HealthResponse, ScanResponse, WatchPoolItemCreate, WatchPoolItemResponse, WatchPoolItemUpdate
+from .schemas import AlertFeedbackCreate, AlertFeedbackResponse, DefaultConfigResponse, HeadShouldersAlertResponse, HeadShouldersAlertSummaryResponse, HealthResponse, ScanResponse, WatchPoolItemCreate, WatchPoolItemResponse, WatchPoolItemUpdate
 from .strategy import add_macd_columns, add_ma_columns, find_pivots, prepare_chart_payload, scan_head_shoulders
 from .watch_pool_store import (
     WatchPoolStoreError,
+    create_alert_feedback,
     create_watch_pool_item,
+    delete_alert_feedback,
     delete_watch_pool_item,
+    get_alert_feedback,
     get_head_shoulders_alert,
+    hide_head_shoulders_alert,
     init_watch_pool_store,
+    list_alert_feedbacks,
     list_head_shoulders_alerts,
     list_watch_pool_items,
     update_watch_pool_item,
@@ -197,6 +202,48 @@ def get_alerts(symbol: str | None = None, timeframe: str | None = None, limit: i
 def get_alert(alert_id: str) -> HeadShouldersAlertResponse:
     try:
         return HeadShouldersAlertResponse(**get_head_shoulders_alert(alert_id))
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=404 if "不存在" in str(exc) else 503, detail=str(exc)) from exc
+
+
+@app.post("/api/alerts/{alert_id}/hide")
+def hide_alert(alert_id: str) -> dict[str, Any]:
+    try:
+        hide_head_shoulders_alert(alert_id)
+        return {"id": alert_id, "hidden": True}
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=404 if "不存在" in str(exc) else 503, detail=str(exc)) from exc
+
+
+@app.get("/api/feedbacks", response_model=list[AlertFeedbackResponse])
+def get_feedbacks(limit: int = 100) -> list[AlertFeedbackResponse]:
+    try:
+        return [AlertFeedbackResponse(**item) for item in list_alert_feedbacks(limit=limit)]
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/api/feedbacks", response_model=AlertFeedbackResponse)
+def add_feedback(payload: AlertFeedbackCreate) -> AlertFeedbackResponse:
+    try:
+        return AlertFeedbackResponse(**create_alert_feedback(payload.alert_id, payload.note))
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=404 if "不存在" in str(exc) else 503, detail=str(exc)) from exc
+
+
+@app.get("/api/feedbacks/{feedback_id}", response_model=AlertFeedbackResponse)
+def get_feedback(feedback_id: str) -> AlertFeedbackResponse:
+    try:
+        return AlertFeedbackResponse(**get_alert_feedback(feedback_id))
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=404 if "不存在" in str(exc) else 503, detail=str(exc)) from exc
+
+
+@app.delete("/api/feedbacks/{feedback_id}")
+def remove_feedback(feedback_id: str) -> dict[str, Any]:
+    try:
+        delete_alert_feedback(feedback_id)
+        return {"id": feedback_id, "deleted": True}
     except WatchPoolStoreError as exc:
         raise HTTPException(status_code=404 if "不存在" in str(exc) else 503, detail=str(exc)) from exc
 

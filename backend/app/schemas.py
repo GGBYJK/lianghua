@@ -33,6 +33,7 @@ class WatchPoolItemBase(BaseModel):
     timeframe: str = Field(min_length=1, max_length=16)
     enabled: bool = True
     monitor_minutes: int = Field(default=30, ge=1, le=1440)
+    trading_sessions: str = Field(default="day,night", max_length=40)
 
 
 class WatchPoolItemCreate(WatchPoolItemBase):
@@ -45,6 +46,7 @@ class WatchPoolItemUpdate(WatchPoolItemBase):
 
 class WatchPoolItemResponse(WatchPoolItemBase):
     id: str
+    monitor_started_at: str | None = None
     created_at: str | None
     updated_at: str | None
 
@@ -76,3 +78,26 @@ class HeadShouldersAlertSummaryResponse(BaseModel):
     unique_key: str
     signal_payload: dict[str, Any]
     created_at: str | None
+
+
+class AlertFeedbackCreate(BaseModel):
+    alert_id: str
+    note: str = Field(default="", max_length=2000)
+
+
+class AlertFeedbackResponse(BaseModel):
+    id: str
+    alert_id: str
+    symbol: str
+    timeframe: str
+    pattern: str
+    alert_type: str
+    score: int
+    message: str
+    unique_key: str
+    signal_payload: dict[str, Any]
+    chart_payload: dict[str, Any]
+    feedback_note: str
+    alert_created_at: str | None
+    created_at: str | None
+    updated_at: str | None
