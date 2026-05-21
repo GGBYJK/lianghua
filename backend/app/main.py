@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import asyncio
+import logging
+import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +37,13 @@ from .watch_pool_store import (
     enable_all_watch_pool_items,
     update_watch_pool_item,
 )
+
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.getLogger().setLevel(LOG_LEVEL)
+logging.getLogger("app").setLevel(LOG_LEVEL)
+logging.getLogger("app.monitor").setLevel(LOG_LEVEL)
+logging.getLogger("app.market_client").setLevel(LOG_LEVEL)
 
 
 @dataclass
