@@ -147,6 +147,22 @@ export async function createWatchPoolItem(payload: WatchPoolPayload): Promise<Wa
   return response.json();
 }
 
+export async function enableAllWatchPoolItems(): Promise<WatchPoolItem[]> {
+  const response = await fetch(`${API_BASE}/api/watch-pool/enable-all`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function disableAllWatchPoolItems(): Promise<WatchPoolItem[]> {
+  const response = await fetch(`${API_BASE}/api/watch-pool/disable-all`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
 export async function updateWatchPoolItem(id: string, payload: WatchPoolPayload): Promise<WatchPoolItem> {
   const response = await fetch(`${API_BASE}/api/watch-pool/${id}`, {
     method: "PUT",

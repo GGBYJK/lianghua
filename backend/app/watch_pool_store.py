@@ -238,6 +238,33 @@ def list_enabled_watch_pool_items() -> list[dict[str, Any]]:
         return [_row_to_item(row) for row in cursor.fetchall()]
 
 
+def enable_all_watch_pool_items() -> list[dict[str, Any]]:
+    with mysql_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE watch_pool_items
+            SET enabled = 1, monitor_started_at = %s
+            WHERE enabled = 0
+            """,
+            (_utc_now_without_tz(),),
+        )
+    return list_watch_pool_items()
+
+
+def disable_all_watch_pool_items() -> list[dict[str, Any]]:
+    with mysql_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE watch_pool_items
+            SET enabled = 0
+            WHERE enabled = 1
+            """
+        )
+    return list_watch_pool_items()
+
+
 def create_watch_pool_item(item: dict[str, Any]) -> dict[str, Any]:
     with mysql_connection() as conn:
         cursor = conn.cursor()

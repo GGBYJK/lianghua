@@ -4,7 +4,7 @@ import * as echarts from "echarts/core";
 import { BarChart, CandlestickChart, LineChart } from "echarts/charts";
 import { AxisPointerComponent, DataZoomComponent, GridComponent, LegendComponent, MarkLineComponent, MarkPointComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { createAlertFeedback, createWatchPoolItem, deleteAlertFeedback, deleteWatchPoolItem, getDefaultConfig, getHeadShouldersAlert, getMarketSettings, hideHeadShouldersAlert, listAlertFeedbacks, listHeadShouldersAlerts, listWatchPool, scanMarket, scanWatchPoolOnce, updateWatchPoolItem } from "./api";
+import { createAlertFeedback, createWatchPoolItem, deleteAlertFeedback, deleteWatchPoolItem, disableAllWatchPoolItems, enableAllWatchPoolItems, getDefaultConfig, getHeadShouldersAlert, getMarketSettings, hideHeadShouldersAlert, listAlertFeedbacks, listHeadShouldersAlerts, listWatchPool, scanMarket, scanWatchPoolOnce, updateWatchPoolItem } from "./api";
 import type { AlertFeedback, Candle, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, Neckline, PivotPoint, ScanResponse, Signal, WatchPoolItem as ApiWatchPoolItem } from "./types";
 import "./styles.css";
 
@@ -413,6 +413,26 @@ function App() {
     }
   }
 
+  async function enableAllWatchPool() {
+    try {
+      const items = await enableAllWatchPoolItems();
+      setWatchPool(items.map(mapWatchPoolItem));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "检测池一键开启失败");
+    }
+  }
+
+  async function disableAllWatchPool() {
+    try {
+      const items = await disableAllWatchPoolItems();
+      setWatchPool(items.map(mapWatchPoolItem));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "检测池一键关闭失败");
+    }
+  }
+
   function focusCurrentSignal(signal: Signal) {
     const key = signalKey(signal);
     setSelectedSignalKeys(new Set([key]));
@@ -677,6 +697,8 @@ function App() {
         onEdit={startEditWatch}
         onDelete={removeWatchPoolItem}
         onToggleEnabled={toggleWatchPoolEnabled}
+        onEnableAll={enableAllWatchPool}
+        onDisableAll={disableAllWatchPool}
       />
         </section>
 
@@ -858,6 +880,8 @@ function WatchPool({
   onEdit,
   onDelete,
   onToggleEnabled,
+  onEnableAll,
+  onDisableAll,
 }: {
   items: WatchPoolItem[];
   draft: WatchPoolDraft;
@@ -870,7 +894,43 @@ function WatchPool({
   onEdit: (item: WatchPoolItem) => void;
   onDelete: (id: string) => void;
   onToggleEnabled: (item: WatchPoolItem) => void;
+  onEnableAll: () => void;
+  onDisableAll: () => void;
 }) {
+  const groupedItems = [
+    { key: "1m", title: "1分钟检测池", items: items.filter((item) => item.timeframe === "1m") },
+    { key: "5m", title: "5分钟检测池", items: items.filter((item) => item.timeframe === "5m") },
+    { key: "other", title: "其他检测池", items: items.filter((item) => item.timeframe !== "1m" && item.timeframe !== "5m") },
+  ];
+  const enabledCount = items.filter((item) => item.enabled).length;
+  const allEnabled = items.length > 0 && enabledCount === items.length;
+  const allDisabled = enabledCount === 0;
+
+  const renderPoolCard = (item: WatchPoolItem) => (
+    <article className="pool-card" key={item.id}>
+      <div className="pool-card-top">
+        <div>
+          <strong>{item.name}</strong>
+          <small>{item.symbol}</small>
+        </div>
+        <span className={item.enabled ? "status-pill on" : "status-pill"}>{item.enabled ? "开启" : "关闭"}</span>
+      </div>
+      <div className="pool-card-meta">
+        <span>周期 <b>{item.timeframe}</b></span>
+        <span>时长 <b>{item.monitorMinutes} 分钟</b></span>
+        <span className="pool-session-row">交易时段 <b>{tradingSessionLabel(item.tradingSessions)}</b></span>
+        <span>创建 <b>{item.createdAt}</b></span>
+      </div>
+      <div className="row-actions">
+        <button type="button" className={item.enabled ? "muted-button" : ""} onClick={() => onToggleEnabled(item)}>
+          {item.enabled ? "关闭监控" : "开启监控"}
+        </button>
+        <button type="button" onClick={() => onEdit(item)}>修改</button>
+        <button type="button" className="muted-button" onClick={() => onDelete(item.id)}>删除</button>
+      </div>
+    </article>
+  );
+
   return (
     <section className="result-panel pool-panel">
       <div className="pool-head">
@@ -879,34 +939,24 @@ function WatchPool({
           <h2>品种检测池子</h2>
         </div>
         <div className="pool-head-actions">
-          <span className="badge">{items.filter((item) => item.enabled).length} 个监控中</span>
+          <button type="button" className="compact-button" onClick={onEnableAll} disabled={items.length === 0 || allEnabled}>一键开启检测</button>
+          <button type="button" className="compact-button muted-button" onClick={onDisableAll} disabled={items.length === 0 || allDisabled}>一键关闭检测</button>
+          <span className="badge">{enabledCount} 个监控中</span>
           <button type="button" className="compact-button" onClick={onNew}>新增品种</button>
         </div>
       </div>
-      <div className="pool-card-grid" aria-label="品种检测池子">
-        {items.map((item) => (
-          <article className="pool-card" key={item.id}>
-            <div className="pool-card-top">
-              <div>
-                <strong>{item.name}</strong>
-                <small>{item.symbol}</small>
-              </div>
-              <span className={item.enabled ? "status-pill on" : "status-pill"}>{item.enabled ? "开启" : "关闭"}</span>
+      <div className="pool-groups" aria-label="品种检测池子">
+        {groupedItems.map((group) => (
+          <section className="pool-group" key={group.key}>
+            <div className="pool-group-head">
+              <h3>{group.title}</h3>
+              <span>{group.items.length} 个</span>
             </div>
-            <div className="pool-card-meta">
-              <span>周期 <b>{item.timeframe}</b></span>
-              <span>时长 <b>{item.monitorMinutes} 分钟</b></span>
-              <span className="pool-session-row">交易时段 <b>{tradingSessionLabel(item.tradingSessions)}</b></span>
-              <span>创建 <b>{item.createdAt}</b></span>
+            <div className="pool-card-grid">
+              {group.items.map(renderPoolCard)}
             </div>
-            <div className="row-actions">
-              <button type="button" className={item.enabled ? "muted-button" : ""} onClick={() => onToggleEnabled(item)}>
-                {item.enabled ? "关闭监控" : "开启监控"}
-              </button>
-              <button type="button" onClick={() => onEdit(item)}>修改</button>
-              <button type="button" className="muted-button" onClick={() => onDelete(item.id)}>删除</button>
-            </div>
-          </article>
+            {group.items.length === 0 && <p className="empty pool-group-empty">暂无{group.title}品种。</p>}
+          </section>
         ))}
       </div>
       {items.length === 0 && <p className="empty">暂无检测品种，点击“新增品种”创建监控项。</p>}

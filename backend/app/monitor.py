@@ -57,12 +57,16 @@ def ensure_default_watch_pool_items() -> None:
 
 
 def build_signal_unique_key(signal: dict[str, Any]) -> str:
-    trigger_time = signal.get("break_time") or signal.get("retest_time") or signal["right_shoulder"]["time"]
+    alert_type = signal.get("alert_type", "neckline_break")
+    if alert_type == "right_shoulder_retest":
+        trigger_time = "first_right_shoulder_retest"
+    else:
+        trigger_time = signal.get("break_time") or signal["right_shoulder"]["time"]
     parts = [
         signal["symbol"],
         signal["timeframe"],
         signal["pattern"],
-        signal.get("alert_type", "neckline_break"),
+        alert_type,
         signal["left_shoulder"]["time"],
         signal["head"]["time"],
         signal["right_shoulder"]["time"],

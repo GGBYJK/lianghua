@@ -24,6 +24,7 @@ from .watch_pool_store import (
     create_watch_pool_item,
     delete_alert_feedback,
     delete_watch_pool_item,
+    disable_all_watch_pool_items,
     get_alert_feedback,
     get_head_shoulders_alert,
     hide_head_shoulders_alert,
@@ -31,6 +32,7 @@ from .watch_pool_store import (
     list_alert_feedbacks,
     list_head_shoulders_alerts,
     list_watch_pool_items,
+    enable_all_watch_pool_items,
     update_watch_pool_item,
 )
 
@@ -165,6 +167,22 @@ def create_watch_pool(payload: WatchPoolItemCreate) -> WatchPoolItemResponse:
     try:
         item = create_watch_pool_item(payload.model_dump())
         return WatchPoolItemResponse(**item)
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/api/watch-pool/enable-all", response_model=list[WatchPoolItemResponse])
+def enable_all_watch_pool() -> list[WatchPoolItemResponse]:
+    try:
+        return [WatchPoolItemResponse(**item) for item in enable_all_watch_pool_items()]
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/api/watch-pool/disable-all", response_model=list[WatchPoolItemResponse])
+def disable_all_watch_pool() -> list[WatchPoolItemResponse]:
+    try:
+        return [WatchPoolItemResponse(**item) for item in disable_all_watch_pool_items()]
     except WatchPoolStoreError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

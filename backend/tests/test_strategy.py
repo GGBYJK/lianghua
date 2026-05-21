@@ -175,6 +175,24 @@ def test_monitor_unique_key_uses_pattern_key_points_and_trigger_time() -> None:
     )
 
 
+def test_right_shoulder_retest_unique_key_is_once_per_right_shoulder() -> None:
+    base_signal = {
+        "symbol": "c0",
+        "timeframe": "1m",
+        "pattern": "head_shoulders_top",
+        "alert_type": "right_shoulder_retest",
+        "left_shoulder": {"time": "2026-05-12T09:00:00"},
+        "head": {"time": "2026-05-12T09:10:00"},
+        "right_shoulder": {"time": "2026-05-12T09:20:00"},
+        "break_time": None,
+        "retest_time": "2026-05-12T09:25:00",
+    }
+    later_touch = {**base_signal, "retest_time": "2026-05-12T09:26:00"}
+
+    assert build_signal_unique_key(base_signal) == build_signal_unique_key(later_touch)
+    assert build_signal_unique_key(base_signal).endswith("|first_right_shoulder_retest")
+
+
 def test_top_scan_emits_right_shoulder_alert_type_only() -> None:
     df = pd.read_csv(SAMPLE)
     config = HeadShoulderTopConfig(

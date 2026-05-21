@@ -128,6 +128,64 @@ def test_watch_pool_list_orders_by_created_at(monkeypatch) -> None:
     assert any("ORDER BY created_at DESC, id DESC" in sql for sql in executed_sql)
 
 
+def test_enable_all_watch_pool_items_enables_closed_items(monkeypatch) -> None:
+    from app import watch_pool_store
+
+    calls: list[tuple[str, tuple[object, ...] | None]] = []
+
+    class Cursor:
+        def execute(self, sql: str, params=None) -> None:
+            calls.append((sql, params))
+
+    class Conn:
+        def cursor(self, dictionary: bool = False) -> Cursor:
+            return Cursor()
+
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(watch_pool_store, "_connect", lambda database=None: Conn())
+    monkeypatch.setattr(watch_pool_store, "list_watch_pool_items", lambda: [])
+
+    assert watch_pool_store.enable_all_watch_pool_items() == []
+    assert any("SET enabled = 1" in sql and "WHERE enabled = 0" in sql for sql, _ in calls)
+
+
+def test_disable_all_watch_pool_items_disables_enabled_items(monkeypatch) -> None:
+    from app import watch_pool_store
+
+    calls: list[tuple[str, tuple[object, ...] | None]] = []
+
+    class Cursor:
+        def execute(self, sql: str, params=None) -> None:
+            calls.append((sql, params))
+
+    class Conn:
+        def cursor(self, dictionary: bool = False) -> Cursor:
+            return Cursor()
+
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(watch_pool_store, "_connect", lambda database=None: Conn())
+    monkeypatch.setattr(watch_pool_store, "list_watch_pool_items", lambda: [])
+
+    assert watch_pool_store.disable_all_watch_pool_items() == []
+    assert any("SET enabled = 0" in sql and "WHERE enabled = 1" in sql for sql, _ in calls)
+
+
 def make_signal(**overrides):
     signal = {
         "left_shoulder": {"time": "2026-05-20T08:55:00"},
