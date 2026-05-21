@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from app.monitor import is_in_trading_session, should_emit_signal_for_item
+from app.monitor import build_wechat_workbot_content, is_in_trading_session, should_emit_signal_for_item
 from app.watch_pool_store import _isoformat_utc
 
 
@@ -218,3 +218,28 @@ def test_signal_with_break_after_monitor_start_is_emitted() -> None:
     signal = make_signal(break_time="2026-05-20T09:02:00")
 
     assert should_emit_signal_for_item(signal, item)
+
+
+def test_wechat_workbot_content_includes_core_signal_fields() -> None:
+    signal = {
+        "symbol": "c0",
+        "timeframe": "5m",
+        "pattern": "head_shoulders_top",
+        "alert_type": "right_shoulder_retest",
+        "score": 88,
+        "right_shoulder": {"time": "2026-05-20T09:01:00", "price": 3329},
+        "retest_time": "2026-05-20T09:05:00",
+        "retest_price": 3330,
+        "neckline_price": 3300,
+        "message": "test message",
+    }
+
+    content = build_wechat_workbot_content(signal, {"name": "玉米主力"})
+
+    assert "玉米主力（c0）" in content
+    assert "周期：5m" in content
+    assert "形态：头肩顶" in content
+    assert "提醒：右肩确认后重新触及/超过右肩价" in content
+    assert "评分：88" in content
+    assert "右肩价：3329.00" in content
+    assert "触发价：3330.00" in content
