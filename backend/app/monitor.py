@@ -84,6 +84,8 @@ def build_signal_unique_key(signal: dict[str, Any]) -> str:
 
 
 def _zh(value: str) -> str:
+    if "\\u" not in value:
+        return value
     return value.encode("ascii").decode("unicode_escape")
 
 
@@ -107,6 +109,9 @@ ZH = {
     "break_price": "\u8dcc\u7834\u4ef7",
     "neckline_price": "\u9888\u7ebf\u4ef7",
     "message": "\u8bf4\u660e",
+    "colon": "\uff1a",
+    "left_paren": "\uff08",
+    "right_paren": "\uff09",
 }
 ZH = {key: _zh(value) for key, value in ZH.items()}
 
@@ -136,30 +141,31 @@ def format_signal_time(value: str | None) -> str:
 
 def build_wechat_workbot_content(signal: dict[str, Any], item: dict[str, Any]) -> str:
     right_shoulder = signal.get("right_shoulder", {})
+    colon = ZH["colon"]
     lines = [
         ZH["new_alert"],
-        f"{ZH['symbol']}?{item.get('name') or signal.get('symbol')}?{signal.get('symbol')}?",
-        f"{ZH['timeframe']}?{signal.get('timeframe')}",
-        f"{ZH['pattern']}?{pattern_label(signal.get('pattern'))}",
-        f"{ZH['alert']}?{alert_type_label(signal.get('alert_type'))}",
-        f"{ZH['score']}?{signal.get('score', '-')}",
-        f"{ZH['right_shoulder_price']}?{float(right_shoulder.get('price', 0)):.2f}" if right_shoulder.get("price") is not None else f"{ZH['right_shoulder_price']}?-",
-        f"{ZH['right_shoulder_time']}?{format_signal_time(right_shoulder.get('time'))}",
+        f"{ZH['symbol']}{colon}{item.get('name') or signal.get('symbol')}{ZH['left_paren']}{signal.get('symbol')}{ZH['right_paren']}",
+        f"{ZH['timeframe']}{colon}{signal.get('timeframe')}",
+        f"{ZH['pattern']}{colon}{pattern_label(signal.get('pattern'))}",
+        f"{ZH['alert']}{colon}{alert_type_label(signal.get('alert_type'))}",
+        f"{ZH['score']}{colon}{signal.get('score', '-')}",
+        f"{ZH['right_shoulder_price']}{colon}{float(right_shoulder.get('price', 0)):.2f}" if right_shoulder.get("price") is not None else f"{ZH['right_shoulder_price']}{colon}-",
+        f"{ZH['right_shoulder_time']}{colon}{format_signal_time(right_shoulder.get('time'))}",
     ]
     if signal.get("retest_time"):
         lines.extend([
-            f"{ZH['trigger_time']}?{format_signal_time(signal.get('retest_time'))}",
-            f"{ZH['trigger_price']}?{float(signal['retest_price']):.2f}" if signal.get("retest_price") is not None else f"{ZH['trigger_price']}?-",
+            f"{ZH['trigger_time']}{colon}{format_signal_time(signal.get('retest_time'))}",
+            f"{ZH['trigger_price']}{colon}{float(signal['retest_price']):.2f}" if signal.get("retest_price") is not None else f"{ZH['trigger_price']}{colon}-",
         ])
     elif signal.get("break_time"):
         lines.extend([
-            f"{ZH['trigger_time']}?{format_signal_time(signal.get('break_time'))}",
-            f"{ZH['break_price']}?{float(signal['break_price']):.2f}" if signal.get("break_price") is not None else f"{ZH['break_price']}?-",
+            f"{ZH['trigger_time']}{colon}{format_signal_time(signal.get('break_time'))}",
+            f"{ZH['break_price']}{colon}{float(signal['break_price']):.2f}" if signal.get("break_price") is not None else f"{ZH['break_price']}{colon}-",
         ])
     if signal.get("neckline_price") is not None:
-        lines.append(f"{ZH['neckline_price']}?{float(signal['neckline_price']):.2f}")
+        lines.append(f"{ZH['neckline_price']}{colon}{float(signal['neckline_price']):.2f}")
     if signal.get("message"):
-        lines.append(f"{ZH['message']}?{signal['message']}")
+        lines.append(f"{ZH['message']}{colon}{signal['message']}")
     return "\n".join(lines)
 
 
