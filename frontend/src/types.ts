@@ -155,3 +155,21 @@ export type AlertFeedback = {
   created_at: string | null;
   updated_at: string | null;
 };
+
+export type ContractCenterItem = {
+  id: string;
+  symbol: string;
+  exchange: string;
+  name: string;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type ContractCenterRefresh = {
+  exchanges: string[];
+  total_latest: number;
+  existing_count: number;
+  new_count: number;
+  latest_symbols: string[];
+  new_symbols: string[];
+};

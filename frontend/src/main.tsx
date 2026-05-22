@@ -4,8 +4,8 @@ import * as echarts from "echarts/core";
 import { BarChart, CandlestickChart, LineChart } from "echarts/charts";
 import { AxisPointerComponent, DataZoomComponent, GridComponent, LegendComponent, MarkLineComponent, MarkPointComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { createAlertFeedback, createWatchPoolItem, deleteAlertFeedback, deleteWatchPoolItem, disableAllWatchPoolItems, enableAllWatchPoolItems, getDefaultConfig, getHeadShouldersAlert, getMarketSettings, hideHeadShouldersAlert, listAlertFeedbacks, listHeadShouldersAlerts, listWatchPool, scanMarket, scanWatchPoolOnce, updateWatchPoolItem } from "./api";
-import type { AlertFeedback, Candle, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, Neckline, PivotPoint, ScanResponse, Signal, WatchPoolItem as ApiWatchPoolItem } from "./types";
+import { createAlertFeedback, createWatchPoolItem, deleteAlertFeedback, deleteWatchPoolItem, disableAllWatchPoolItems, enableAllWatchPoolItems, getDefaultConfig, getHeadShouldersAlert, getMarketSettings, hideHeadShouldersAlert, listAlertFeedbacks, listContracts, listHeadShouldersAlerts, listWatchPool, refreshContracts, scanMarket, scanWatchPoolOnce, updateContracts, updateWatchPoolItem } from "./api";
+import type { AlertFeedback, Candle, ContractCenterItem, ContractCenterRefresh, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, Neckline, PivotPoint, ScanResponse, Signal, WatchPoolItem as ApiWatchPoolItem } from "./types";
 import "./styles.css";
 
 echarts.use([
@@ -159,6 +159,12 @@ function App() {
   const [feedbacks, setFeedbacks] = useState<AlertFeedback[]>([]);
   const [feedbackTarget, setFeedbackTarget] = useState<HeadShouldersAlertSummary | null>(null);
   const [feedbackListOpen, setFeedbackListOpen] = useState(false);
+  const [contractCenterOpen, setContractCenterOpen] = useState(false);
+  const [contracts, setContracts] = useState<ContractCenterItem[]>([]);
+  const [contractRefresh, setContractRefresh] = useState<ContractCenterRefresh | null>(null);
+  const [contractLoading, setContractLoading] = useState(false);
+  const [contractUpdating, setContractUpdating] = useState(false);
+  const [contractMessage, setContractMessage] = useState<string | null>(null);
   const [feedbackNote, setFeedbackNote] = useState("");
   const [selectedFeedbackId, setSelectedFeedbackId] = useState<string | null>(null);
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
@@ -193,9 +199,9 @@ function App() {
   }, []);
 
   useEffect(() => {
-    document.body.classList.toggle("modal-open", configOpen || watchEditorOpen || detailSource !== null || feedbackTarget !== null || feedbackListOpen);
+    document.body.classList.toggle("modal-open", configOpen || watchEditorOpen || detailSource !== null || feedbackTarget !== null || feedbackListOpen || contractCenterOpen);
     return () => document.body.classList.remove("modal-open");
-  }, [configOpen, watchEditorOpen, detailSource, feedbackTarget, feedbackListOpen]);
+  }, [configOpen, watchEditorOpen, detailSource, feedbackTarget, feedbackListOpen, contractCenterOpen]);
 
   async function pollMarket() {
     setLoading(true);
@@ -556,6 +562,46 @@ function App() {
     }
   }
 
+  async function openContractCenter() {
+    setContractCenterOpen(true);
+    setContractMessage(null);
+    try {
+      setContracts(await listContracts());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "合约中心读取失败");
+    }
+  }
+
+  async function refreshContractCenter() {
+    setContractLoading(true);
+    setContractMessage(null);
+    try {
+      const response = await refreshContracts();
+      setContractRefresh(response);
+      setContractMessage(response.new_count > 0 ? `发现 ${response.new_count} 个新增合约，确认后写入数据库。` : "当前数据库已是最新。");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "合约刷新失败");
+    } finally {
+      setContractLoading(false);
+    }
+  }
+
+  async function applyContractUpdates() {
+    if (!contractRefresh || contractRefresh.new_symbols.length === 0) return;
+    setContractUpdating(true);
+    setContractMessage(null);
+    try {
+      const response = await updateContracts(contractRefresh.new_symbols);
+      setContracts(response.items);
+      setContractRefresh(null);
+      setContractMessage(`已新增 ${response.inserted} 个合约到数据库。`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "合约更新失败");
+    } finally {
+      setContractUpdating(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="terminal-header">
@@ -565,6 +611,7 @@ function App() {
         </div>
         <div className="terminal-status">
           <button type="button" className="header-feedback-button" onClick={() => setFeedbackListOpen(true)}>&#21453;&#39304;&#21015;&#34920;</button>
+          <button type="button" className="header-feedback-button" onClick={() => void openContractCenter()}>合约中心</button>
           <span>{marketSettings?.provider ?? "Market"}</span>
           <span>{result?.symbol ?? symbol} / {result?.timeframe ?? timeframe}</span>
           <span>{marketLastFetch ?? "等待扫描"}</span>
@@ -804,6 +851,19 @@ function App() {
             />
           </section>
         </div>
+      )}
+
+      {contractCenterOpen && (
+        <ContractCenterModal
+          contracts={contracts}
+          refreshState={contractRefresh}
+          loading={contractLoading}
+          updating={contractUpdating}
+          message={contractMessage}
+          onRefresh={() => void refreshContractCenter()}
+          onUpdate={() => void applyContractUpdates()}
+          onClose={() => setContractCenterOpen(false)}
+        />
       )}
 
       {configOpen && (
@@ -1295,6 +1355,120 @@ function FeedbackFeed({
           </div>
         </article>
       ))}
+    </div>
+  );
+}
+
+function ContractCenterModal({
+  contracts,
+  refreshState,
+  loading,
+  updating,
+  message,
+  onRefresh,
+  onUpdate,
+  onClose,
+}: {
+  contracts: ContractCenterItem[];
+  refreshState: ContractCenterRefresh | null;
+  loading: boolean;
+  updating: boolean;
+  message: string | null;
+  onRefresh: () => void;
+  onUpdate: () => void;
+  onClose: () => void;
+}) {
+  const [exchangeFilter, setExchangeFilter] = useState("ALL");
+  const visibleContracts = exchangeFilter === "ALL" ? contracts : contracts.filter((item) => item.exchange === exchangeFilter);
+  const exchangeCounts = contracts.reduce<Record<string, number>>((acc, item) => {
+    acc[item.exchange] = (acc[item.exchange] ?? 0) + 1;
+    return acc;
+  }, {});
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="feedback-modal contract-center-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="contract-center-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <button type="button" className="modal-close-button" onClick={onClose} aria-label="关闭合约中心">关闭</button>
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Contracts</p>
+            <h2 id="contract-center-title">合约中心</h2>
+          </div>
+          <div className="contract-center-actions">
+            <button type="button" className="compact-button" onClick={onRefresh} disabled={loading || updating}>
+              {loading ? "获取中..." : "获取最新合约"}
+            </button>
+            <button
+              type="button"
+              className="compact-button"
+              onClick={onUpdate}
+              disabled={updating || !refreshState || refreshState.new_symbols.length === 0}
+            >
+              {updating ? "更新中..." : "确认更新"}
+            </button>
+          </div>
+        </div>
+        <div className="contract-summary">
+          <span className="badge">已存 {contracts.length} 个</span>
+          <span className="badge">SHFE {exchangeCounts.SHFE ?? 0}</span>
+          <span className="badge">DCE {exchangeCounts.DCE ?? 0}</span>
+          <span className="badge">CZCE {exchangeCounts.CZCE ?? 0}</span>
+          {refreshState && <span className="badge">新增 {refreshState.new_count} 个</span>}
+        </div>
+        {message && <div className="contract-message">{message}</div>}
+        {refreshState && refreshState.new_symbols.length > 0 && (
+          <div className="contract-new-box">
+            <strong>待新增合约</strong>
+            <div className="contract-chip-list">
+              {refreshState.new_symbols.slice(0, 80).map((symbol) => <span key={symbol}>{symbol}</span>)}
+              {refreshState.new_symbols.length > 80 && <span>+{refreshState.new_symbols.length - 80}</span>}
+            </div>
+          </div>
+        )}
+        <div className="contract-filter-row">
+          {["ALL", "SHFE", "DCE", "CZCE"].map((exchange) => (
+            <button
+              type="button"
+              key={exchange}
+              className={exchangeFilter === exchange ? "active" : ""}
+              onClick={() => setExchangeFilter(exchange)}
+            >
+              {exchange === "ALL" ? "全部" : exchange}
+            </button>
+          ))}
+        </div>
+        <div className="contract-table-wrap">
+          {visibleContracts.length === 0 ? (
+            <p className="empty">暂无合约记录，点击“获取最新合约”从 TqSdk 同步。</p>
+          ) : (
+            <table className="contract-table">
+              <thead>
+                <tr>
+                  <th>合约代码</th>
+                  <th>交易所</th>
+                  <th>名称</th>
+                  <th>更新时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleContracts.map((contract) => (
+                  <tr key={contract.id}>
+                    <td>{contract.symbol}</td>
+                    <td>{contract.exchange}</td>
+                    <td>{contract.name}</td>
+                    <td>{contract.updated_at ? formatAlertTime(contract.updated_at) : "--"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

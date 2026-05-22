@@ -14,12 +14,18 @@ from app.market_client import (
     normalize_period,
     normalize_aliyun_period,
     normalize_symbol_row,
+    normalize_tqsdk_period,
+    normalize_tqsdk_symbol,
+    query_tqsdk_contracts_from_api,
     normalize_tushare_symbol,
     normalize_tushare_symbol_row,
+    tqsdk_dataframe_to_kline,
+    tqsdk_symbol_hints,
     tushare_dataframe_to_kline,
     rows_to_dataframe,
     aliyun_symbol_hints,
 )
+from app.watch_pool_store import _contract_name_from_symbol
 from app.strategy import (
     HeadShoulderTopConfig,
     HeadShoulderTopSignal,
@@ -94,6 +100,41 @@ def test_aliyun_period_mapping_and_symbol_hints() -> None:
     assert normalize_aliyun_period("1d") == "day"
     hints = aliyun_symbol_hints("c0")
     assert hints == [{"symbol": "c0", "name_cn": "玉米主力连续", "name_hk": None, "name_en": "Corn continuous"}]
+
+
+def test_tqsdk_period_mapping_symbol_hints_and_dataframe() -> None:
+    assert normalize_tqsdk_period("1h") == 3600
+    assert normalize_tqsdk_period("1d") == 86400
+    assert normalize_tqsdk_symbol("c0") == "KQ.m@DCE.c"
+    assert normalize_tqsdk_symbol("KQ.m@DCE.c") == "KQ.m@DCE.c"
+    assert tqsdk_symbol_hints("c0") == [
+        {"symbol": "c0", "name_cn": "玉米主力连续", "name_hk": None, "name_en": "Corn continuous"}
+    ]
+    df = pd.DataFrame({
+        "datetime": [1777347600000000000, 1777347660000000000],
+        "open": [2000, 2001],
+        "high": [2002, 2003],
+        "low": [1999, 2000],
+        "close": [2001, 2002],
+        "volume": [100, 120],
+    })
+    normalized = tqsdk_dataframe_to_kline(df)
+    assert list(normalized.columns) == ["datetime", "open", "high", "low", "close", "volume"]
+    assert normalized["close"].iloc[-1] == 2002
+
+
+def test_tqsdk_contract_query_filters_target_exchanges() -> None:
+    class FakeApi:
+        def query_quotes(self, expired: bool | None = None) -> list[str]:
+            assert expired is False
+            return ["SHFE.rb2610", "DCE.c2607", "CZCE.SR609", "CFFEX.IF2606", "KQ.m@DCE.c"]
+
+    assert query_tqsdk_contracts_from_api(FakeApi(), ["SHFE", "DCE", "CZCE"]) == [
+        "CZCE.SR609",
+        "DCE.c2607",
+        "SHFE.rb2610",
+    ]
+    assert _contract_name_from_symbol("DCE.c2607") == "c2607"
 
 
 def test_infoway_symbol_row_normalizes() -> None:

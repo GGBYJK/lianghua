@@ -10,3 +10,4 @@ pytest==8.3.4
 httpx==0.28.1
 infoway-sdk==0.1.1
 tushare==1.4.29
+tqsdk==3.9.9

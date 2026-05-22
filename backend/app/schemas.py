@@ -102,3 +102,30 @@ class AlertFeedbackResponse(BaseModel):
     alert_created_at: str | None
     created_at: str | None
     updated_at: str | None
+
+
+class ContractCenterItemResponse(BaseModel):
+    id: str
+    symbol: str
+    exchange: str
+    name: str
+    created_at: str | None
+    updated_at: str | None
+
+
+class ContractCenterRefreshResponse(BaseModel):
+    exchanges: list[str]
+    total_latest: int
+    existing_count: int
+    new_count: int
+    latest_symbols: list[str]
+    new_symbols: list[str]
+
+
+class ContractCenterUpdateRequest(BaseModel):
+    symbols: list[str]
+
+
+class ContractCenterUpdateResponse(BaseModel):
+    inserted: int
+    items: list[ContractCenterItemResponse]

@@ -16,9 +16,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import load_head_shoulder_config
 from .csv_loader import read_csv_bytes
-from .market_client import MarketApiError, fetch_kline_from_market, fetch_market_symbols, get_market_settings
+from .market_client import MarketApiError, fetch_kline_from_market, fetch_market_symbols, fetch_tqsdk_contracts, get_market_settings, shutdown_market_clients
 from .monitor import ensure_default_watch_pool_items, monitor_watch_pool_loop, scan_watch_pool_once
-from .schemas import AlertFeedbackCreate, AlertFeedbackResponse, DefaultConfigResponse, HeadShouldersAlertResponse, HeadShouldersAlertSummaryResponse, HealthResponse, ScanResponse, WatchPoolItemCreate, WatchPoolItemResponse, WatchPoolItemUpdate
+from .schemas import AlertFeedbackCreate, AlertFeedbackResponse, ContractCenterItemResponse, ContractCenterRefreshResponse, ContractCenterUpdateRequest, ContractCenterUpdateResponse, DefaultConfigResponse, HeadShouldersAlertResponse, HeadShouldersAlertSummaryResponse, HealthResponse, ScanResponse, WatchPoolItemCreate, WatchPoolItemResponse, WatchPoolItemUpdate
 from .strategy import add_macd_columns, add_ma_columns, find_pivots, prepare_chart_payload, scan_head_shoulders
 from .watch_pool_store import (
     WatchPoolStoreError,
@@ -31,7 +31,10 @@ from .watch_pool_store import (
     get_head_shoulders_alert,
     hide_head_shoulders_alert,
     init_watch_pool_store,
+    insert_contract_center_items,
     list_alert_feedbacks,
+    list_contract_center_items,
+    list_contract_center_symbols,
     list_head_shoulders_alerts,
     list_watch_pool_items,
     enable_all_watch_pool_items,
@@ -74,6 +77,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         stop_event.set()
+        shutdown_market_clients()
         if monitor_task is not None:
             monitor_task.cancel()
             try:
@@ -273,6 +277,49 @@ def remove_feedback(feedback_id: str) -> dict[str, Any]:
         return {"id": feedback_id, "deleted": True}
     except WatchPoolStoreError as exc:
         raise HTTPException(status_code=404 if "不存在" in str(exc) else 503, detail=str(exc)) from exc
+
+
+@app.get("/api/contracts", response_model=list[ContractCenterItemResponse])
+def get_contracts(exchange: str | None = None) -> list[ContractCenterItemResponse]:
+    try:
+        return [ContractCenterItemResponse(**item) for item in list_contract_center_items(exchange=exchange)]
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/contracts/refresh", response_model=ContractCenterRefreshResponse)
+async def refresh_contracts(exchanges: str = "SHFE,DCE,CZCE") -> ContractCenterRefreshResponse:
+    try:
+        exchange_list = [item.strip().upper() for item in exchanges.split(",") if item.strip()]
+        latest_symbols = await asyncio.to_thread(fetch_tqsdk_contracts, exchange_list)
+        existing_symbols = list_contract_center_symbols()
+        new_symbols = [symbol for symbol in latest_symbols if symbol not in existing_symbols]
+        return ContractCenterRefreshResponse(
+            exchanges=exchange_list,
+            total_latest=len(latest_symbols),
+            existing_count=len(existing_symbols),
+            new_count=len(new_symbols),
+            latest_symbols=latest_symbols,
+            new_symbols=new_symbols,
+        )
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except MarketApiError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"合约列表刷新失败：{exc}") from exc
+
+
+@app.post("/api/contracts/update", response_model=ContractCenterUpdateResponse)
+def update_contracts(payload: ContractCenterUpdateRequest) -> ContractCenterUpdateResponse:
+    try:
+        inserted = insert_contract_center_items(payload.symbols)
+        return ContractCenterUpdateResponse(
+            inserted=inserted,
+            items=[ContractCenterItemResponse(**item) for item in list_contract_center_items()],
+        )
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/api/alerts/scan-once")

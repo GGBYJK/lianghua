@@ -187,6 +187,21 @@ def init_watch_pool_store() -> None:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS contract_center_items (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                symbol VARCHAR(40) NOT NULL,
+                exchange VARCHAR(16) NOT NULL,
+                name VARCHAR(80) NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_contract_center_symbol (symbol),
+                INDEX idx_contract_center_exchange (exchange),
+                INDEX idx_contract_center_created_at (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """
+        )
         conn.commit()
     except MySQLError as exc:
         conn.rollback()
@@ -623,4 +638,70 @@ def delete_alert_feedback(feedback_id: str) -> None:
         cursor.execute("DELETE FROM alert_feedbacks WHERE id = %s", (feedback_id,))
         if cursor.rowcount == 0:
             raise WatchPoolStoreError("反馈不存在")
+
+
+def _contract_name_from_symbol(symbol: str) -> str:
+    code = symbol.split(".", 1)[1] if "." in symbol else symbol
+    return code
+
+
+def _row_to_contract(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "symbol": row["symbol"],
+        "exchange": row["exchange"],
+        "name": row["name"],
+        "created_at": _isoformat_utc(row.get("created_at")),
+        "updated_at": _isoformat_utc(row.get("updated_at")),
+    }
+
+
+def list_contract_center_items(exchange: str | None = None) -> list[dict[str, Any]]:
+    filters: list[str] = []
+    values: list[Any] = []
+    if exchange:
+        filters.append("exchange = %s")
+        values.append(exchange.upper())
+    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+    with mysql_connection() as conn:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            f"""
+            SELECT id, symbol, exchange, name, created_at, updated_at
+            FROM contract_center_items
+            {where_clause}
+            ORDER BY exchange ASC, symbol ASC
+            """,
+            tuple(values),
+        )
+        return [_row_to_contract(row) for row in cursor.fetchall()]
+
+
+def list_contract_center_symbols() -> set[str]:
+    with mysql_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT symbol FROM contract_center_items")
+        return {str(row[0]) for row in cursor.fetchall()}
+
+
+def insert_contract_center_items(symbols: list[str]) -> int:
+    rows = []
+    for symbol in symbols:
+        normalized = symbol.strip()
+        if not normalized or "." not in normalized:
+            continue
+        exchange = normalized.split(".", 1)[0].upper()
+        rows.append((normalized, exchange, _contract_name_from_symbol(normalized)))
+    if not rows:
+        return 0
+    with mysql_connection() as conn:
+        cursor = conn.cursor()
+        cursor.executemany(
+            """
+            INSERT IGNORE INTO contract_center_items (symbol, exchange, name)
+            VALUES (%s, %s, %s)
+            """,
+            rows,
+        )
+        return cursor.rowcount
 

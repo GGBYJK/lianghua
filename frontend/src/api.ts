@@ -1,4 +1,4 @@
-import type { AlertFeedback, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, MarketSymbolsResponse, ScanResponse, SimulationStartResponse, SimulationStepResponse, WatchPoolItem, WatchPoolPayload } from "./types";
+import type { AlertFeedback, ContractCenterItem, ContractCenterRefresh, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, MarketSymbolsResponse, ScanResponse, SimulationStartResponse, SimulationStepResponse, WatchPoolItem, WatchPoolPayload } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || window.location.origin;
 
@@ -234,6 +234,40 @@ export async function deleteAlertFeedback(id: string): Promise<void> {
   if (!response.ok) {
     throw new Error(await readError(response));
   }
+}
+
+export async function listContracts(exchange?: string): Promise<ContractCenterItem[]> {
+  const url = new URL("/api/contracts", API_BASE);
+  if (exchange?.trim()) {
+    url.searchParams.set("exchange", exchange.trim());
+  }
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function refreshContracts(exchanges = "SHFE,DCE,CZCE"): Promise<ContractCenterRefresh> {
+  const url = new URL("/api/contracts/refresh", API_BASE);
+  url.searchParams.set("exchanges", exchanges);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function updateContracts(symbols: string[]): Promise<{ inserted: number; items: ContractCenterItem[] }> {
+  const response = await fetch(`${API_BASE}/api/contracts/update`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbols }),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
 }
 
 export async function scanWatchPoolOnce(limit = 420): Promise<{ inserted: number }> {
