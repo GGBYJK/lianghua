@@ -28,7 +28,7 @@ export type Signal = {
   symbol: string;
   timeframe: string;
   pattern: "head_shoulders_top" | "inverse_head_shoulders";
-  alert_type: "right_shoulder_confirmed" | "neckline_break" | "right_shoulder_retest";
+  alert_type: "right_shoulder_confirmed" | "neckline_break";
   left_shoulder: PivotPoint;
   left_neck: PivotPoint;
   head: PivotPoint;

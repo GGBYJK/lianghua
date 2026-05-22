@@ -225,11 +225,9 @@ def test_wechat_workbot_content_includes_core_signal_fields() -> None:
         "symbol": "c0",
         "timeframe": "5m",
         "pattern": "head_shoulders_top",
-        "alert_type": "right_shoulder_retest",
+        "alert_type": "right_shoulder_confirmed",
         "score": 88,
         "right_shoulder": {"time": "2026-05-20T09:01:00", "price": 3329},
-        "retest_time": "2026-05-20T09:05:00",
-        "retest_price": 3330,
         "neckline_price": 3300,
         "message": "test message",
     }
@@ -239,7 +237,5 @@ def test_wechat_workbot_content_includes_core_signal_fields() -> None:
     assert "玉米主力（c0）" in content
     assert "周期：5m" in content
     assert "形态：头肩顶" in content
-    assert "提醒：右肩确认后重新触及/超过右肩价" in content
     assert "评分：88" in content
     assert "右肩价：3329.00" in content
-    assert "触发价：3330.00" in content

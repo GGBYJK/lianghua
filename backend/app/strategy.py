@@ -539,26 +539,6 @@ def check_neckline_break(
     return False, None, None, None, "尚未有效跌破颈线", 0
 
 
-def check_right_shoulder_retest(
-    df: pd.DataFrame,
-    right_shoulder: PivotPoint,
-    config: HeadShoulderTopConfig,
-) -> tuple[bool, int | None, pd.Timestamp | None, float | None, str, int]:
-    start_index = right_shoulder.index + 1
-    end_index = min(len(df) - 1, right_shoulder.index + config.max_bars_after_right_shoulder)
-    if start_index >= len(df):
-        return False, None, None, None, "右肩确认后没有足够K线观察是否重新触及右肩价", 0
-    for i in range(start_index, end_index + 1):
-        retest_price = float(df.loc[i, "high"])
-        if retest_price < right_shoulder.price:
-            continue
-        return True, i, df.loc[i, "datetime"], retest_price, (
-            f"右肩确认后{config.max_bars_after_right_shoulder}根K线内，价格重新触及或超过右肩价："
-            f"当前最高 {retest_price:.2f}，右肩价 {right_shoulder.price:.2f}"
-        ), 0
-    return False, None, None, None, "右肩确认后观察期内未重新触及右肩价", 0
-
-
 def check_neckline_break_up(
     df: pd.DataFrame,
     left_neck: PivotPoint,
@@ -593,11 +573,16 @@ def scan_head_shoulders_top(
     df = add_macd_columns(add_ma_columns(df, config), config)
     pivots = compress_pivots(find_pivots(df, left=config.pivot_left, right=config.pivot_right))
     signals: list[HeadShoulderTopSignal] = []
+    used_right_shoulder_setups: set[tuple[int, int, int, int]] = set()
 
     for p1, p2, p3, p4, p5 in iter_pattern_candidates(pivots, ["high", "low", "high", "low", "high"]):
+        setup_key = (p1.index, p2.index, p3.index, p4.index)
+        if setup_key in used_right_shoulder_setups:
+            continue
         ok, reasons, total_score = validate_head_shoulders_structure([p1, p2, p3, p4, p5], config)
         if not ok:
             continue
+        used_right_shoulder_setups.add(setup_key)
 
         neckline_price = calculate_neckline_price(p2, p4, p5.index)
         signals.append(HeadShoulderTopSignal(
@@ -619,32 +604,6 @@ def scan_head_shoulders_top(
                 f"右肩价 {p5.price:.2f}，颈线价 {neckline_price:.2f}。"
             ),
         ))
-
-        retested, retest_index, retest_time, retest_price, retest_reason, _ = check_right_shoulder_retest(df, p5, config)
-        if retested:
-            assert retest_index is not None
-            retest_neckline_price = calculate_neckline_price(p2, p4, retest_index)
-            signals.append(HeadShoulderTopSignal(
-                symbol=symbol,
-                timeframe=timeframe,
-                pattern="head_shoulders_top",
-                alert_type="right_shoulder_retest",
-                left_shoulder=p1,
-                left_neck=p2,
-                head=p3,
-                right_neck=p4,
-                right_shoulder=p5,
-                neckline_price=retest_neckline_price,
-                confirmed=False,
-                score=total_score,
-                reasons=reasons + [retest_reason],
-                retest_time=retest_time,
-                retest_price=retest_price,
-                message=(
-                    f"{symbol} {timeframe} 头肩顶右肩确认后价格重新触及或超过右肩价。"
-                    f"当前最高 {retest_price:.2f}，右肩价 {p5.price:.2f}。"
-                ),
-            ))
 
         continue
 

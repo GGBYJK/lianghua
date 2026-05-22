@@ -347,15 +347,19 @@ function App() {
       setError("监控品种不能为空");
       return;
     }
+    const selectedOption = futuresSymbolOptions.find((item) => item.symbol.toLowerCase() === normalizedSymbol.toLowerCase());
+    const normalizedName = (selectedOption?.name ?? watchDraft.name).trim();
+    if (!normalizedName) {
+      setError("手动输入代码时必须填写品种名称");
+      return;
+    }
     const normalizedTradingSessions = normalizeTradingSessions(watchDraft.tradingSessions);
     if (!normalizedTradingSessions) {
       setError("请选择交易时间段");
       return;
     }
-    const selectedOption = futuresSymbolOptions.find((item) => item.symbol === normalizedSymbol);
-    const autoName = selectedOption?.name ?? normalizedSymbol;
     const payload = {
-      name: autoName,
+      name: normalizedName,
       symbol: normalizedSymbol,
       timeframe: watchDraft.timeframe,
       enabled: watchDraft.enabled,
@@ -905,6 +909,22 @@ function WatchPool({
   const enabledCount = items.filter((item) => item.enabled).length;
   const allEnabled = items.length > 0 && enabledCount === items.length;
   const allDisabled = enabledCount === 0;
+  const selectedDraftOption = futuresSymbolOptions.find((item) => item.symbol.toLowerCase() === draft.symbol.trim().toLowerCase());
+  const draftName = selectedDraftOption?.name ?? draft.name;
+  const [watchSymbolPickerOpen, setWatchSymbolPickerOpen] = useState(false);
+  const visibleWatchSymbolOptions = futuresSymbolOptions.filter((item) => {
+    const keyword = draft.symbol.trim().toLowerCase();
+    if (!keyword) {
+      return true;
+    }
+    return item.symbol.toLowerCase().includes(keyword) || item.name.toLowerCase().includes(keyword);
+  });
+
+  useEffect(() => {
+    if (!editorOpen) {
+      setWatchSymbolPickerOpen(false);
+    }
+  }, [editorOpen]);
 
   const renderPoolCard = (item: WatchPoolItem) => (
     <article className="pool-card" key={item.id}>
@@ -981,22 +1001,44 @@ function WatchPool({
             <div className="pool-editor modal-form">
               <label>
                 品种名称
-                <input value={futuresSymbolOptions.find((item) => item.symbol === draft.symbol)?.name ?? draft.name} readOnly placeholder="选择品种后自动带入" />
+                <input
+                  value={draftName}
+                  onChange={(event) => onDraftChange((prev) => ({ ...prev, name: event.target.value }))}
+                  placeholder="手动输入代码时必填"
+                />
               </label>
-              <label>
+              <label className="pool-symbol-combobox">
                 监控品种
-                <select
+                <input
                   value={draft.symbol}
+                  onFocus={() => setWatchSymbolPickerOpen(true)}
                   onChange={(event) => {
-                    const selected = futuresSymbolOptions.find((item) => item.symbol === event.target.value);
-                    onDraftChange((prev) => ({ ...prev, symbol: event.target.value, name: selected?.name ?? "" }));
+                    const nextSymbol = event.target.value;
+                    const matched = futuresSymbolOptions.find((item) => item.symbol.toLowerCase() === nextSymbol.trim().toLowerCase());
+                    setWatchSymbolPickerOpen(true);
+                    onDraftChange((prev) => ({ ...prev, symbol: nextSymbol, name: matched?.name ?? prev.name }));
                   }}
-                >
-                  <option value="">请选择监控品种</option>
-                  {futuresSymbolOptions.map((item) => (
-                    <option key={item.symbol} value={item.symbol}>{item.name}（{item.symbol}）</option>
-                  ))}
-                </select>
+                  placeholder="选择或输入代码，例如 c0、rb2405"
+                />
+                {watchSymbolPickerOpen && (
+                  <div className="pool-symbol-picker" role="listbox">
+                    {(visibleWatchSymbolOptions.length > 0 ? visibleWatchSymbolOptions : futuresSymbolOptions).map((item) => (
+                      <button
+                        type="button"
+                        className="pool-symbol-option"
+                        key={item.symbol}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          onDraftChange((prev) => ({ ...prev, symbol: item.symbol, name: item.name }));
+                          setWatchSymbolPickerOpen(false);
+                        }}
+                      >
+                        <strong>{item.name}</strong>
+                        <span>{item.symbol}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </label>
               <label>
                 监控周期
@@ -1994,9 +2036,6 @@ function signalKey(signal: Signal) {
 function alertTypeLabel(alertType: Signal["alert_type"]) {
   if (alertType === "right_shoulder_confirmed") {
     return "右肩确认";
-  }
-  if (alertType === "right_shoulder_retest") {
-    return "右肩价触及";
   }
   return "跌破颈线";
 }

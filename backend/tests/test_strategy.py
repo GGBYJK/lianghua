@@ -25,7 +25,6 @@ from app.strategy import (
     HeadShoulderTopSignal,
     PivotPoint,
     calculate_neckline_price,
-    check_right_shoulder_retest,
     deduplicate_overlapping_signals,
     find_pivots,
     iter_pattern_candidates,
@@ -175,24 +174,6 @@ def test_monitor_unique_key_uses_pattern_key_points_and_trigger_time() -> None:
     )
 
 
-def test_right_shoulder_retest_unique_key_is_once_per_right_shoulder() -> None:
-    base_signal = {
-        "symbol": "c0",
-        "timeframe": "1m",
-        "pattern": "head_shoulders_top",
-        "alert_type": "right_shoulder_retest",
-        "left_shoulder": {"time": "2026-05-12T09:00:00"},
-        "head": {"time": "2026-05-12T09:10:00"},
-        "right_shoulder": {"time": "2026-05-12T09:20:00"},
-        "break_time": None,
-        "retest_time": "2026-05-12T09:25:00",
-    }
-    later_touch = {**base_signal, "retest_time": "2026-05-12T09:26:00"}
-
-    assert build_signal_unique_key(base_signal) == build_signal_unique_key(later_touch)
-    assert build_signal_unique_key(base_signal).endswith("|first_right_shoulder_retest")
-
-
 def test_top_scan_emits_right_shoulder_alert_type_only() -> None:
     df = pd.read_csv(SAMPLE)
     config = HeadShoulderTopConfig(
@@ -214,25 +195,22 @@ def test_top_scan_emits_right_shoulder_alert_type_only() -> None:
     assert "neckline_break" not in alert_types
 
 
-def test_right_shoulder_retest_uses_first_touch_only() -> None:
+def test_top_scan_keeps_first_right_shoulder_for_same_left_setup() -> None:
+    times = pd.date_range("2026-01-01 09:00:00", periods=20, freq="min")
     rows = []
     closes = [
-        96, 98, 100, 99, 97, 95, 97, 101, 105, 102, 98, 95,
-        97, 99, 100, 99, 101, 100, 99, 94, 93,
+        98, 100, 99, 94, 95,
+        105, 103, 94, 95, 100,
+        98, 94, 96, 100, 98,
+        94, 96, 99, 97, 93,
     ]
+    pivot_highs = {1: 100, 5: 105, 9: 100, 13: 100, 17: 99}
+    pivot_lows = {3: 94, 7: 94, 11: 94, 15: 94}
     for index, close in enumerate(closes):
-        high = close + 0.2
-        low = close - 0.2
-        if index == 3:
-            high = 100
-        if index == 8:
-            high = 105
-        if index == 14:
-            high = 100
-        if index in (16, 17):
-            high = 100
+        high = pivot_highs.get(index, close + 0.2)
+        low = pivot_lows.get(index, close - 0.2)
         rows.append({
-            "datetime": pd.Timestamp("2026-01-01 09:00:00") + pd.Timedelta(minutes=index),
+            "datetime": times[index],
             "open": close,
             "high": high,
             "low": low,
@@ -241,18 +219,31 @@ def test_right_shoulder_retest_uses_first_touch_only() -> None:
         })
     df = pd.DataFrame(rows)
     config = HeadShoulderTopConfig(
-        max_bars_after_right_shoulder=30,
+        pivot_left=1,
+        pivot_right=1,
+        max_shoulder_diff_pct=0.02,
+        max_neck_diff_pct=0.02,
+        min_right_leg_to_left_leg_ratio=0.5,
+        max_right_leg_to_left_leg_ratio=2.0,
+        min_head_to_right_neck_to_left_neck_to_head_ratio=0.5,
+        require_ma_bearish_alignment=False,
+        require_close_below_ma_long=False,
+        enable_score=False,
     )
-    right_shoulder = PivotPoint(
-        index=14,
-        time=df.loc[14, "datetime"],
-        price=100,
-        kind="high",
-    )
-    retested, retest_index, _, retest_price, _, _ = check_right_shoulder_retest(df, right_shoulder, config)
-    assert retested
-    assert retest_index == 16
-    assert retest_price == 100
+
+    signals = scan_head_shoulders_top(df, "rb2405", "1m", config)
+    same_setup_signals = [
+        signal for signal in signals
+        if (
+            signal.left_shoulder.index,
+            signal.left_neck.index,
+            signal.head.index,
+            signal.right_neck.index,
+        ) == (1, 3, 5, 7)
+    ]
+
+    assert len(same_setup_signals) == 1
+    assert same_setup_signals[0].right_shoulder.index == 9
 
 
 def test_mirrored_sample_finds_confirmed_inverse_signal() -> None:

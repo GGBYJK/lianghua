@@ -66,10 +66,7 @@ def ensure_default_watch_pool_items() -> None:
 
 def build_signal_unique_key(signal: dict[str, Any]) -> str:
     alert_type = signal.get("alert_type", "neckline_break")
-    if alert_type == "right_shoulder_retest":
-        trigger_time = "first_right_shoulder_retest"
-    else:
-        trigger_time = signal.get("break_time") or signal["right_shoulder"]["time"]
+    trigger_time = signal.get("break_time") or signal["right_shoulder"]["time"]
     parts = [
         signal["symbol"],
         signal["timeframe"],
@@ -93,7 +90,6 @@ ZH = {
     "inverse_pattern": "\u53cd\u5411\u5934\u80a9\u5f62\u6001",
     "top_pattern": "\u5934\u80a9\u9876",
     "right_shoulder_confirmed": "\u53f3\u80a9\u786e\u8ba4",
-    "right_shoulder_retest": "\u53f3\u80a9\u786e\u8ba4\u540e\u91cd\u65b0\u89e6\u53ca/\u8d85\u8fc7\u53f3\u80a9\u4ef7",
     "neckline_break": "\u8dcc\u7834\u9888\u7ebf\u786e\u8ba4",
     "shape_alert": "\u5f62\u6001\u63d0\u9192",
     "new_alert": "\u76d1\u63a7\u5230\u65b0\u7684\u5f62\u6001\u63d0\u9192",
@@ -125,8 +121,6 @@ def pattern_label(pattern: str | None) -> str:
 def alert_type_label(alert_type: str | None) -> str:
     if alert_type == "right_shoulder_confirmed":
         return ZH["right_shoulder_confirmed"]
-    if alert_type == "right_shoulder_retest":
-        return ZH["right_shoulder_retest"]
     if alert_type == "neckline_break":
         return ZH["neckline_break"]
     return alert_type or ZH["shape_alert"]
