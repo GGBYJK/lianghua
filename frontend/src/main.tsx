@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { Button as AntButton, Checkbox, ConfigProvider, Input, InputNumber, Select } from "antd";
 import * as echarts from "echarts/core";
 import { BarChart, CandlestickChart, LineChart } from "echarts/charts";
 import { AxisPointerComponent, DataZoomComponent, GridComponent, LegendComponent, MarkLineComponent, MarkPointComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import { createAlertFeedback, createWatchPoolItem, deleteAlertFeedback, deleteWatchPoolItem, disableAllWatchPoolItems, enableAllWatchPoolItems, getDefaultConfig, getHeadShouldersAlert, getMarketSettings, hideHeadShouldersAlert, listAlertFeedbacks, listContracts, listHeadShouldersAlerts, listWatchPool, refreshContracts, scanMarket, scanWatchPoolOnce, updateContracts, updateWatchPoolItem } from "./api";
 import type { AlertFeedback, Candle, ContractCenterItem, ContractCenterRefresh, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, Neckline, PivotPoint, ScanResponse, Signal, WatchPoolItem as ApiWatchPoolItem } from "./types";
+import "antd/dist/reset.css";
 import "./styles.css";
 
 echarts.use([
@@ -67,6 +69,49 @@ const EMPTY_CANDLES: Candle[] = [];
 const EMPTY_PIVOTS: PivotPoint[] = [];
 const EMPTY_NECKLINES: Neckline[] = [];
 const DEFAULT_TRADING_SESSIONS = "day,night";
+const TIMEFRAME_OPTIONS = [
+  { value: "1m", label: "1分钟" },
+  { value: "5m", label: "5分钟" },
+  { value: "15m", label: "15分钟" },
+  { value: "30m", label: "30分钟" },
+  { value: "1h", label: "1小时" },
+  { value: "1d", label: "日线" },
+];
+const antTheme = {
+  token: {
+    colorPrimary: "#0066cc",
+    colorInfo: "#0066cc",
+    colorText: "#1d1d1f",
+    colorTextSecondary: "#7a7a7a",
+    colorBorder: "#e0e0e0",
+    colorBgContainer: "#ffffff",
+    colorBgElevated: "#ffffff",
+    borderRadius: 11,
+    borderRadiusLG: 18,
+    controlHeight: 44,
+    fontFamily: '"SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", sans-serif',
+  },
+  components: {
+    Button: {
+      borderRadius: 999,
+      controlHeight: 44,
+      fontWeight: 400,
+      primaryShadow: "none",
+    },
+    Input: {
+      borderRadius: 999,
+      activeShadow: "0 0 0 3px rgba(0, 113, 227, 0.14)",
+    },
+    InputNumber: {
+      borderRadius: 999,
+      activeShadow: "0 0 0 3px rgba(0, 113, 227, 0.14)",
+    },
+    Select: {
+      borderRadius: 999,
+      optionSelectedBg: "rgba(0, 102, 204, 0.08)",
+    },
+  },
+};
 
 type CachedMarketScan = {
   version: number;
@@ -94,6 +139,12 @@ type DetailSource =
   | { kind: "current"; signal: Signal }
   | null;
 type TradingSessionKey = "day" | "night";
+type ContractSymbolOption = {
+  value: string;
+  label: React.ReactNode;
+  searchText: string;
+  name: string;
+};
 
 const tradingSessionOptions: Array<{ key: TradingSessionKey; label: string; range: string }> = [
   { key: "day", label: "白天", range: "09:00-11:30 / 13:30-15:00" },
@@ -135,7 +186,7 @@ function mapWatchPoolItem(item: ApiWatchPoolItem): WatchPoolItem {
 }
 
 function App() {
-  const [symbol, setSymbol] = useState("c0");
+  const [symbol, setSymbol] = useState("");
   const [timeframe, setTimeframe] = useState("5m");
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [result, setResult] = useState<ScanResponse | null>(null);
@@ -149,7 +200,6 @@ function App() {
   const [marketLimit, setMarketLimit] = useState(420);
   const [marketLastFetch, setMarketLastFetch] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
-  const [symbolPickerOpen, setSymbolPickerOpen] = useState(false);
   const [watchPool, setWatchPool] = useState<WatchPoolItem[]>([]);
   const [watchDraft, setWatchDraft] = useState<WatchPoolDraft>(emptyWatchDraft);
   const [editingWatchId, setEditingWatchId] = useState<string | null>(null);
@@ -172,6 +222,9 @@ function App() {
   const seenSignalKeys = useRef<Set<string>>(new Set());
 
   useEffect(() => {
+    if (!symbol) {
+      return;
+    }
     getDefaultConfig(symbol, timeframe)
       .then(setConfig)
       .catch((err) => setError(err.message));
@@ -190,6 +243,12 @@ function App() {
   }, []);
 
   useEffect(() => {
+    listContracts()
+      .then(setContracts)
+      .catch((err) => setError(err instanceof Error ? err.message : "合约列表读取失败"));
+  }, []);
+
+  useEffect(() => {
     refreshMonitorAlerts();
     refreshFeedbacks();
     const timer = window.setInterval(() => {
@@ -204,6 +263,10 @@ function App() {
   }, [configOpen, watchEditorOpen, detailSource, feedbackTarget, feedbackListOpen, contractCenterOpen]);
 
   async function pollMarket() {
+    if (!symbol) {
+      setError("请先选择监控品种");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -269,13 +332,31 @@ function App() {
   );
   const currentSignalKeys = useMemo(() => currentSignals.map(signalKey), [currentSignals]);
   const selectedCount = selectedSignals.length;
-  const visibleFuturesSymbolOptions = futuresSymbolOptions.filter((item) => {
-    const keyword = symbol.trim().toLowerCase();
-    if (!keyword) {
-      return true;
+  const contractSymbolOptions = useMemo<ContractSymbolOption[]>(() => {
+    const source = contracts.length > 0
+      ? contracts.map((item) => ({ symbol: item.symbol, name: item.name || item.symbol }))
+      : futuresSymbolOptions;
+    return source.map((item) => ({
+      value: item.symbol,
+      label: (
+        <span className="contract-option-label">
+          <strong>{item.symbol}</strong>
+          <span>{item.name}</span>
+        </span>
+      ),
+      searchText: `${item.symbol} ${item.name}`,
+      name: item.name,
+    }));
+  }, [contracts]);
+
+  useEffect(() => {
+    if (contractSymbolOptions.length === 0) {
+      return;
     }
-    return item.symbol.toLowerCase().includes(keyword) || item.name.toLowerCase().includes(keyword);
-  });
+    if (!symbol || !contractSymbolOptions.some((item) => item.value === symbol)) {
+      setSymbol(contractSymbolOptions[0].value);
+    }
+  }, [contractSymbolOptions, symbol]);
   const totalRows = result?.rows ?? 0;
   const progress = totalRows > 0 ? Math.round((cursor / totalRows) * 100) : 0;
 
@@ -353,12 +434,12 @@ function App() {
       setError("监控品种不能为空");
       return;
     }
-    const selectedOption = futuresSymbolOptions.find((item) => item.symbol.toLowerCase() === normalizedSymbol.toLowerCase());
-    const normalizedName = (selectedOption?.name ?? watchDraft.name).trim();
-    if (!normalizedName) {
-      setError("手动输入代码时必须填写品种名称");
+    const selectedOption = contractSymbolOptions.find((item) => item.value.toLowerCase() === normalizedSymbol.toLowerCase());
+    if (!selectedOption) {
+      setError("监控品种必须从合约列表中选择");
       return;
     }
+    const normalizedName = selectedOption.name.trim();
     const normalizedTradingSessions = normalizeTradingSessions(watchDraft.tradingSessions);
     if (!normalizedTradingSessions) {
       setError("请选择交易时间段");
@@ -578,7 +659,11 @@ function App() {
     try {
       const response = await refreshContracts();
       setContractRefresh(response);
-      setContractMessage(response.new_count > 0 ? `发现 ${response.new_count} 个新增合约，确认后写入数据库。` : "当前数据库已是最新。");
+      setContractMessage(
+        response.new_count > 0 || response.stale_count > 0
+          ? `发现 ${response.new_count} 个新增合约、${response.stale_count} 个失效合约，确认后同步数据库。`
+          : "当前数据库已是最新。",
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "合约刷新失败");
     } finally {
@@ -587,14 +672,19 @@ function App() {
   }
 
   async function applyContractUpdates() {
-    if (!contractRefresh || contractRefresh.new_symbols.length === 0) return;
+    if (!contractRefresh || (contractRefresh.new_symbols.length === 0 && contractRefresh.stale_symbols.length === 0)) return;
     setContractUpdating(true);
     setContractMessage(null);
     try {
-      const response = await updateContracts(contractRefresh.new_symbols);
+      const response = await updateContracts({
+        symbols: contractRefresh.new_symbols,
+        latest_symbols: contractRefresh.latest_symbols,
+        exchanges: contractRefresh.exchanges,
+        prune_missing: true,
+      });
       setContracts(response.items);
       setContractRefresh(null);
-      setContractMessage(`已新增 ${response.inserted} 个合约到数据库。`);
+      setContractMessage(`已新增 ${response.inserted} 个合约，移除 ${response.removed} 个失效合约。`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "合约更新失败");
     } finally {
@@ -603,6 +693,7 @@ function App() {
   }
 
   return (
+    <ConfigProvider theme={antTheme}>
     <main className="app-shell">
       <header className="terminal-header">
         <div className="terminal-title">
@@ -610,8 +701,8 @@ function App() {
           <span>交易分析工作台</span>
         </div>
         <div className="terminal-status">
-          <button type="button" className="header-feedback-button" onClick={() => setFeedbackListOpen(true)}>&#21453;&#39304;&#21015;&#34920;</button>
-          <button type="button" className="header-feedback-button" onClick={() => void openContractCenter()}>合约中心</button>
+          <AntButton className="header-feedback-button" onClick={() => setFeedbackListOpen(true)}>&#21453;&#39304;&#21015;&#34920;</AntButton>
+          <AntButton className="header-feedback-button" onClick={() => void openContractCenter()}>合约中心</AntButton>
           <span>{marketSettings?.provider ?? "Market"}</span>
           <span>{result?.symbol ?? symbol} / {result?.timeframe ?? timeframe}</span>
           <span>{marketLastFetch ?? "等待扫描"}</span>
@@ -624,9 +715,9 @@ function App() {
               <p className="eyebrow">Kline Config</p>
               <h2>K线图配置</h2>
             </div>
-            <button className="icon-button" type="button" onClick={() => setConfigOpen(true)} aria-label="打开配置">
+            <AntButton className="icon-button" onClick={() => setConfigOpen(true)} aria-label="打开配置">
               策略参数
-            </button>
+            </AntButton>
           </div>
           <div className="progress-box">
             <div className="progress-meta">
@@ -637,66 +728,29 @@ function App() {
             {marketLastFetch && <p>最近拉取：{marketLastFetch}</p>}
           </div>
           <div className="market-form">
-            <div className="symbol-combobox">
-              <label htmlFor="symbol-input">监控品种</label>
-              <div className="symbol-input-row">
-                <input
-                  id="symbol-input"
-                  value={symbol}
-                  onChange={(event) => {
-                    setSymbol(event.target.value);
-                    setSymbolPickerOpen(true);
-                  }}
-                  onFocus={() => setSymbolPickerOpen(true)}
-                  placeholder="例如 c0 / m2609"
-                  autoComplete="off"
-                />
-                <button
-                  type="button"
-                  className="symbol-picker-toggle"
-                  onClick={() => setSymbolPickerOpen((value) => !value)}
-                  aria-label="展开合约列表"
-                >
-                  ▾
-                </button>
-              </div>
-              {symbolPickerOpen && (
-                <div className="symbol-picker" role="listbox">
-                  {(visibleFuturesSymbolOptions.length > 0 ? visibleFuturesSymbolOptions : futuresSymbolOptions).map((item) => (
-                    <button
-                      type="button"
-                      className="symbol-picker-option"
-                      key={item.symbol}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        setSymbol(item.symbol);
-                        setSymbolPickerOpen(false);
-                      }}
-                    >
-                      <strong>{item.name}</strong>
-                      <span>{item.symbol}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+            <label>
+              监控品种
+              <Select
+                showSearch
+                value={symbol}
+                options={contractSymbolOptions}
+                optionFilterProp="label"
+                placeholder="输入代码或名称搜索"
+                onChange={setSymbol}
+                optionLabelProp="value"
+                filterOption={(input, option) => String(option?.searchText ?? "").toLowerCase().includes(input.toLowerCase())}
+              />
+            </label>
             <label>
               监控周期
-              <select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}>
-                <option value="1m">1分钟</option>
-                <option value="5m">5分钟</option>
-                <option value="15m">15分钟</option>
-                <option value="30m">30分钟</option>
-                <option value="1h">1小时</option>
-                <option value="1d">日线</option>
-              </select>
+              <Select value={timeframe} onChange={setTimeframe} options={TIMEFRAME_OPTIONS} />
             </label>
             <label>
               拉取K线数量
-              <input type="number" min={30} max={1000} value={marketLimit} onChange={(event) => setMarketLimit(Number(event.target.value))} />
+              <InputNumber min={30} max={1000} value={marketLimit} onChange={(value) => setMarketLimit(Number(value) || 30)} />
             </label>
           </div>
-          <button className="primary-action" disabled={loading} onClick={() => void pollMarket()}>{loading ? "扫描中..." : "获取K线数据"}</button>
+          <AntButton type="primary" className="primary-action" loading={loading} disabled={loading} onClick={() => void pollMarket()}>{loading ? "扫描中..." : "获取K线数据"}</AntButton>
           {error && <div className="error-box">{error}</div>}
           <div className="progress-box">
             <div className="progress-meta">
@@ -730,16 +784,17 @@ function App() {
                 <span>{selectedCount} / {currentSignals.length} 条当前图结果</span>
               </div>
               <div className="signal-display-actions">
-                <button type="button" className="compact-button" onClick={showAllSignals} disabled={currentSignals.length === 0}>显示全部</button>
-                <button type="button" className="compact-button muted-button" onClick={clearSelectedSignals} disabled={selectedCount === 0}>清空</button>
+                <AntButton className="compact-button" onClick={showAllSignals} disabled={currentSignals.length === 0}>显示全部</AntButton>
+                <AntButton className="compact-button muted-button" onClick={clearSelectedSignals} disabled={selectedCount === 0}>清空</AntButton>
               </div>
             </div>
           </section>
 
-      <WatchPool
-        items={watchPool}
-        draft={watchDraft}
-        editingId={editingWatchId}
+        <WatchPool
+          items={watchPool}
+          draft={watchDraft}
+          contractOptions={contractSymbolOptions}
+          editingId={editingWatchId}
         editorOpen={watchEditorOpen}
         onDraftChange={setWatchDraft}
         onNew={startCreateWatch}
@@ -817,11 +872,11 @@ function App() {
             </div>
             <label className="feedback-note-field">
               &#21453;&#39304;&#20449;&#24687;
-              <textarea value={feedbackNote} onChange={(event) => setFeedbackNote(event.target.value)} maxLength={2000} placeholder="请输入反馈信息，例如误报原因、确认结果或后续处理记录" />
+              <Input.TextArea value={feedbackNote} onChange={(event) => setFeedbackNote(event.target.value)} maxLength={2000} placeholder="请输入反馈信息，例如误报原因、确认结果或后续处理记录" showCount />
             </label>
             <div className="modal-actions">
-              <button type="button" className="muted-button" onClick={() => setFeedbackTarget(null)}>&#21462;&#28040;</button>
-              <button type="button" onClick={() => void saveAlertFeedback()}>&#20445;&#23384;&#21453;&#39304;</button>
+              <AntButton className="muted-button" onClick={() => setFeedbackTarget(null)}>&#21462;&#28040;</AntButton>
+              <AntButton type="primary" onClick={() => void saveAlertFeedback()}>&#20445;&#23384;&#21453;&#39304;</AntButton>
             </div>
           </section>
         </div>
@@ -861,7 +916,7 @@ function App() {
           updating={contractUpdating}
           message={contractMessage}
           onRefresh={() => void refreshContractCenter()}
-          onUpdate={() => void applyContractUpdates()}
+              onUpdate={() => void applyContractUpdates()}
           onClose={() => setContractCenterOpen(false)}
         />
       )}
@@ -880,20 +935,19 @@ function App() {
                 <p className="eyebrow">Strategy</p>
                 <h2 id="config-title">关键参数配置</h2>
               </div>
-              <button className="icon-button" type="button" onClick={() => setConfigOpen(false)} aria-label="关闭配置">
+              <AntButton className="icon-button" onClick={() => setConfigOpen(false)} aria-label="关闭配置">
                 关闭
-              </button>
+              </AntButton>
             </div>
             <div className="config-scroll">
               <div className="config-grid">
                 {numericFields.map((field) => (
                   <label key={field}>
                     {fieldLabel(field)}
-                    <input
-                      type="number"
-                      step="0.001"
-                      value={String(config[field] ?? "")}
-                      onChange={(event) => setConfig((prev) => ({ ...prev, [field]: Number(event.target.value) }))}
+                    <InputNumber
+                      step={0.001}
+                      value={typeof config[field] === "number" ? Number(config[field]) : null}
+                      onChange={(value) => setConfig((prev) => ({ ...prev, [field]: Number(value) || 0 }))}
                     />
                   </label>
                 ))}
@@ -902,8 +956,7 @@ function App() {
                 <div className="switch-list">
                   {booleanFields.map((field) => (
                     <label key={field} className="switch-row">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={Boolean(config[field])}
                         onChange={(event) => setConfig((prev) => ({ ...prev, [field]: event.target.checked }))}
                       />
@@ -914,12 +967,13 @@ function App() {
               )}
             </div>
             <div className="modal-actions">
-              <button type="button" onClick={() => setConfigOpen(false)}>保存配置</button>
+              <AntButton type="primary" onClick={() => setConfigOpen(false)}>保存配置</AntButton>
             </div>
           </section>
         </div>
       )}
     </main>
+    </ConfigProvider>
   );
 }
 
@@ -935,6 +989,7 @@ function Metric({ label, value, tone }: { label: string; value: React.ReactNode;
 function WatchPool({
   items,
   draft,
+  contractOptions,
   editingId,
   editorOpen,
   onDraftChange,
@@ -949,6 +1004,7 @@ function WatchPool({
 }: {
   items: WatchPoolItem[];
   draft: WatchPoolDraft;
+  contractOptions: ContractSymbolOption[];
   editingId: string | null;
   editorOpen: boolean;
   onDraftChange: React.Dispatch<React.SetStateAction<WatchPoolDraft>>;
@@ -969,22 +1025,8 @@ function WatchPool({
   const enabledCount = items.filter((item) => item.enabled).length;
   const allEnabled = items.length > 0 && enabledCount === items.length;
   const allDisabled = enabledCount === 0;
-  const selectedDraftOption = futuresSymbolOptions.find((item) => item.symbol.toLowerCase() === draft.symbol.trim().toLowerCase());
+  const selectedDraftOption = contractOptions.find((item) => item.value.toLowerCase() === draft.symbol.trim().toLowerCase());
   const draftName = selectedDraftOption?.name ?? draft.name;
-  const [watchSymbolPickerOpen, setWatchSymbolPickerOpen] = useState(false);
-  const visibleWatchSymbolOptions = futuresSymbolOptions.filter((item) => {
-    const keyword = draft.symbol.trim().toLowerCase();
-    if (!keyword) {
-      return true;
-    }
-    return item.symbol.toLowerCase().includes(keyword) || item.name.toLowerCase().includes(keyword);
-  });
-
-  useEffect(() => {
-    if (!editorOpen) {
-      setWatchSymbolPickerOpen(false);
-    }
-  }, [editorOpen]);
 
   const renderPoolCard = (item: WatchPoolItem) => (
     <article className="pool-card" key={item.id}>
@@ -1019,10 +1061,10 @@ function WatchPool({
           <h2>品种检测池子</h2>
         </div>
         <div className="pool-head-actions">
-          <button type="button" className="compact-button" onClick={onEnableAll} disabled={items.length === 0 || allEnabled}>一键开启检测</button>
-          <button type="button" className="compact-button muted-button" onClick={onDisableAll} disabled={items.length === 0 || allDisabled}>一键关闭检测</button>
+          <AntButton className="compact-button" onClick={onEnableAll} disabled={items.length === 0 || allEnabled}>一键开启检测</AntButton>
+          <AntButton className="compact-button muted-button" onClick={onDisableAll} disabled={items.length === 0 || allDisabled}>一键关闭检测</AntButton>
           <span className="badge">{enabledCount} 个监控中</span>
-          <button type="button" className="compact-button" onClick={onNew}>新增品种</button>
+          <AntButton className="compact-button" onClick={onNew}>新增品种</AntButton>
         </div>
       </div>
       <div className="pool-groups" aria-label="品种检测池子">
@@ -1054,14 +1096,14 @@ function WatchPool({
                 <p className="eyebrow">Watch Pool</p>
                 <h2 id="watch-editor-title">{editingId ? "修改检测品种" : "新增检测品种"}</h2>
               </div>
-              <button className="icon-button" type="button" onClick={onCancel} aria-label="关闭检测品种编辑">
+              <AntButton className="icon-button" onClick={onCancel} aria-label="关闭检测品种编辑">
                 关闭
-              </button>
+              </AntButton>
             </div>
             <div className="pool-editor modal-form">
               <label>
                 品种名称
-                <input
+                <Input
                   value={draftName}
                   onChange={(event) => onDraftChange((prev) => ({ ...prev, name: event.target.value }))}
                   placeholder="手动输入代码时必填"
@@ -1069,67 +1111,43 @@ function WatchPool({
               </label>
               <label className="pool-symbol-combobox">
                 监控品种
-                <input
+                <Select
+                  showSearch
                   value={draft.symbol}
-                  onFocus={() => setWatchSymbolPickerOpen(true)}
-                  onChange={(event) => {
-                    const nextSymbol = event.target.value;
-                    const matched = futuresSymbolOptions.find((item) => item.symbol.toLowerCase() === nextSymbol.trim().toLowerCase());
-                    setWatchSymbolPickerOpen(true);
-                    onDraftChange((prev) => ({ ...prev, symbol: nextSymbol, name: matched?.name ?? prev.name }));
+                  options={contractOptions}
+                  optionFilterProp="label"
+                  placeholder="输入代码或名称搜索"
+                  onChange={(nextSymbol) => {
+                    const matched = contractOptions.find((item) => item.value === nextSymbol);
+                    onDraftChange((prev) => ({ ...prev, symbol: nextSymbol, name: matched?.name ?? "" }));
                   }}
-                  placeholder="选择或输入代码，例如 c0、rb2405"
+                  optionLabelProp="value"
+                  filterOption={(input, option) => String(option?.searchText ?? "").toLowerCase().includes(input.toLowerCase())}
                 />
-                {watchSymbolPickerOpen && (
-                  <div className="pool-symbol-picker" role="listbox">
-                    {(visibleWatchSymbolOptions.length > 0 ? visibleWatchSymbolOptions : futuresSymbolOptions).map((item) => (
-                      <button
-                        type="button"
-                        className="pool-symbol-option"
-                        key={item.symbol}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => {
-                          onDraftChange((prev) => ({ ...prev, symbol: item.symbol, name: item.name }));
-                          setWatchSymbolPickerOpen(false);
-                        }}
-                      >
-                        <strong>{item.name}</strong>
-                        <span>{item.symbol}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
               </label>
               <label>
                 监控周期
-                <select
+                <Select
                   value={draft.timeframe}
-                  onChange={(event) => onDraftChange((prev) => ({ ...prev, timeframe: event.target.value }))}
-                >
-                  <option value="1m">1分钟</option>
-                  <option value="5m">5分钟</option>
-                  <option value="15m">15分钟</option>
-                  <option value="30m">30分钟</option>
-                  <option value="1h">1小时</option>
-                </select>
+                  onChange={(value) => onDraftChange((prev) => ({ ...prev, timeframe: value }))}
+                  options={TIMEFRAME_OPTIONS.filter((item) => item.value !== "1d")}
+                />
               </label>
               <label>
                 检测时长
-                <input
-                  type="number"
+                <InputNumber
                   min={1}
                   value={draft.monitorMinutes}
-                  onChange={(event) => onDraftChange((prev) => ({ ...prev, monitorMinutes: Number(event.target.value) }))}
+                  onChange={(value) => onDraftChange((prev) => ({ ...prev, monitorMinutes: Number(value) || 1 }))}
                 />
               </label>
               <label>
                 头部到颈线最小高度
-                <input
-                  type="number"
+                <InputNumber
                   min={0}
-                  step="0.01"
+                  step={0.01}
                   value={draft.minHeadToNeckHeight}
-                  onChange={(event) => onDraftChange((prev) => ({ ...prev, minHeadToNeckHeight: Number(event.target.value) }))}
+                  onChange={(value) => onDraftChange((prev) => ({ ...prev, minHeadToNeckHeight: Number(value) || 0 }))}
                   placeholder="0 表示使用策略默认值"
                 />
               </label>
@@ -1155,12 +1173,7 @@ function WatchPool({
                           onDraftChange((prev) => ({ ...prev, tradingSessions: normalizeTradingSessions(Array.from(next).join(",")) }));
                         }}
                       >
-                        <input
-                          type="checkbox"
-                          checked={selected}
-                          readOnly
-                          tabIndex={-1}
-                        />
+                        <Checkbox checked={selected} tabIndex={-1} />
                         <span>
                           <strong>{option.label}</strong>
                           <small>{option.range}</small>
@@ -1171,8 +1184,7 @@ function WatchPool({
                 </div>
               </div>
               <label className="pool-toggle">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={draft.enabled}
                   onChange={(event) => onDraftChange((prev) => ({ ...prev, enabled: event.target.checked }))}
                 />
@@ -1180,8 +1192,8 @@ function WatchPool({
               </label>
             </div>
             <div className="modal-actions">
-              <button type="button" className="muted-button" onClick={onCancel}>取消</button>
-              <button type="button" onClick={onSave}>{editingId ? "保存修改" : "新增品种"}</button>
+              <AntButton className="muted-button" onClick={onCancel}>取消</AntButton>
+              <AntButton type="primary" onClick={onSave}>{editingId ? "保存修改" : "新增品种"}</AntButton>
             </div>
           </section>
         </div>
@@ -1393,24 +1405,24 @@ function ContractCenterModal({
         aria-labelledby="contract-center-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <button type="button" className="modal-close-button" onClick={onClose} aria-label="关闭合约中心">关闭</button>
+        <AntButton className="modal-close-button" onClick={onClose} aria-label="关闭合约中心">关闭</AntButton>
         <div className="modal-head">
           <div>
             <p className="eyebrow">Contracts</p>
             <h2 id="contract-center-title">合约中心</h2>
           </div>
           <div className="contract-center-actions">
-            <button type="button" className="compact-button" onClick={onRefresh} disabled={loading || updating}>
+            <AntButton className="compact-button" onClick={onRefresh} disabled={loading || updating} loading={loading}>
               {loading ? "获取中..." : "获取最新合约"}
-            </button>
-            <button
-              type="button"
+            </AntButton>
+            <AntButton
               className="compact-button"
               onClick={onUpdate}
-              disabled={updating || !refreshState || refreshState.new_symbols.length === 0}
+              disabled={updating || !refreshState || (refreshState.new_symbols.length === 0 && refreshState.stale_symbols.length === 0)}
+              loading={updating}
             >
               {updating ? "更新中..." : "确认更新"}
-            </button>
+            </AntButton>
           </div>
         </div>
         <div className="contract-summary">
@@ -1419,6 +1431,7 @@ function ContractCenterModal({
           <span className="badge">DCE {exchangeCounts.DCE ?? 0}</span>
           <span className="badge">CZCE {exchangeCounts.CZCE ?? 0}</span>
           {refreshState && <span className="badge">新增 {refreshState.new_count} 个</span>}
+          {refreshState && <span className="badge">失效 {refreshState.stale_count} 个</span>}
         </div>
         {message && <div className="contract-message">{message}</div>}
         {refreshState && refreshState.new_symbols.length > 0 && (
@@ -1430,16 +1443,24 @@ function ContractCenterModal({
             </div>
           </div>
         )}
+        {refreshState && refreshState.stale_symbols.length > 0 && (
+          <div className="contract-new-box contract-stale-box">
+            <strong>待移除失效合约</strong>
+            <div className="contract-chip-list">
+              {refreshState.stale_symbols.slice(0, 80).map((symbol) => <span key={symbol}>{symbol}</span>)}
+              {refreshState.stale_symbols.length > 80 && <span>+{refreshState.stale_symbols.length - 80}</span>}
+            </div>
+          </div>
+        )}
         <div className="contract-filter-row">
           {["ALL", "SHFE", "DCE", "CZCE"].map((exchange) => (
-            <button
-              type="button"
+            <AntButton
               key={exchange}
               className={exchangeFilter === exchange ? "active" : ""}
               onClick={() => setExchangeFilter(exchange)}
             >
               {exchange === "ALL" ? "全部" : exchange}
-            </button>
+            </AntButton>
           ))}
         </div>
         <div className="contract-table-wrap">
@@ -1660,7 +1681,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
       return;
     }
 
-    const chart = echarts.init(chartRef.current, "dark", {
+    const chart = echarts.init(chartRef.current, undefined, {
       renderer: "canvas",
       devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
       useDirtyRect: true,
@@ -1669,17 +1690,17 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
     const ohlc = candles.map((candle) => [candle.open, candle.close, candle.low, candle.high]);
     const volumes = candles.map((candle) => ({
       value: candle.volume,
-      itemStyle: { color: candle.close >= candle.open ? "rgba(239,68,68,0.48)" : "rgba(34,197,94,0.48)" },
+      itemStyle: { color: candle.close >= candle.open ? "rgba(194,65,52,0.42)" : "rgba(22,138,85,0.42)" },
     }));
     const maKeys = Object.keys(candles.find((candle) => candle.ma && Object.keys(candle.ma).length > 0)?.ma ?? {})
       .sort((a, b) => Number(a.slice(2)) - Number(b.slice(2)));
     const maColors: Record<string, string> = {
-      ma5: "#f2c66d",
-      ma10: "#78c6ff",
-      ma20: "#d48cff",
-      ma30: "#68d391",
-      ma60: "#ef7b6d",
-      ma250: "#cbd5e1",
+      ma5: "#0066cc",
+      ma10: "#7a7a7a",
+      ma20: "#b87a16",
+      ma30: "#168a55",
+      ma60: "#c24134",
+      ma250: "#333333",
     };
     const visibleSignals = signals;
     const patternLabels = ["左肩", "左颈", "头部", "右颈", "右肩"];
@@ -1694,13 +1715,13 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
       coord: [point.index, point.price],
       value: patternLabels[index],
       itemStyle: {
-        color: signal.confirmed ? (index === 2 ? "#f59e0b" : "#eab308") : (index === 2 ? "#8dd3c7" : "#94a3b8"),
-        borderColor: "#07100d",
+        color: signal.confirmed ? (index === 2 ? "#0066cc" : "#2997ff") : (index === 2 ? "#b87a16" : "#7a7a7a"),
+        borderColor: "#ffffff",
         borderWidth: 2,
       },
       label: {
         formatter: signal.confirmed ? patternLabels[index] : `疑${patternLabels[index]}`,
-        color: "#f8fafc",
+        color: "#1d1d1f",
         fontSize: 11,
         fontWeight: 700,
       },
@@ -1712,7 +1733,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
         {
           coord: [signal.left_neck.index, signal.left_neck.price],
           lineStyle: {
-            color: signal.confirmed ? "#facc15" : "#8dd3c7",
+            color: signal.confirmed ? "#0066cc" : "#b87a16",
             width: signal.confirmed ? 2 : 1.5,
             type: signal.confirmed ? "dashed" : "dotted",
           },
@@ -1730,7 +1751,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
     let zoomEnd = end;
 
     chart.setOption({
-      backgroundColor: "#07100d",
+      backgroundColor: "#ffffff",
       animation: false,
       color: maKeys.map((key) => maColors[key] ?? "#94a3b8"),
       legend: {
@@ -1740,21 +1761,21 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
         itemWidth: 18,
         itemHeight: 3,
         data: maKeys.map((key) => key.toUpperCase()),
-        textStyle: { color: "#b6c2bc", fontSize: 11, fontWeight: 700 },
+        textStyle: { color: "#7a7a7a", fontSize: 11, fontWeight: 600 },
       },
       axisPointer: {
         link: [{ xAxisIndex: "all" }],
-        label: { backgroundColor: "#1f2937", color: "#e5e7eb" },
+        label: { backgroundColor: "#1d1d1f", color: "#ffffff" },
       },
       tooltip: {
         trigger: "axis",
         triggerOn: useLongPressTooltip ? "none" : "mousemove",
         axisPointer: { type: "cross" },
         borderWidth: 1,
-        borderColor: "rgba(148,163,184,0.32)",
-        backgroundColor: "rgba(7,16,13,0.94)",
-        textStyle: { color: "#e7efe8", fontSize: 12 },
-        extraCssText: "box-shadow: 0 12px 32px rgba(0,0,0,.35); border-radius: 8px;",
+        borderColor: "#e0e0e0",
+        backgroundColor: "rgba(255,255,255,0.96)",
+        textStyle: { color: "#1d1d1f", fontSize: 12 },
+        extraCssText: "box-shadow: 0 18px 44px rgba(0,0,0,.14); border-radius: 11px;",
         formatter: (params: unknown) => formatChartTooltip(params, candles),
       },
       grid: [
@@ -1778,7 +1799,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
           boundaryGap: true,
           axisLine: { lineStyle: { color: "rgba(148,163,184,0.28)" } },
           axisTick: { show: false },
-          axisLabel: { color: "#91a39a", fontSize: 10, hideOverlap: true },
+          axisLabel: { color: "#7a7a7a", fontSize: 10, hideOverlap: true },
           splitLine: { show: false },
         },
       ],
@@ -1788,8 +1809,8 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
           position: "right",
           axisLine: { show: false },
           axisTick: { show: false },
-          axisLabel: { color: "#a6b6ae", fontSize: 11 },
-          splitLine: { lineStyle: { color: "rgba(148,163,184,0.10)" } },
+          axisLabel: { color: "#7a7a7a", fontSize: 11 },
+          splitLine: { lineStyle: { color: "#f0f0f0" } },
         },
         {
           scale: true,
@@ -1797,7 +1818,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
           position: "right",
           axisLine: { show: false },
           axisTick: { show: false },
-          axisLabel: { color: "#91a39a", fontSize: 10, formatter: (value: number) => formatCompactVolume(value) },
+          axisLabel: { color: "#7a7a7a", fontSize: 10, formatter: (value: number) => formatCompactVolume(value) },
           splitLine: { show: false },
         },
       ],
@@ -1820,10 +1841,10 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
           height: 18,
           realtime: false,
           brushSelect: false,
-          borderColor: "rgba(148,163,184,0.18)",
-          fillerColor: "rgba(121,183,164,0.16)",
-          handleStyle: { color: "#79b7a4" },
-          textStyle: { color: "#91a39a" },
+          borderColor: "#e0e0e0",
+          fillerColor: "rgba(0,102,204,0.12)",
+          handleStyle: { color: "#0066cc" },
+          textStyle: { color: "#7a7a7a" },
         },
       ],
       series: [
@@ -1832,16 +1853,16 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
           type: "candlestick",
           data: ohlc,
           itemStyle: {
-            color: "rgba(239,68,68,0.78)",
-            color0: "rgba(34,197,94,0.78)",
-            borderColor: "#ef4444",
-            borderColor0: "#22c55e",
+            color: "rgba(194,65,52,0.72)",
+            color0: "rgba(22,138,85,0.72)",
+            borderColor: "#c24134",
+            borderColor0: "#168a55",
           },
           markPoint: { symbol: "circle", symbolSize: 12, data: markPoints },
           markLine: {
             symbol: "none",
-            lineStyle: { color: "#facc15", width: 2, type: "dashed" },
-            label: { color: "#f8fafc", formatter: "颈线" },
+            lineStyle: { color: "#0066cc", width: 2, type: "dashed" },
+            label: { color: "#1d1d1f", formatter: "颈线" },
             data: markLines,
           },
         },
@@ -2262,7 +2283,7 @@ function formatChartTooltip(params: unknown, candles: Candle[]) {
   }
   const maRows = Object.entries(candle.ma ?? {})
     .filter(([, value]) => value !== null && value !== undefined)
-    .map(([key, value]) => `<div><span style="color:#91a39a">${key.toUpperCase()}</span> ${formatPrice(Number(value))}</div>`)
+    .map(([key, value]) => `<div><span style="color:#7a7a7a">${key.toUpperCase()}</span> ${formatPrice(Number(value))}</div>`)
     .join("");
   return [
     `<div style="font-weight:700;margin-bottom:6px">${formatTime(candle.time)}</div>`,

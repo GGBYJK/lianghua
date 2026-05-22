@@ -258,11 +258,16 @@ export async function refreshContracts(exchanges = "SHFE,DCE,CZCE"): Promise<Con
   return response.json();
 }
 
-export async function updateContracts(symbols: string[]): Promise<{ inserted: number; items: ContractCenterItem[] }> {
+export async function updateContracts(params: {
+  symbols: string[];
+  latest_symbols?: string[];
+  exchanges?: string[];
+  prune_missing?: boolean;
+}): Promise<{ inserted: number; removed: number; items: ContractCenterItem[] }> {
   const response = await fetch(`${API_BASE}/api/contracts/update`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ symbols }),
+    body: JSON.stringify(params),
   });
   if (!response.ok) {
     throw new Error(await readError(response));

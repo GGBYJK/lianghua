@@ -118,14 +118,20 @@ class ContractCenterRefreshResponse(BaseModel):
     total_latest: int
     existing_count: int
     new_count: int
+    stale_count: int
     latest_symbols: list[str]
     new_symbols: list[str]
+    stale_symbols: list[str]
 
 
 class ContractCenterUpdateRequest(BaseModel):
     symbols: list[str]
+    latest_symbols: list[str] = []
+    exchanges: list[str] = []
+    prune_missing: bool = True
 
 
 class ContractCenterUpdateResponse(BaseModel):
     inserted: int
+    removed: int = 0
     items: list[ContractCenterItemResponse]

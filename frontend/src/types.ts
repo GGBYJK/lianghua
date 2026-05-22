@@ -170,6 +170,8 @@ export type ContractCenterRefresh = {
   total_latest: number;
   existing_count: number;
   new_count: number;
+  stale_count: number;
   latest_symbols: string[];
   new_symbols: string[];
+  stale_symbols: string[];
 };

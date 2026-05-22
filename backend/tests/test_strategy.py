@@ -13,14 +13,19 @@ from app.market_client import (
     extract_rows,
     normalize_period,
     normalize_aliyun_period,
+    is_listed_futures_contract,
+    MarketApiError,
     normalize_symbol_row,
     normalize_tqsdk_period,
     normalize_tqsdk_symbol,
+    listed_contracts_to_varieties,
+    query_main_and_sub_contracts_from_api,
     query_tqsdk_contracts_from_api,
     normalize_tushare_symbol,
     normalize_tushare_symbol_row,
     tqsdk_dataframe_to_kline,
     tqsdk_symbol_hints,
+    TqSdkMarketService,
     tushare_dataframe_to_kline,
     rows_to_dataframe,
     aliyun_symbol_hints,
@@ -127,7 +132,18 @@ def test_tqsdk_contract_query_filters_target_exchanges() -> None:
     class FakeApi:
         def query_quotes(self, expired: bool | None = None) -> list[str]:
             assert expired is False
-            return ["SHFE.rb2610", "DCE.c2607", "CZCE.SR609", "CFFEX.IF2606", "KQ.m@DCE.c"]
+            return [
+                "SHFE.rb2610",
+                "DCE.c2607",
+                "DCE.12702-P-800",
+                "DCE.$c2607",
+                "CZCE.IPS SF609&SM609",
+                "CZCE.RM409-C-3000",
+                "SHFE.Cu2401C50000",
+                "CZCE.SR609",
+                "CFFEX.IF2606",
+                "KQ.m@DCE.c",
+            ]
 
     assert query_tqsdk_contracts_from_api(FakeApi(), ["SHFE", "DCE", "CZCE"]) == [
         "CZCE.SR609",
@@ -135,6 +151,83 @@ def test_tqsdk_contract_query_filters_target_exchanges() -> None:
         "SHFE.rb2610",
     ]
     assert _contract_name_from_symbol("DCE.c2607") == "c2607"
+
+
+def test_tqsdk_main_and_sub_contract_query_uses_open_interest() -> None:
+    class FakeQuote:
+        def __init__(self, open_interest: float) -> None:
+            self.open_interest = open_interest
+
+    class FakeApi:
+        def query_cont_quotes(self, exchange_id: str) -> list[str]:
+            mapping = {
+                "SHFE": ["SHFE.sp2609", "SHFE.Cu2401C50000"],
+                "DCE": ["DCE.m2609", "DCE.12702-P-800"],
+                "CZCE": ["CZCE.SR609", "CZCE.RM409-C-3000"],
+            }
+            return mapping[exchange_id]
+
+        def query_quotes(self, ins_class: str, exchange_id: str, product_id: str, expired: bool) -> list[str]:
+            assert ins_class == "FUTURE"
+            assert expired is False
+            mapping = {
+                ("SHFE", "sp"): ["SHFE.sp2609", "SHFE.sp2607", "SHFE.sp2611"],
+                ("DCE", "m"): ["DCE.m2609", "DCE.m2607"],
+                ("CZCE", "SR"): ["CZCE.SR609", "CZCE.SR701"],
+            }
+            return mapping.get((exchange_id, product_id), [])
+
+        def get_quote_list(self, contracts: list[str]) -> list[FakeQuote]:
+            open_interest = {
+                "SHFE.sp2609": 300,
+                "SHFE.sp2607": 200,
+                "SHFE.sp2611": 100,
+                "DCE.m2609": 500,
+                "DCE.m2607": 350,
+                "CZCE.SR609": 700,
+                "CZCE.SR701": 450,
+            }
+            return [FakeQuote(open_interest[contract]) for contract in contracts]
+
+        def wait_update(self, deadline: float | None = None) -> bool:
+            return True
+
+    assert listed_contracts_to_varieties(["SHFE.au2606", "DCE.m2607", "CZCE.SR609"], ["SHFE", "DCE"]) == [
+        "DCE.m",
+        "SHFE.au",
+    ]
+    assert query_main_and_sub_contracts_from_api(FakeApi(), ["SHFE", "DCE", "CZCE"]) == [
+        "CZCE.SR609",
+        "CZCE.SR701",
+        "DCE.m2607",
+        "DCE.m2609",
+        "SHFE.sp2607",
+        "SHFE.sp2609",
+    ]
+
+
+def test_listed_futures_contract_filter_excludes_options() -> None:
+    assert is_listed_futures_contract("DCE.c2607") is True
+    assert is_listed_futures_contract("DCE.12702-P-800") is False
+    assert is_listed_futures_contract("DCE.$c2607") is False
+    assert is_listed_futures_contract("CZCE.IPS SF609&SM609") is False
+    assert is_listed_futures_contract("CZCE.RM409-C-3000") is False
+    assert is_listed_futures_contract("SHFE.Cu2401C50000") is False
+
+
+def test_tqsdk_subscription_rejects_unlisted_contract() -> None:
+    class FakeApi:
+        def query_quotes(self, expired: bool | None = None) -> list[str]:
+            assert expired is False
+            return ["CZCE.CY609"]
+
+    service = TqSdkMarketService()
+    try:
+        service._ensure_contract_listed(FakeApi(), "CZCE.CY608")
+    except MarketApiError as exc:
+        assert "未找到上市合约" in str(exc)
+    else:
+        raise AssertionError("expected unlisted contract to be rejected")
 
 
 def test_infoway_symbol_row_normalizes() -> None:

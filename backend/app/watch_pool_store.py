@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 import mysql.connector
 from mysql.connector import Error as MySQLError
 
+from .market_client import is_listed_futures_contract
+
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 load_dotenv(os.path.join(ROOT_DIR, ".env"), override=True)
@@ -674,21 +676,21 @@ def list_contract_center_items(exchange: str | None = None) -> list[dict[str, An
             """,
             tuple(values),
         )
-        return [_row_to_contract(row) for row in cursor.fetchall()]
+        return [_row_to_contract(row) for row in cursor.fetchall() if is_listed_futures_contract(row["symbol"])]
 
 
 def list_contract_center_symbols() -> set[str]:
     with mysql_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT symbol FROM contract_center_items")
-        return {str(row[0]) for row in cursor.fetchall()}
+        return {str(row[0]) for row in cursor.fetchall() if is_listed_futures_contract(str(row[0]))}
 
 
 def insert_contract_center_items(symbols: list[str]) -> int:
     rows = []
     for symbol in symbols:
         normalized = symbol.strip()
-        if not normalized or "." not in normalized:
+        if not normalized or "." not in normalized or not is_listed_futures_contract(normalized):
             continue
         exchange = normalized.split(".", 1)[0].upper()
         rows.append((normalized, exchange, _contract_name_from_symbol(normalized)))
@@ -704,4 +706,76 @@ def insert_contract_center_items(symbols: list[str]) -> int:
             rows,
         )
         return cursor.rowcount
+
+
+def delete_contract_center_items_not_in_latest(exchanges: list[str], latest_symbols: list[str]) -> int:
+    exchange_set = {exchange.strip().upper() for exchange in exchanges if exchange.strip()}
+    latest_set = {symbol.strip() for symbol in latest_symbols if symbol.strip()}
+    if not exchange_set:
+        return 0
+    stale_symbols: list[str] = []
+    with mysql_connection() as conn:
+        cursor = conn.cursor()
+        placeholders = ",".join(["%s"] * len(exchange_set))
+        cursor.execute(
+            f"""
+            SELECT symbol
+            FROM contract_center_items
+            WHERE exchange IN ({placeholders})
+            """,
+            tuple(exchange_set),
+        )
+        stale_symbols = [
+            str(row[0])
+            for row in cursor.fetchall()
+            if str(row[0]) not in latest_set or not is_listed_futures_contract(str(row[0]))
+        ]
+        if not stale_symbols:
+            return 0
+        delete_placeholders = ",".join(["%s"] * len(stale_symbols))
+        cursor.execute(
+            f"""
+            DELETE FROM contract_center_items
+            WHERE symbol IN ({delete_placeholders})
+            """,
+            tuple(stale_symbols),
+        )
+        return cursor.rowcount
+
+
+def replace_contract_center_items(exchanges: list[str], symbols: list[str]) -> tuple[int, int]:
+    exchange_set = {exchange.strip().upper() for exchange in exchanges if exchange.strip()}
+    if not exchange_set:
+        return 0, 0
+    rows = []
+    for symbol in symbols:
+        normalized = symbol.strip()
+        if not normalized or "." not in normalized or not is_listed_futures_contract(normalized):
+            continue
+        exchange = normalized.split(".", 1)[0].upper()
+        if exchange not in exchange_set:
+            continue
+        rows.append((normalized, exchange, _contract_name_from_symbol(normalized)))
+    with mysql_connection() as conn:
+        cursor = conn.cursor()
+        placeholders = ",".join(["%s"] * len(exchange_set))
+        cursor.execute(
+            f"""
+            DELETE FROM contract_center_items
+            WHERE exchange IN ({placeholders})
+            """,
+            tuple(exchange_set),
+        )
+        removed = cursor.rowcount
+        inserted = 0
+        if rows:
+            cursor.executemany(
+                """
+                INSERT IGNORE INTO contract_center_items (symbol, exchange, name)
+                VALUES (%s, %s, %s)
+                """,
+                rows,
+            )
+            inserted = cursor.rowcount
+        return inserted, removed
 

@@ -24,6 +24,7 @@ from .watch_pool_store import (
     WatchPoolStoreError,
     create_alert_feedback,
     create_watch_pool_item,
+    delete_contract_center_items_not_in_latest,
     delete_alert_feedback,
     delete_watch_pool_item,
     disable_all_watch_pool_items,
@@ -37,6 +38,7 @@ from .watch_pool_store import (
     list_contract_center_symbols,
     list_head_shoulders_alerts,
     list_watch_pool_items,
+    replace_contract_center_items,
     enable_all_watch_pool_items,
     update_watch_pool_item,
 )
@@ -294,13 +296,21 @@ async def refresh_contracts(exchanges: str = "SHFE,DCE,CZCE") -> ContractCenterR
         latest_symbols = await asyncio.to_thread(fetch_tqsdk_contracts, exchange_list)
         existing_symbols = list_contract_center_symbols()
         new_symbols = [symbol for symbol in latest_symbols if symbol not in existing_symbols]
+        selected_existing_symbols = [
+            symbol
+            for symbol in existing_symbols
+            if any(symbol.startswith(f"{exchange}.") for exchange in exchange_list)
+        ]
+        stale_symbols = [symbol for symbol in selected_existing_symbols if symbol not in latest_symbols]
         return ContractCenterRefreshResponse(
             exchanges=exchange_list,
             total_latest=len(latest_symbols),
             existing_count=len(existing_symbols),
             new_count=len(new_symbols),
+            stale_count=len(stale_symbols),
             latest_symbols=latest_symbols,
             new_symbols=new_symbols,
+            stale_symbols=stale_symbols,
         )
     except WatchPoolStoreError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -313,9 +323,14 @@ async def refresh_contracts(exchanges: str = "SHFE,DCE,CZCE") -> ContractCenterR
 @app.post("/api/contracts/update", response_model=ContractCenterUpdateResponse)
 def update_contracts(payload: ContractCenterUpdateRequest) -> ContractCenterUpdateResponse:
     try:
-        inserted = insert_contract_center_items(payload.symbols)
+        if payload.prune_missing and payload.latest_symbols and payload.exchanges:
+            inserted, removed = replace_contract_center_items(payload.exchanges, payload.latest_symbols)
+        else:
+            inserted = insert_contract_center_items(payload.symbols)
+            removed = 0
         return ContractCenterUpdateResponse(
             inserted=inserted,
+            removed=removed,
             items=[ContractCenterItemResponse(**item) for item in list_contract_center_items()],
         )
     except WatchPoolStoreError as exc:

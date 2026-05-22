@@ -6,10 +6,12 @@ import concurrent.futures
 import json
 import logging
 import queue
+import re
 import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -21,7 +23,9 @@ class MarketApiError(RuntimeError):
     pass
 
 
-load_dotenv()
+ROOT_DIR = Path(__file__).resolve().parents[2]
+load_dotenv(ROOT_DIR / ".env", override=True)
+load_dotenv(ROOT_DIR / "backend" / ".env", override=False)
 logger = logging.getLogger("app.market_client")
 
 TQ_SYMBOL_MAP = {
@@ -37,6 +41,14 @@ class TqKlineSubscription:
     limit: int
     klines: pd.DataFrame
     cache: pd.DataFrame | None = None
+    waiters: list["TqKlineWaiter"] | None = None
+
+
+@dataclass
+class TqKlineWaiter:
+    future: concurrent.futures.Future[pd.DataFrame]
+    limit: int
+    deadline: float
 
 
 def get_market_settings() -> dict[str, str | None]:
@@ -122,6 +134,8 @@ class TqSdkMarketService:
         self._thread: threading.Thread | None = None
         self._start_lock = threading.Lock()
         self._startup_error: BaseException | None = None
+        self._listed_contracts_cache: set[str] | None = None
+        self._listed_contracts_cached_at = 0.0
 
     def get_kline(self, tq_symbol: str, duration_seconds: int, limit: int) -> pd.DataFrame:
         self.start()
@@ -131,6 +145,7 @@ class TqSdkMarketService:
         try:
             return future.result(timeout=timeout)
         except concurrent.futures.TimeoutError as exc:
+            future.cancel()
             raise MarketApiError(f"TqSdk 行情缓存等待超时：{tq_symbol}") from exc
 
     def query_contracts(self, exchanges: list[str] | None = None) -> list[str]:
@@ -141,6 +156,7 @@ class TqSdkMarketService:
         try:
             return future.result(timeout=timeout)
         except concurrent.futures.TimeoutError as exc:
+            future.cancel()
             raise MarketApiError("TqSdk 合约列表查询超时") from exc
 
     def start(self) -> None:
@@ -177,9 +193,10 @@ class TqSdkMarketService:
                 raise MarketApiError("未安装 tqsdk，请先执行 python -m pip install -r backend/requirements.txt") from exc
             api = TqApi(auth=TqAuth(account, password))
             self._ready.set()
+            update_interval = float(os.getenv("TQ_WAIT_UPDATE_SECONDS", "0.2"))
             while not self._stopped.is_set():
                 self._drain_commands(api, subscriptions)
-                api.wait_update(deadline=time.time() + 0.5)
+                api.wait_update(deadline=time.time() + update_interval)
                 self._refresh_caches(subscriptions)
         except BaseException as exc:
             logger.exception("TqSdk market service stopped unexpectedly")
@@ -202,35 +219,58 @@ class TqSdkMarketService:
             try:
                 if command == "stop":
                     self._stopped.set()
-                    future.set_result(None)
+                    if not future.done():
+                        future.set_result(None)
                     return
                 if command == "get_kline":
                     tq_symbol, duration_seconds, limit = args
-                    result = self._handle_get_kline(api, subscriptions, tq_symbol, duration_seconds, limit)
-                    future.set_result(result)
+                    self._register_kline_waiter(api, subscriptions, tq_symbol, duration_seconds, limit, future)
                 if command == "query_contracts":
                     exchanges = args[0]
-                    future.set_result(query_tqsdk_contracts_from_api(api, exchanges=exchanges))
+                    if not future.done():
+                        future.set_result(query_main_and_sub_contracts_from_api(api, exchanges=exchanges))
             except BaseException as exc:
-                future.set_exception(exc)
+                if not future.done():
+                    future.set_exception(exc)
 
-    def _handle_get_kline(
+    def _register_kline_waiter(
         self,
         api: Any,
         subscriptions: dict[tuple[str, int], TqKlineSubscription],
         tq_symbol: str,
         duration_seconds: int,
         limit: int,
-    ) -> pd.DataFrame:
+        future: concurrent.futures.Future[pd.DataFrame],
+    ) -> None:
+        subscription = self._ensure_subscription(api, subscriptions, tq_symbol, duration_seconds, limit)
+        if subscription.cache is not None and len(subscription.cache) >= min(limit, 1):
+            future.set_result(subscription.cache.tail(limit).copy().reset_index(drop=True))
+            return
+        deadline = time.time() + float(os.getenv("TQ_FIRST_DATA_TIMEOUT", os.getenv("TQ_TIMEOUT", "30")))
+        if subscription.waiters is None:
+            subscription.waiters = []
+        subscription.waiters.append(TqKlineWaiter(future=future, limit=limit, deadline=deadline))
+
+    def _ensure_subscription(
+        self,
+        api: Any,
+        subscriptions: dict[tuple[str, int], TqKlineSubscription],
+        tq_symbol: str,
+        duration_seconds: int,
+        limit: int,
+    ) -> TqKlineSubscription:
         key = (tq_symbol, duration_seconds)
         subscription = subscriptions.get(key)
         if subscription is None or subscription.limit < limit:
+            self._ensure_contract_listed(api, tq_symbol)
             data_length = max(limit, int(os.getenv("TQ_MIN_DATA_LENGTH", "420")))
+            previous_waiters = subscription.waiters if subscription and subscription.waiters else []
             subscription = TqKlineSubscription(
                 tq_symbol=tq_symbol,
                 duration_seconds=duration_seconds,
                 limit=data_length,
                 klines=api.get_kline_serial(tq_symbol, duration_seconds, data_length=data_length),
+                waiters=previous_waiters,
             )
             subscriptions[key] = subscription
             logger.info(
@@ -239,16 +279,26 @@ class TqSdkMarketService:
                 duration_seconds,
                 data_length,
             )
-        if subscription.cache is not None and len(subscription.cache) >= min(limit, 1):
-            return subscription.cache.tail(limit).copy().reset_index(drop=True)
+        return subscription
 
-        deadline = time.time() + float(os.getenv("TQ_FIRST_DATA_TIMEOUT", os.getenv("TQ_TIMEOUT", "30")))
-        while time.time() < deadline:
-            api.wait_update(deadline=min(deadline, time.time() + 0.5))
-            self._refresh_subscription_cache(subscription)
-            if subscription.cache is not None and len(subscription.cache) >= min(limit, 1):
-                return subscription.cache.tail(limit).copy().reset_index(drop=True)
-        raise MarketApiError(f"TqSdk 未在超时时间内返回K线数据：{tq_symbol}")
+    def _ensure_contract_listed(self, api: Any, tq_symbol: str) -> None:
+        if tq_symbol.startswith("KQ."):
+            return
+        listed_contracts = self._get_listed_contracts(api)
+        if tq_symbol not in listed_contracts:
+            raise MarketApiError(f"TqSdk 未找到上市合约：{tq_symbol}，请从合约中心选择有效合约")
+
+    def _get_listed_contracts(self, api: Any) -> set[str]:
+        ttl_seconds = float(os.getenv("TQ_CONTRACT_CACHE_SECONDS", "300"))
+        now = time.time()
+        if self._listed_contracts_cache is not None and now - self._listed_contracts_cached_at < ttl_seconds:
+            return self._listed_contracts_cache
+        all_listed_contracts = api.query_quotes(expired=False)
+        if not isinstance(all_listed_contracts, list):
+            raise MarketApiError("TqSdk 合约列表返回结构无法识别")
+        self._listed_contracts_cache = {contract for contract in all_listed_contracts if isinstance(contract, str)}
+        self._listed_contracts_cached_at = now
+        return self._listed_contracts_cache
 
     def _refresh_caches(self, subscriptions: dict[tuple[str, int], TqKlineSubscription]) -> None:
         for subscription in subscriptions.values():
@@ -260,9 +310,38 @@ class TqSdkMarketService:
                 subscription.klines.tail(subscription.limit),
                 tq_symbol=subscription.tq_symbol,
             )
+            self._resolve_kline_waiters(subscription)
         except MarketApiError:
             if subscription.cache is None:
                 logger.debug("TqSdk kline cache not ready: symbol=%s", subscription.tq_symbol)
+        self._expire_kline_waiters(subscription)
+
+    def _resolve_kline_waiters(self, subscription: TqKlineSubscription) -> None:
+        if not subscription.waiters or subscription.cache is None:
+            return
+        pending: list[TqKlineWaiter] = []
+        for waiter in subscription.waiters:
+            if waiter.future.cancelled() or waiter.future.done():
+                continue
+            if len(subscription.cache) >= min(waiter.limit, 1):
+                waiter.future.set_result(subscription.cache.tail(waiter.limit).copy().reset_index(drop=True))
+            else:
+                pending.append(waiter)
+        subscription.waiters = pending
+
+    def _expire_kline_waiters(self, subscription: TqKlineSubscription) -> None:
+        if not subscription.waiters:
+            return
+        now = time.time()
+        pending: list[TqKlineWaiter] = []
+        for waiter in subscription.waiters:
+            if waiter.future.cancelled() or waiter.future.done():
+                continue
+            if now >= waiter.deadline:
+                waiter.future.set_exception(MarketApiError(f"TqSdk 未在超时时间内返回K线数据：{subscription.tq_symbol}"))
+            else:
+                pending.append(waiter)
+        subscription.waiters = pending
 
     def _fail_pending_commands(self, exc: BaseException) -> None:
         while True:
@@ -295,13 +374,112 @@ def fetch_tqsdk_contracts(exchanges: list[str] | None = None) -> list[str]:
     return get_tqsdk_service().query_contracts(exchanges=exchanges)
 
 
+def query_main_and_sub_contracts_from_api(api: Any, exchanges: list[str]) -> list[str]:
+    main_by_variety: dict[str, str] = {}
+    candidates_by_variety: dict[str, list[str]] = {}
+    all_candidates: list[str] = []
+    for exchange in [item.strip().upper() for item in exchanges if item.strip()]:
+        try:
+            main_contracts = api.query_cont_quotes(exchange_id=exchange)
+        except Exception as exc:
+            logger.debug("TqSdk main contract query skipped: exchange=%s error=%s", exchange, exc)
+            continue
+        if not isinstance(main_contracts, list):
+            continue
+        for main_contract in main_contracts:
+            if not is_listed_futures_contract(main_contract):
+                continue
+            variety = contract_to_variety(main_contract)
+            if variety is None:
+                continue
+            main_by_variety[variety] = main_contract
+            variety_contracts = query_variety_futures_contracts(api, variety)
+            candidates_by_variety[variety] = variety_contracts
+            all_candidates.extend(variety_contracts)
+
+    open_interest_by_contract = fetch_open_interest_by_contract(api, sorted(set(all_candidates)))
+    result_contracts: set[str] = set(main_by_variety.values())
+    for variety, main_contract in main_by_variety.items():
+        candidates = [contract for contract in candidates_by_variety.get(variety, []) if contract != main_contract]
+        candidates.sort(key=lambda contract: open_interest_by_contract.get(contract, 0), reverse=True)
+        if candidates:
+            result_contracts.add(candidates[0])
+    return sorted(result_contracts)
+
+
+def query_variety_futures_contracts(api: Any, variety: str) -> list[str]:
+    if "." not in variety:
+        return []
+    exchange, product_id = variety.split(".", 1)
+    try:
+        contracts = api.query_quotes(ins_class="FUTURE", exchange_id=exchange, product_id=product_id, expired=False)
+    except Exception as exc:
+        logger.debug("TqSdk variety contracts query skipped: variety=%s error=%s", variety, exc)
+        return []
+    if not isinstance(contracts, list):
+        return []
+    return sorted(contract for contract in contracts if is_listed_futures_contract(contract))
+
+
+def fetch_open_interest_by_contract(api: Any, contracts: list[str]) -> dict[str, float]:
+    if not contracts:
+        return {}
+    try:
+        quotes = api.get_quote_list(contracts)
+    except Exception as exc:
+        logger.debug("TqSdk quote list query skipped: count=%s error=%s", len(contracts), exc)
+        return {}
+    deadline = time.time() + float(os.getenv("TQ_SUB_MAIN_TIMEOUT", "8"))
+    open_interest_by_contract: dict[str, float] = {}
+    while time.time() < deadline:
+        api.wait_update(deadline=min(deadline, time.time() + 0.5))
+        for contract, quote in zip(contracts, quotes):
+            value = getattr(quote, "open_interest", 0)
+            try:
+                open_interest = float(value)
+            except (TypeError, ValueError):
+                open_interest = 0
+            if open_interest > 0:
+                open_interest_by_contract[contract] = open_interest
+        if len(open_interest_by_contract) >= len(contracts):
+            break
+    return open_interest_by_contract
+
+
+def listed_contracts_to_varieties(contracts: list[str], exchanges: list[str]) -> list[str]:
+    selected_exchanges = {exchange.strip().upper() for exchange in exchanges if exchange.strip()}
+    varieties: set[str] = set()
+    for contract in contracts:
+        if not is_listed_futures_contract(contract) or "." not in contract:
+            continue
+        exchange, code = contract.split(".", 1)
+        exchange = exchange.upper()
+        if exchange not in selected_exchanges:
+            continue
+        match = re.match(r"([A-Za-z]+)", code)
+        if match:
+            varieties.add(f"{exchange}.{match.group(1)}")
+    return sorted(varieties)
+
+
+def contract_to_variety(contract: str) -> str | None:
+    if "." not in contract:
+        return None
+    exchange, code = contract.split(".", 1)
+    match = re.match(r"([A-Za-z]+)", code)
+    if not match:
+        return None
+    return f"{exchange.upper()}.{match.group(1)}"
+
+
 def query_tqsdk_contracts_from_api(api: Any, exchanges: list[str]) -> list[str]:
     all_listed_contracts = api.query_quotes(expired=False)
     if not isinstance(all_listed_contracts, list):
         return []
-    shfe_listed = [contract for contract in all_listed_contracts if isinstance(contract, str) and contract.startswith("SHFE.")]
-    dce_listed = [contract for contract in all_listed_contracts if isinstance(contract, str) and contract.startswith("DCE.")]
-    czce_listed = [contract for contract in all_listed_contracts if isinstance(contract, str) and contract.startswith("CZCE.")]
+    futures_contracts = [contract for contract in all_listed_contracts if is_listed_futures_contract(contract)]
+    shfe_listed = [contract for contract in futures_contracts if contract.startswith("SHFE.")]
+    dce_listed = [contract for contract in futures_contracts if contract.startswith("DCE.")]
+    czce_listed = [contract for contract in futures_contracts if contract.startswith("CZCE.")]
     listed_by_exchange = {
         "SHFE": shfe_listed,
         "DCE": dce_listed,
@@ -314,6 +492,19 @@ def query_tqsdk_contracts_from_api(api: Any, exchanges: list[str]) -> list[str]:
         for contract in listed_by_exchange.get(exchange, [])
     ]
     return sorted(selected_contracts)
+
+
+def is_listed_futures_contract(contract: Any) -> bool:
+    if not isinstance(contract, str):
+        return False
+    code = contract.split(".", 1)[1] if "." in contract else contract
+    if "-C-" in code or "-P-" in code:
+        return False
+    if "-" in code or "$" in code or "&" in code:
+        return False
+    if re.search(r"[CP]\d+$", code):
+        return False
+    return True
 
 
 def normalize_tqsdk_period(period: str) -> int:

@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "antd": "^6.4.3",
     "echarts": "^6.0.0",
     "react": "latest",
     "react-dom": "latest"
