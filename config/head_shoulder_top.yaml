@@ -50,7 +50,7 @@ timeframes:
     pivot_left: 3
     pivot_right: 3
     macd_price_new_high_pct: 0.0005
-    max_signal_age_bars: 80
+    max_signal_age_bars: 150
     min_score_to_alert: 70
   15m:
     pivot_left: 3

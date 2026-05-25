@@ -68,6 +68,9 @@ const futuresSymbolOptions = [
 const MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache_v6";
 const LEGACY_MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache";
 const MARKET_SCAN_CACHE_VERSION = 6;
+const MANUAL_MARKET_SCAN_OVERRIDES = {
+  max_signal_age_bars: 0,
+};
 const EMPTY_CANDLES: Candle[] = [];
 const EMPTY_PIVOTS: PivotPoint[] = [];
 const EMPTY_NECKLINES: Neckline[] = [];
@@ -283,7 +286,10 @@ function App() {
     setError(null);
     try {
       await requestBrowserNotification();
-      const response = await scanMarket(symbol, timeframe, marketLimit, config);
+      const response = await scanMarket(symbol, timeframe, marketLimit, {
+        ...config,
+        ...MANUAL_MARKET_SCAN_OVERRIDES,
+      });
       applyScanResponse(response);
       saveMarketScanCache(response, marketLimit);
       setMarketLastFetch(`接口 ${new Date().toLocaleTimeString()}`);
