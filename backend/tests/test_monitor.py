@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+from fastapi.testclient import TestClient
 
 from app.monitor import build_wechat_workbot_content, is_in_trading_session, should_emit_signal_for_item
 from app.watch_pool_store import _isoformat_utc
@@ -35,6 +38,29 @@ def test_monitor_skips_outside_trading_sessions() -> None:
 
 def test_store_timestamps_are_returned_with_timezone() -> None:
     assert _isoformat_utc(datetime(2026, 5, 20, 1, 13, 6)) == "2026-05-20T01:13:06+00:00"
+
+
+def test_app_lifespan_starts_and_stops_watch_pool_monitor(monkeypatch) -> None:
+    from app import main
+
+    events: list[str] = []
+
+    async def fake_monitor(stop_event):
+        events.append("started")
+        await stop_event.wait()
+        events.append("stopped")
+
+    monkeypatch.setattr(main, "init_watch_pool_store", lambda: events.append("init"))
+    monkeypatch.setattr(main, "monitor_watch_pool_loop", fake_monitor)
+    monkeypatch.setattr(main, "shutdown_market_clients", lambda: events.append("shutdown"))
+
+    with TestClient(main.app) as client:
+        assert client.get("/api/health").status_code == 200
+        deadline = time.monotonic() + 1
+        while "started" not in events and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    assert events == ["init", "started", "stopped", "shutdown"]
 
 
 def test_ensure_watch_pool_item_does_not_reenable_existing_item(monkeypatch) -> None:
@@ -126,6 +152,37 @@ def test_watch_pool_list_orders_by_created_at(monkeypatch) -> None:
 
     assert watch_pool_store.list_watch_pool_items() == []
     assert any("ORDER BY created_at DESC, id DESC" in sql for sql in executed_sql)
+
+
+def test_enabled_watch_pool_list_filters_disabled_items(monkeypatch) -> None:
+    from app import watch_pool_store
+
+    executed_sql: list[str] = []
+
+    class Cursor:
+        def execute(self, sql: str, params=None) -> None:
+            executed_sql.append(sql)
+
+        def fetchall(self) -> list[dict[str, object]]:
+            return []
+
+    class Conn:
+        def cursor(self, dictionary: bool = False) -> Cursor:
+            return Cursor()
+
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(watch_pool_store, "_connect", lambda database=None: Conn())
+
+    assert watch_pool_store.list_enabled_watch_pool_items() == []
+    assert any("WHERE enabled = 1" in sql for sql in executed_sql)
 
 
 def test_enable_all_watch_pool_items_enables_closed_items(monkeypatch) -> None:

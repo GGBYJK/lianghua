@@ -4,7 +4,7 @@ import json
 import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse
 from .config import load_head_shoulder_config
 from .csv_loader import read_csv_bytes
 from .market_client import MarketApiError, fetch_kline_from_market, fetch_market_symbols, fetch_tqsdk_contracts, get_market_settings, shutdown_market_clients
-from .monitor import scan_watch_pool_once
+from .monitor import monitor_watch_pool_loop, scan_watch_pool_once
 from .schemas import AlertFeedbackCreate, AlertFeedbackResponse, ContractCenterItemResponse, ContractCenterRefreshResponse, ContractCenterUpdateRequest, ContractCenterUpdateResponse, DefaultConfigResponse, HeadShouldersAlertResponse, HeadShouldersAlertSummaryResponse, HealthResponse, ScanResponse, WatchPoolImportResponse, WatchPoolItemCreate, WatchPoolItemResponse, WatchPoolItemUpdate
 from .strategy import add_macd_columns, add_ma_columns, find_pivots, prepare_chart_payload, scan_head_shoulders
 from .watch_pool_import import ImportIssue, parse_watch_pool_excel
@@ -52,6 +52,7 @@ logging.getLogger().setLevel(LOG_LEVEL)
 logging.getLogger("app").setLevel(LOG_LEVEL)
 logging.getLogger("app.monitor").setLevel(LOG_LEVEL)
 logging.getLogger("app.market_client").setLevel(LOG_LEVEL)
+logger = logging.getLogger("app")
 
 
 @dataclass
@@ -70,14 +71,31 @@ WATCH_POOL_IMPORT_TEMPLATE_PATH = ROOT_DIR / "backend" / "demo.xlsx"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    monitor_stop_event: asyncio.Event | None = None
+    monitor_task: asyncio.Task[None] | None = None
     try:
         init_watch_pool_store()
-    except WatchPoolStoreError:
+    except WatchPoolStoreError as exc:
         # 数据库不可用时保留行情扫描能力；检测池接口会返回明确错误。
-        pass
+        logger.warning("watch pool store unavailable; background monitor disabled: %s", exc)
+    else:
+        monitor_stop_event = asyncio.Event()
+        monitor_task = asyncio.create_task(
+            monitor_watch_pool_loop(monitor_stop_event),
+            name="watch-pool-monitor",
+        )
     try:
         yield
     finally:
+        if monitor_stop_event is not None:
+            monitor_stop_event.set()
+        if monitor_task is not None:
+            try:
+                await asyncio.wait_for(monitor_task, timeout=10)
+            except asyncio.TimeoutError:
+                monitor_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await monitor_task
         shutdown_market_clients()
 
 
