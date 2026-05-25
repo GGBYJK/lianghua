@@ -52,6 +52,23 @@ class WatchPoolItemResponse(WatchPoolItemBase):
     updated_at: str | None
 
 
+class WatchPoolImportIssue(BaseModel):
+    row: int
+    symbol: str | None = None
+    timeframe: str | None = None
+    field: str | None = None
+    reason: str
+
+
+class WatchPoolImportResponse(BaseModel):
+    inserted: int
+    skipped: int
+    failed: int
+    items: list[WatchPoolItemResponse]
+    errors: list[WatchPoolImportIssue]
+    duplicates: list[WatchPoolImportIssue]
+
+
 class HeadShouldersAlertResponse(BaseModel):
     id: str
     watch_pool_id: str

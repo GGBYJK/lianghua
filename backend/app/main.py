@@ -13,13 +13,15 @@ from uuid import uuid4
 import pandas as pd
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from .config import load_head_shoulder_config
 from .csv_loader import read_csv_bytes
 from .market_client import MarketApiError, fetch_kline_from_market, fetch_market_symbols, fetch_tqsdk_contracts, get_market_settings, shutdown_market_clients
-from .monitor import ensure_default_watch_pool_items, monitor_watch_pool_loop, scan_watch_pool_once
-from .schemas import AlertFeedbackCreate, AlertFeedbackResponse, ContractCenterItemResponse, ContractCenterRefreshResponse, ContractCenterUpdateRequest, ContractCenterUpdateResponse, DefaultConfigResponse, HeadShouldersAlertResponse, HeadShouldersAlertSummaryResponse, HealthResponse, ScanResponse, WatchPoolItemCreate, WatchPoolItemResponse, WatchPoolItemUpdate
+from .monitor import scan_watch_pool_once
+from .schemas import AlertFeedbackCreate, AlertFeedbackResponse, ContractCenterItemResponse, ContractCenterRefreshResponse, ContractCenterUpdateRequest, ContractCenterUpdateResponse, DefaultConfigResponse, HeadShouldersAlertResponse, HeadShouldersAlertSummaryResponse, HealthResponse, ScanResponse, WatchPoolImportResponse, WatchPoolItemCreate, WatchPoolItemResponse, WatchPoolItemUpdate
 from .strategy import add_macd_columns, add_ma_columns, find_pivots, prepare_chart_payload, scan_head_shoulders
+from .watch_pool_import import ImportIssue, parse_watch_pool_excel
 from .watch_pool_store import (
     WatchPoolStoreError,
     create_alert_feedback,
@@ -37,6 +39,7 @@ from .watch_pool_store import (
     list_contract_center_items,
     list_contract_center_symbols,
     list_head_shoulders_alerts,
+    list_watch_pool_keys,
     list_watch_pool_items,
     replace_contract_center_items,
     enable_all_watch_pool_items,
@@ -62,30 +65,20 @@ class SimulationSession:
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 SAMPLE_DATA_PATH = ROOT_DIR / "sample_data" / "head_shoulders_sample.csv"
+WATCH_POOL_IMPORT_TEMPLATE_PATH = ROOT_DIR / "backend" / "demo.xlsx"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    stop_event = asyncio.Event()
-    monitor_task: asyncio.Task[None] | None = None
     try:
         init_watch_pool_store()
-        ensure_default_watch_pool_items()
-        monitor_task = asyncio.create_task(monitor_watch_pool_loop(stop_event))
     except WatchPoolStoreError:
         # 数据库不可用时保留行情扫描能力；检测池接口会返回明确错误。
         pass
     try:
         yield
     finally:
-        stop_event.set()
         shutdown_market_clients()
-        if monitor_task is not None:
-            monitor_task.cancel()
-            try:
-                await monitor_task
-            except asyncio.CancelledError:
-                pass
 
 
 app = FastAPI(title="头肩顶识别服务", version="0.2.0", lifespan=lifespan)
@@ -182,6 +175,61 @@ def create_watch_pool(payload: WatchPoolItemCreate) -> WatchPoolItemResponse:
     try:
         item = create_watch_pool_item(payload.model_dump())
         return WatchPoolItemResponse(**item)
+    except WatchPoolStoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/watch-pool/import-template")
+def download_watch_pool_import_template() -> FileResponse:
+    if not WATCH_POOL_IMPORT_TEMPLATE_PATH.exists():
+        raise HTTPException(status_code=404, detail="检测池导入模板不存在：backend/demo.xlsx")
+    return FileResponse(
+        WATCH_POOL_IMPORT_TEMPLATE_PATH,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename="demo.xlsx",
+    )
+
+
+@app.post("/api/watch-pool/import", response_model=WatchPoolImportResponse)
+async def import_watch_pool(file: UploadFile = File(...)) -> WatchPoolImportResponse:
+    filename = file.filename or ""
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="请上传 .xlsx 格式的 Excel 文件")
+    try:
+        contracts = list_contract_center_items()
+        contract_lookup = {item["symbol"]: item["name"] for item in contracts}
+        rows, errors = parse_watch_pool_excel(await file.read(), contract_lookup)
+        existing_keys = list_watch_pool_keys()
+        duplicates: list[ImportIssue] = []
+        created_items: list[WatchPoolItemResponse] = []
+
+        for row in rows:
+            key = (row["symbol"], row["timeframe"])
+            if key in existing_keys:
+                duplicates.append(
+                    ImportIssue(
+                        row=int(row["_row"]),
+                        symbol=row["symbol"],
+                        timeframe=row["timeframe"],
+                        reason="检测池已存在，已跳过",
+                    )
+                )
+                continue
+            payload = {key_name: value for key_name, value in row.items() if key_name != "_row"}
+            created = create_watch_pool_item(payload)
+            created_items.append(WatchPoolItemResponse(**created))
+            existing_keys.add(key)
+
+        return WatchPoolImportResponse(
+            inserted=len(created_items),
+            skipped=len(duplicates),
+            failed=len(errors),
+            items=created_items,
+            errors=[issue.to_dict() for issue in errors],
+            duplicates=[issue.to_dict() for issue in duplicates],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except WatchPoolStoreError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

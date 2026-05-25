@@ -241,6 +241,13 @@ def list_watch_pool_items() -> list[dict[str, Any]]:
         return [_row_to_item(row) for row in cursor.fetchall()]
 
 
+def list_watch_pool_keys() -> set[tuple[str, str]]:
+    with mysql_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT symbol, timeframe FROM watch_pool_items")
+        return {(str(row[0]), str(row[1])) for row in cursor.fetchall()}
+
+
 def list_enabled_watch_pool_items() -> list[dict[str, Any]]:
     with mysql_connection() as conn:
         cursor = conn.cursor(dictionary=True)

@@ -76,6 +76,18 @@ def test_config_merge_override() -> None:
     assert config.min_score_to_alert == 65
 
 
+def test_one_minute_config_enables_strict_shape_rules() -> None:
+    config_1m = load_head_shoulder_config("rb2405", "1m")
+    config_5m = load_head_shoulder_config("rb2405", "5m")
+
+    assert config_1m.require_head_beyond_shoulders_and_necks is True
+    assert config_1m.require_shoulders_between_opposite_neck_and_head is True
+    assert config_1m.min_shoulder_to_neck_height == 4
+    assert config_5m.require_head_beyond_shoulders_and_necks is False
+    assert config_5m.require_shoulders_between_opposite_neck_and_head is False
+    assert config_5m.min_shoulder_to_neck_height == 0
+
+
 def test_infoway_kline_payload_normalizes_to_dataframe() -> None:
     payload = [
         {
@@ -715,46 +727,133 @@ def test_inverse_head_shoulders_requires_at_least_one_shoulder_height_ratio() ->
     assert ok
 
 
-def test_head_shoulders_limits_neck_to_head_bars() -> None:
-    times = pd.date_range("2026-03-18 10:00:00", periods=5, freq="h")
+def test_head_shoulders_strict_one_minute_price_rules() -> None:
+    times = pd.date_range("2026-05-15 09:00:00", periods=5, freq="min")
     config = HeadShoulderTopConfig(
-        min_shoulder_to_head_height_ratio=0.3,
+        min_shoulder_to_head_height_ratio=0.1,
         max_shoulder_diff_pct=0.5,
         max_neck_diff_pct=0.5,
-        min_right_leg_to_left_leg_ratio=0.01,
-        max_right_leg_to_left_leg_ratio=100,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.01,
-        max_head_to_right_neck_to_left_neck_to_head_ratio=100,
-        max_neck_to_head_bars=30,
+        min_right_leg_to_left_leg_ratio=0.1,
+        max_right_leg_to_left_leg_ratio=10,
+        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
+        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
+        require_head_beyond_shoulders_and_necks=True,
+        require_shoulders_between_opposite_neck_and_head=True,
+        min_shoulder_to_neck_height=4,
     )
 
     ok, _, _ = validate_head_shoulders_structure([
-        PivotPoint(0, times[0], 97.0, "high"),
-        PivotPoint(1, times[1], 94.0, "low"),
-        PivotPoint(31, times[2], 100.0, "high"),
-        PivotPoint(61, times[3], 94.0, "low"),
-        PivotPoint(62, times[4], 97.0, "high"),
+        PivotPoint(0, times[0], 96, "high"),
+        PivotPoint(1, times[1], 92, "low"),
+        PivotPoint(2, times[2], 100, "high"),
+        PivotPoint(3, times[3], 93, "low"),
+        PivotPoint(4, times[4], 97, "high"),
     ], config)
     assert ok
 
-    left_span_too_long = [
-        PivotPoint(0, times[0], 97.0, "high"),
-        PivotPoint(1, times[1], 94.0, "low"),
-        PivotPoint(32, times[2], 100.0, "high"),
-        PivotPoint(62, times[3], 94.0, "low"),
-        PivotPoint(63, times[4], 97.0, "high"),
+    head_not_above_neck = [
+        PivotPoint(0, times[0], 96, "high"),
+        PivotPoint(1, times[1], 92, "low"),
+        PivotPoint(2, times[2], 100, "high"),
+        PivotPoint(3, times[3], 101, "low"),
+        PivotPoint(4, times[4], 97, "high"),
     ]
-    ok, _, _ = validate_head_shoulders_structure(left_span_too_long, config)
+    ok, _, _ = validate_head_shoulders_structure(head_not_above_neck, config)
     assert not ok
 
-    right_span_too_long = [
-        PivotPoint(0, times[0], 97.0, "high"),
-        PivotPoint(1, times[1], 94.0, "low"),
-        PivotPoint(31, times[2], 100.0, "high"),
-        PivotPoint(62, times[3], 94.0, "low"),
-        PivotPoint(63, times[4], 97.0, "high"),
+    right_shoulder_outside_left_neck_to_head = [
+        PivotPoint(0, times[0], 96, "high"),
+        PivotPoint(1, times[1], 92, "low"),
+        PivotPoint(2, times[2], 100, "high"),
+        PivotPoint(3, times[3], 93, "low"),
+        PivotPoint(4, times[4], 91, "high"),
     ]
-    ok, _, _ = validate_head_shoulders_structure(right_span_too_long, config)
+    ok, _, _ = validate_head_shoulders_structure(right_shoulder_outside_left_neck_to_head, config)
+    assert not ok
+
+    left_shoulder_outside_head_to_right_neck = [
+        PivotPoint(0, times[0], 92, "high"),
+        PivotPoint(1, times[1], 88, "low"),
+        PivotPoint(2, times[2], 100, "high"),
+        PivotPoint(3, times[3], 93, "low"),
+        PivotPoint(4, times[4], 97, "high"),
+    ]
+    ok, _, _ = validate_head_shoulders_structure(left_shoulder_outside_head_to_right_neck, config)
+    assert not ok
+
+    shoulder_neck_diff_too_small = [
+        PivotPoint(0, times[0], 95.9, "high"),
+        PivotPoint(1, times[1], 92, "low"),
+        PivotPoint(2, times[2], 100, "high"),
+        PivotPoint(3, times[3], 93, "low"),
+        PivotPoint(4, times[4], 97, "high"),
+    ]
+    ok, _, _ = validate_head_shoulders_structure(shoulder_neck_diff_too_small, config)
+    assert not ok
+
+
+def test_inverse_head_shoulders_strict_one_minute_price_rules() -> None:
+    times = pd.date_range("2026-05-15 09:00:00", periods=5, freq="min")
+    config = HeadShoulderTopConfig(
+        min_shoulder_to_head_height_ratio=0.1,
+        max_shoulder_diff_pct=0.5,
+        max_neck_diff_pct=0.5,
+        min_right_leg_to_left_leg_ratio=0.1,
+        max_right_leg_to_left_leg_ratio=10,
+        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
+        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
+        require_head_beyond_shoulders_and_necks=True,
+        require_shoulders_between_opposite_neck_and_head=True,
+        min_shoulder_to_neck_height=4,
+    )
+
+    ok, _, _ = validate_inverse_head_shoulders_structure([
+        PivotPoint(0, times[0], 104, "low"),
+        PivotPoint(1, times[1], 108, "high"),
+        PivotPoint(2, times[2], 100, "low"),
+        PivotPoint(3, times[3], 107, "high"),
+        PivotPoint(4, times[4], 103, "low"),
+    ], config)
+    assert ok
+
+    head_not_below_neck = [
+        PivotPoint(0, times[0], 104, "low"),
+        PivotPoint(1, times[1], 108, "high"),
+        PivotPoint(2, times[2], 100, "low"),
+        PivotPoint(3, times[3], 99, "high"),
+        PivotPoint(4, times[4], 103, "low"),
+    ]
+    ok, _, _ = validate_inverse_head_shoulders_structure(head_not_below_neck, config)
+    assert not ok
+
+    right_shoulder_outside_left_neck_to_head = [
+        PivotPoint(0, times[0], 104, "low"),
+        PivotPoint(1, times[1], 108, "high"),
+        PivotPoint(2, times[2], 100, "low"),
+        PivotPoint(3, times[3], 107, "high"),
+        PivotPoint(4, times[4], 109, "low"),
+    ]
+    ok, _, _ = validate_inverse_head_shoulders_structure(right_shoulder_outside_left_neck_to_head, config)
+    assert not ok
+
+    left_shoulder_outside_head_to_right_neck = [
+        PivotPoint(0, times[0], 108, "low"),
+        PivotPoint(1, times[1], 112, "high"),
+        PivotPoint(2, times[2], 100, "low"),
+        PivotPoint(3, times[3], 107, "high"),
+        PivotPoint(4, times[4], 103, "low"),
+    ]
+    ok, _, _ = validate_inverse_head_shoulders_structure(left_shoulder_outside_head_to_right_neck, config)
+    assert not ok
+
+    shoulder_neck_diff_too_small = [
+        PivotPoint(0, times[0], 104.1, "low"),
+        PivotPoint(1, times[1], 108, "high"),
+        PivotPoint(2, times[2], 100, "low"),
+        PivotPoint(3, times[3], 107, "high"),
+        PivotPoint(4, times[4], 103, "low"),
+    ]
+    ok, _, _ = validate_inverse_head_shoulders_structure(shoulder_neck_diff_too_small, config)
     assert not ok
 
 

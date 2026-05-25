@@ -121,6 +121,23 @@ export type WatchPoolPayload = {
   min_head_to_neck_height: number;
 };
 
+export type WatchPoolImportIssue = {
+  row: number;
+  symbol: string | null;
+  timeframe: string | null;
+  field: string | null;
+  reason: string;
+};
+
+export type WatchPoolImportResult = {
+  inserted: number;
+  skipped: number;
+  failed: number;
+  items: WatchPoolItem[];
+  errors: WatchPoolImportIssue[];
+  duplicates: WatchPoolImportIssue[];
+};
+
 export type HeadShouldersAlert = {
   id: string;
   watch_pool_id: string;

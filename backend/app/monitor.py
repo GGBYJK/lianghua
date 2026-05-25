@@ -15,7 +15,6 @@ from .market_client import MarketApiError, fetch_kline_from_market
 from .strategy import add_macd_columns, add_ma_columns, find_pivots, prepare_chart_payload, scan_head_shoulders
 from .watch_pool_store import (
     WatchPoolStoreError,
-    ensure_watch_pool_item,
     insert_head_shoulders_alert_if_new,
     list_enabled_watch_pool_items,
 )
@@ -39,12 +38,6 @@ WATCH_POOL_TRADING_SESSIONS: dict[str, tuple[tuple[time, time], ...]] = {
         (time(21, 0), time(23, 0)),
     ),
 }
-DEFAULT_WATCH_POOL_ITEMS = (
-    {"name": "热卷2610 1分钟", "symbol": "hc2610", "timeframe": "1m", "enabled": True, "monitor_minutes": 3, "trading_sessions": "day,night"},
-    {"name": "热卷2610 5分钟", "symbol": "hc2610", "timeframe": "5m", "enabled": True, "monitor_minutes": 3, "trading_sessions": "day,night"},
-)
-
-
 def selected_trading_windows(trading_sessions: str | None = None) -> tuple[tuple[time, time], ...]:
     keys = [part.strip() for part in (trading_sessions or "day,night").split(",") if part.strip()]
     windows: list[tuple[time, time]] = []
@@ -57,11 +50,6 @@ def is_in_trading_session(now: datetime | None = None, trading_sessions: str | N
     current = now or datetime.now(WATCH_POOL_TIMEZONE)
     current_time = current.astimezone(WATCH_POOL_TIMEZONE).time()
     return any(start <= current_time <= end for start, end in selected_trading_windows(trading_sessions))
-
-
-def ensure_default_watch_pool_items() -> None:
-    for item in DEFAULT_WATCH_POOL_ITEMS:
-        ensure_watch_pool_item(item)
 
 
 def build_signal_unique_key(signal: dict[str, Any]) -> str:

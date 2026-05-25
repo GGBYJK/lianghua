@@ -5,8 +5,8 @@ import * as echarts from "echarts/core";
 import { BarChart, CandlestickChart, LineChart } from "echarts/charts";
 import { AxisPointerComponent, DataZoomComponent, GridComponent, LegendComponent, MarkLineComponent, MarkPointComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { createAlertFeedback, createWatchPoolItem, deleteAlertFeedback, deleteWatchPoolItem, disableAllWatchPoolItems, enableAllWatchPoolItems, getDefaultConfig, getHeadShouldersAlert, getMarketSettings, hideHeadShouldersAlert, listAlertFeedbacks, listContracts, listHeadShouldersAlerts, listWatchPool, refreshContracts, scanMarket, scanWatchPoolOnce, updateContracts, updateWatchPoolItem } from "./api";
-import type { AlertFeedback, Candle, ContractCenterItem, ContractCenterRefresh, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, Neckline, PivotPoint, ScanResponse, Signal, WatchPoolItem as ApiWatchPoolItem } from "./types";
+import { createAlertFeedback, createWatchPoolItem, deleteAlertFeedback, deleteWatchPoolItem, disableAllWatchPoolItems, downloadWatchPoolImportTemplate, enableAllWatchPoolItems, getDefaultConfig, getHeadShouldersAlert, getMarketSettings, hideHeadShouldersAlert, importWatchPoolExcel, listAlertFeedbacks, listContracts, listHeadShouldersAlerts, listWatchPool, refreshContracts, scanMarket, scanWatchPoolOnce, updateContracts, updateWatchPoolItem } from "./api";
+import type { AlertFeedback, Candle, ContractCenterItem, ContractCenterRefresh, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, Neckline, PivotPoint, ScanResponse, Signal, WatchPoolImportResult, WatchPoolItem as ApiWatchPoolItem } from "./types";
 import "antd/dist/reset.css";
 import "./styles.css";
 
@@ -34,14 +34,17 @@ const numericFields = [
   "max_right_leg_to_left_leg_ratio",
   "min_head_to_right_neck_to_left_neck_to_head_ratio",
   "max_head_to_right_neck_to_left_neck_to_head_ratio",
+  "min_shoulder_to_neck_height",
   "neckline_break_pct",
-  "max_neck_to_head_bars",
   "max_bars_after_right_shoulder",
   "max_signal_age_bars",
   "min_score_to_alert",
 ];
 
-const booleanFields: string[] = [];
+const booleanFields = [
+  "require_head_beyond_shoulders_and_necks",
+  "require_shoulders_between_opposite_neck_and_head",
+];
 
 const futuresSymbolOptions = [
   { symbol: "SR2609", name: "白糖2609" },
@@ -146,6 +149,12 @@ type ContractSymbolOption = {
   name: string;
 };
 
+const watchPoolImportDemo = [
+  ["品种名称", "监控品种", "监控周期", "检测时长", "头部到颈线最小高度", "交易时间段", "监控开关"],
+  ["螺纹钢", "SHFE.rb2605", "1m", "30", "0", "day,night", "开启"],
+  ["热卷", "SHFE.hc2610", "5m", "60", "8", "day", "开启"],
+];
+
 const tradingSessionOptions: Array<{ key: TradingSessionKey; label: string; range: string }> = [
   { key: "day", label: "白天", range: "09:00-11:30 / 13:30-15:00" },
   { key: "night", label: "夜间", range: "21:00-23:00" },
@@ -204,6 +213,9 @@ function App() {
   const [watchDraft, setWatchDraft] = useState<WatchPoolDraft>(emptyWatchDraft);
   const [editingWatchId, setEditingWatchId] = useState<string | null>(null);
   const [watchEditorOpen, setWatchEditorOpen] = useState(false);
+  const [watchImportOpen, setWatchImportOpen] = useState(false);
+  const [watchImportResult, setWatchImportResult] = useState<WatchPoolImportResult | null>(null);
+  const [watchImporting, setWatchImporting] = useState(false);
   const [feedbackTab, setFeedbackTab] = useState<FeedbackTab>("alerts");
   const [monitorAlerts, setMonitorAlerts] = useState<HeadShouldersAlertSummary[]>([]);
   const [feedbacks, setFeedbacks] = useState<AlertFeedback[]>([]);
@@ -482,6 +494,30 @@ function App() {
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "检测池删除失败");
+    }
+  }
+
+  async function downloadWatchTemplate() {
+    try {
+      await downloadWatchPoolImportTemplate();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "检测池示例下载失败");
+    }
+  }
+
+  async function importWatchPoolFile(file: File) {
+    setWatchImporting(true);
+    try {
+      const result = await importWatchPoolExcel(file);
+      setWatchImportResult(result);
+      const items = await listWatchPool();
+      setWatchPool(items.map(mapWatchPoolItem));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "检测池批量导入失败");
+    } finally {
+      setWatchImporting(false);
     }
   }
 
@@ -805,6 +841,13 @@ function App() {
         onToggleEnabled={toggleWatchPoolEnabled}
         onEnableAll={enableAllWatchPool}
         onDisableAll={disableAllWatchPool}
+        onDownloadTemplate={() => void downloadWatchTemplate()}
+        onImportFile={(file) => void importWatchPoolFile(file)}
+        importOpen={watchImportOpen}
+        onImportOpen={() => setWatchImportOpen(true)}
+        onImportClose={() => setWatchImportOpen(false)}
+        importResult={watchImportResult}
+        importing={watchImporting}
       />
         </section>
 
@@ -1001,6 +1044,13 @@ function WatchPool({
   onToggleEnabled,
   onEnableAll,
   onDisableAll,
+  onDownloadTemplate,
+  onImportFile,
+  importOpen,
+  onImportOpen,
+  onImportClose,
+  importResult,
+  importing,
 }: {
   items: WatchPoolItem[];
   draft: WatchPoolDraft;
@@ -1016,7 +1066,16 @@ function WatchPool({
   onToggleEnabled: (item: WatchPoolItem) => void;
   onEnableAll: () => void;
   onDisableAll: () => void;
+  onDownloadTemplate: () => void;
+  onImportFile: (file: File) => void;
+  importOpen: boolean;
+  onImportOpen: () => void;
+  onImportClose: () => void;
+  importResult: WatchPoolImportResult | null;
+  importing: boolean;
 }) {
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const [dragActive, setDragActive] = useState(false);
   const groupedItems = [
     { key: "1m", title: "1分钟检测池", items: items.filter((item) => item.timeframe === "1m") },
     { key: "5m", title: "5分钟检测池", items: items.filter((item) => item.timeframe === "5m") },
@@ -1063,6 +1122,7 @@ function WatchPool({
         <div className="pool-head-actions">
           <AntButton className="compact-button" onClick={onEnableAll} disabled={items.length === 0 || allEnabled}>一键开启检测</AntButton>
           <AntButton className="compact-button muted-button" onClick={onDisableAll} disabled={items.length === 0 || allDisabled}>一键关闭检测</AntButton>
+          <AntButton className="compact-button" loading={importing} onClick={onImportOpen}>批量导入</AntButton>
           <span className="badge">{enabledCount} 个监控中</span>
           <AntButton className="compact-button" onClick={onNew}>新增品种</AntButton>
         </div>
@@ -1082,6 +1142,105 @@ function WatchPool({
         ))}
       </div>
       {items.length === 0 && <p className="empty">暂无检测品种，点击“新增品种”创建监控项。</p>}
+      {importOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={onImportClose}>
+          <section
+            className="watch-modal import-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="watch-import-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">Excel Import</p>
+                <h2 id="watch-import-title">批量导入检测池</h2>
+              </div>
+              <AntButton className="icon-button" onClick={onImportClose} aria-label="关闭批量导入">
+                关闭
+              </AntButton>
+            </div>
+            <div className="pool-import-box">
+              <div className="pool-import-demo">
+                <div className="pool-import-demo-head">
+                  <strong>Excel demo</strong>
+                  <span>必须按 backend/demo.xlsx 格式导入</span>
+                </div>
+                <div className="pool-import-table-wrap">
+                  <table className="pool-import-table">
+                    <thead>
+                      <tr>{watchPoolImportDemo[0].map((cell) => <th key={cell}>{cell}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {watchPoolImportDemo.slice(1).map((row) => (
+                        <tr key={row.join("-")}>{row.map((cell, index) => <td key={`${cell}-${index}`}>{cell}</td>)}</tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`pool-import-drop ${dragActive ? "active" : ""}`}
+                disabled={importing}
+                onClick={() => importInputRef.current?.click()}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setDragActive(true);
+                }}
+                onDragLeave={() => setDragActive(false)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setDragActive(false);
+                  const file = event.dataTransfer.files?.[0];
+                  if (file) {
+                    onImportFile(file);
+                  }
+                }}
+              >
+                <strong>{importing ? "导入中..." : "拖入 Excel 文件或点击选择"}</strong>
+                <span>仅支持 .xlsx 文件，重复检测池会跳过并报告。</span>
+              </button>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".xlsx"
+                className="visually-hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (file) {
+                    onImportFile(file);
+                  }
+                }}
+              />
+              {importResult && (
+                <div className="pool-import-result">
+                  <div className="pool-import-summary">
+                    <span><b>{importResult.inserted}</b> 新增</span>
+                    <span><b>{importResult.skipped}</b> 跳过</span>
+                    <span><b>{importResult.failed}</b> 失败</span>
+                  </div>
+                  {(importResult.duplicates.length > 0 || importResult.errors.length > 0) && (
+                    <div className="pool-import-issues">
+                      {[...importResult.duplicates, ...importResult.errors].slice(0, 6).map((issue, index) => (
+                        <p key={`${issue.row}-${issue.field ?? "row"}-${index}`}>
+                          第 {issue.row} 行{issue.symbol ? ` ${issue.symbol}` : ""}{issue.timeframe ? ` ${issue.timeframe}` : ""}：{issue.reason}
+                        </p>
+                      ))}
+                      {importResult.duplicates.length + importResult.errors.length > 6 && <p>其余问题请修正 Excel 后重新导入。</p>}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <AntButton className="muted-button" onClick={onDownloadTemplate}>下载示例</AntButton>
+              <AntButton type="primary" loading={importing} onClick={() => importInputRef.current?.click()}>选择文件导入</AntButton>
+            </div>
+          </section>
+        </div>
+      )}
       {editorOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}>
           <section
@@ -2342,22 +2501,30 @@ function formatPrice(value: number) {
 }
 
 function formatTime(value: string) {
-  if (/[zZ]|[+-]\d{2}:\d{2}$/.test(value)) {
-    const date = new Date(value);
-    if (!Number.isNaN(date.getTime())) {
-      return formatDateInShanghai(date);
-    }
+  const date = parseBackendDate(value);
+  if (date) {
+    return formatDateInShanghai(date);
   }
   return value.replace("T", " ").slice(0, 19);
 }
 
 function formatAlertTime(value: string) {
-  const normalized = /[zZ]|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`;
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) {
+  const date = parseBackendDate(value);
+  if (!date) {
     return formatTime(value);
   }
   return formatDateInShanghai(date);
+}
+
+function parseBackendDate(value: string) {
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(trimmed)) {
+    return null;
+  }
+  const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(trimmed);
+  const normalized = hasTimezone ? trimmed : `${trimmed.replace(" ", "T")}Z`;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function formatDateInShanghai(date: Date) {
@@ -2376,7 +2543,7 @@ function formatDateInShanghai(date: Date) {
 }
 
 function formatShortTime(value: string) {
-  const normalized = value.replace("T", " ");
+  const normalized = formatTime(value);
   const datePart = normalized.slice(5, 10);
   const timePart = normalized.slice(11, 16);
   return `${datePart} ${timePart}`;
@@ -2400,8 +2567,10 @@ function fieldLabel(field: string) {
     max_right_leg_to_left_leg_ratio: "右颈到右肩/左肩到左颈上限",
     min_head_to_right_neck_to_left_neck_to_head_ratio: "头部到右颈/左颈到头部下限",
     max_head_to_right_neck_to_left_neck_to_head_ratio: "头部到右颈/左颈到头部上限",
+    min_shoulder_to_neck_height: "肩部到颈部最小价差",
+    require_head_beyond_shoulders_and_necks: "头部必须突破肩颈",
+    require_shoulders_between_opposite_neck_and_head: "肩部必须在对侧颈头之间",
     neckline_break_pct: "颈线跌破幅度",
-    max_neck_to_head_bars: "颈部到头部最大K线数",
     max_bars_after_right_shoulder: "右肩后观察K线数",
     max_signal_age_bars: "仅返回最近N根内信号",
     min_score_to_alert: "最低提醒评分",

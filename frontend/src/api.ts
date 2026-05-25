@@ -1,4 +1,4 @@
-import type { AlertFeedback, ContractCenterItem, ContractCenterRefresh, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, MarketSymbolsResponse, ScanResponse, SimulationStartResponse, SimulationStepResponse, WatchPoolItem, WatchPoolPayload } from "./types";
+import type { AlertFeedback, ContractCenterItem, ContractCenterRefresh, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, MarketSymbolsResponse, ScanResponse, SimulationStartResponse, SimulationStepResponse, WatchPoolImportResult, WatchPoolItem, WatchPoolPayload } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || window.location.origin;
 
@@ -180,6 +180,35 @@ export async function deleteWatchPoolItem(id: string): Promise<void> {
   if (!response.ok) {
     throw new Error(await readError(response));
   }
+}
+
+export async function downloadWatchPoolImportTemplate(): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/watch-pool/import-template`);
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "demo.xlsx";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+export async function importWatchPoolExcel(file: File): Promise<WatchPoolImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`${API_BASE}/api/watch-pool/import`, {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
 }
 
 export async function listHeadShouldersAlerts(limit = 100): Promise<HeadShouldersAlertSummary[]> {
