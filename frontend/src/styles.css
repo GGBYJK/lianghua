@@ -4359,6 +4359,18 @@ button:disabled {
   color: var(--ink);
 }
 
+.feedback-tabs button:hover:not(:disabled) {
+  border-bottom-color: rgba(0, 102, 204, 0.34);
+  background: rgba(0, 102, 204, 0.08);
+  color: var(--ink);
+}
+
+.feedback-tabs button.active:hover:not(:disabled) {
+  border-bottom-color: var(--primary);
+  background: rgba(0, 102, 204, 0.1);
+  color: var(--primary);
+}
+
 .message-filter {
   border-bottom: 1px solid var(--line-soft);
   background: var(--panel);
