@@ -6,6 +6,9 @@ from typing import Any
 import pandas as pd
 
 
+ONE_MINUTE_MAX_HEAD_NECK_BARS = 60
+
+
 @dataclass
 class HeadShoulderTopConfig:
     pivot_left: int = 3
@@ -178,6 +181,22 @@ def min_head_to_neck_height_by_price(head_price: float) -> float:
     if head_price < 5000:
         return 8
     return 10
+
+
+def passes_one_minute_head_neck_bar_limit(
+    timeframe: str,
+    left_neck: "PivotPoint",
+    head: "PivotPoint",
+    right_neck: "PivotPoint",
+) -> bool:
+    if timeframe != "1m":
+        return True
+    left_neck_to_head_bars = head.index - left_neck.index
+    head_to_right_neck_bars = right_neck.index - head.index
+    return (
+        left_neck_to_head_bars < ONE_MINUTE_MAX_HEAD_NECK_BARS
+        and head_to_right_neck_bars < ONE_MINUTE_MAX_HEAD_NECK_BARS
+    )
 
 
 def iter_pattern_candidates(
@@ -598,6 +617,8 @@ def scan_head_shoulders_top(
         setup_key = (p1.index, p2.index, p3.index, p4.index)
         if setup_key in used_right_shoulder_setups:
             continue
+        if not passes_one_minute_head_neck_bar_limit(timeframe, p2, p3, p4):
+            continue
         ok, reasons, total_score = validate_head_shoulders_structure([p1, p2, p3, p4, p5], config)
         if not ok:
             continue
@@ -676,6 +697,8 @@ def scan_inverse_head_shoulders(
     signals: list[HeadShoulderTopSignal] = []
 
     for p1, p2, p3, p4, p5 in iter_pattern_candidates(pivots, ["low", "high", "low", "high", "low"]):
+        if not passes_one_minute_head_neck_bar_limit(timeframe, p2, p3, p4):
+            continue
         ok, reasons, total_score = validate_inverse_head_shoulders_structure([p1, p2, p3, p4, p5], config)
         if not ok:
             continue

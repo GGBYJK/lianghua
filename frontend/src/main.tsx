@@ -219,6 +219,7 @@ function App() {
   const [watchImportOpen, setWatchImportOpen] = useState(false);
   const [watchImportResult, setWatchImportResult] = useState<WatchPoolImportResult | null>(null);
   const [watchImporting, setWatchImporting] = useState(false);
+  const [watchTogglePendingIds, setWatchTogglePendingIds] = useState<Set<string>>(new Set());
   const [feedbackTab, setFeedbackTab] = useState<FeedbackTab>("alerts");
   const [monitorAlerts, setMonitorAlerts] = useState<HeadShouldersAlertSummary[]>([]);
   const [feedbacks, setFeedbacks] = useState<AlertFeedback[]>([]);
@@ -528,6 +529,10 @@ function App() {
   }
 
   async function toggleWatchPoolEnabled(item: WatchPoolItem) {
+    if (watchTogglePendingIds.has(item.id)) {
+      return;
+    }
+    setWatchTogglePendingIds((ids) => new Set(ids).add(item.id));
     try {
       const saved = await updateWatchPoolItem(item.id, {
         name: item.name,
@@ -543,6 +548,12 @@ function App() {
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "监控状态更新失败");
+    } finally {
+      setWatchTogglePendingIds((ids) => {
+        const next = new Set(ids);
+        next.delete(item.id);
+        return next;
+      });
     }
   }
 
@@ -852,9 +863,10 @@ function App() {
         importOpen={watchImportOpen}
         onImportOpen={() => setWatchImportOpen(true)}
         onImportClose={() => setWatchImportOpen(false)}
-        importResult={watchImportResult}
-        importing={watchImporting}
-      />
+          importResult={watchImportResult}
+          importing={watchImporting}
+          togglePendingIds={watchTogglePendingIds}
+        />
         </section>
 
         <aside className="feedback-panel">
@@ -1057,6 +1069,7 @@ function WatchPool({
   onImportClose,
   importResult,
   importing,
+  togglePendingIds,
 }: {
   items: WatchPoolItem[];
   draft: WatchPoolDraft;
@@ -1079,6 +1092,7 @@ function WatchPool({
   onImportClose: () => void;
   importResult: WatchPoolImportResult | null;
   importing: boolean;
+  togglePendingIds: Set<string>;
 }) {
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -1093,14 +1107,26 @@ function WatchPool({
   const selectedDraftOption = contractOptions.find((item) => item.value.toLowerCase() === draft.symbol.trim().toLowerCase());
   const draftName = selectedDraftOption?.name ?? draft.name;
 
-  const renderPoolCard = (item: WatchPoolItem) => (
+  const renderPoolCard = (item: WatchPoolItem) => {
+    const togglePending = togglePendingIds.has(item.id);
+    return (
     <article className="pool-card" key={item.id}>
       <div className="pool-card-top">
         <div>
           <strong>{item.name}</strong>
           <small>{item.symbol}</small>
         </div>
-        <span className={item.enabled ? "status-pill on" : "status-pill"}>{item.enabled ? "开启" : "关闭"}</span>
+        <button
+          type="button"
+          className={`${item.enabled ? "pool-enable-switch on" : "pool-enable-switch"} ${togglePending ? "loading" : ""}`}
+          aria-label={item.enabled ? "关闭监控" : "开启监控"}
+          aria-pressed={item.enabled}
+          disabled={togglePending}
+          onClick={() => onToggleEnabled(item)}
+        >
+          <span />
+          {togglePending && <i aria-hidden="true" />}
+        </button>
       </div>
       <div className="pool-card-meta">
         <span>周期 <b>{item.timeframe}</b></span>
@@ -1109,14 +1135,12 @@ function WatchPool({
         <span>创建 <b>{item.createdAt}</b></span>
       </div>
       <div className="row-actions">
-        <button type="button" className={item.enabled ? "muted-button" : ""} onClick={() => onToggleEnabled(item)}>
-          {item.enabled ? "关闭监控" : "开启监控"}
-        </button>
         <button type="button" onClick={() => onEdit(item)}>修改</button>
-        <button type="button" className="muted-button" onClick={() => onDelete(item.id)}>删除</button>
+        <button type="button" className="danger-button" onClick={() => onDelete(item.id)}>删除</button>
       </div>
     </article>
   );
+  };
 
   return (
     <section className="result-panel pool-panel">
@@ -1461,36 +1485,78 @@ function MonitorAlertFeed({
   onHide: (alertId: string) => void;
   onFeedback: (alert: HeadShouldersAlertSummary) => void;
 }) {
+  const groupedAlerts = useMemo(() => {
+    const groups = new Map<string, HeadShouldersAlertSummary[]>();
+    for (const alert of alerts) {
+      const key = alert.symbol || "UNKNOWN";
+      const group = groups.get(key);
+      if (group) {
+        group.push(alert);
+      } else {
+        groups.set(key, [alert]);
+      }
+    }
+    return Array.from(groups, ([symbol, items]) => ({
+      symbol,
+      alerts: items,
+      confirmedCount: items.filter((alert) => alert.alert_type === "neckline_break").length,
+    }));
+  }, [alerts]);
+
   return (
-    <div className="message-list">
+    <div className="message-list monitor-message-list">
       {alerts.length === 0 ? (
         <p className="empty">&#26242;&#26080;&#30417;&#25511;&#28040;&#24687;&#12290;</p>
-      ) : alerts.map((alert) => (
-        <article
-          className={`message-item ${alert.alert_type === "neckline_break" ? "confirmed" : ""} ${selectedId === alert.id ? "selected" : ""}`}
-          key={alert.id}
-          onClick={() => onSelect(alert)}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              onSelect(alert);
-            }
-          }}
-        >
-          <button type="button" className="message-close-button" aria-label="&#20851;&#38381;" onClick={(event) => { event.stopPropagation(); onHide(alert.id); }}>&#20851;&#38381;</button>
-          <div className="message-main">
-            <strong>{alert.symbol} / {alert.timeframe}</strong>
-            <span>{patternLabel(alert.pattern)} &middot; {alertTypeLabel(alert.alert_type)}</span>
-            <small>{alert.created_at ? formatAlertTime(alert.created_at) : "--"}</small>
+      ) : groupedAlerts.map((group) => (
+        <details className="message-tree-group" key={group.symbol} open>
+          <summary className="message-tree-summary">
+            <span className="message-tree-marker" aria-hidden="true" />
+            <div>
+              <strong>{group.symbol}</strong>
+              <small>{group.alerts.length} &#26465;&#30417;&#25511;&#28040;&#24687;</small>
+            </div>
+            {group.confirmedCount > 0 && <b>{group.confirmedCount}</b>}
+          </summary>
+          <div className="message-tree-children">
+            {group.alerts.map((alert) => (
+              <article
+                className={`message-item ${alert.alert_type === "neckline_break" ? "confirmed" : ""} ${selectedId === alert.id ? "selected" : ""}`}
+                key={alert.id}
+                onClick={() => onSelect(alert)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSelect(alert);
+                  }
+                }}
+              >
+                <button type="button" className="message-close-button monitor-close-button" aria-label="&#20851;&#38381;" onClick={(event) => { event.stopPropagation(); onHide(alert.id); }}>
+                  <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                    <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+                  </svg>
+                </button>
+                <div className="message-main monitor-message-main">
+                  <div className="monitor-alert-tags">
+                    <span className={`monitor-tag timeframe-tag timeframe-${alert.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{alert.timeframe}</span>
+                    <span className={`monitor-tag pattern-tag ${alert.pattern}`}>{patternLabel(alert.pattern)}</span>
+                    <span className={`monitor-tag alert-tag ${alert.alert_type}`}>{alertTypeLabel(alert.alert_type)}</span>
+                    <span className="monitor-tag score-tag">{alert.score}</span>
+                  </div>
+                  <div className="monitor-message-footer">
+                    <div className="message-card-actions">
+                      <button type="button" className="message-detail-button" onClick={(event) => { event.stopPropagation(); onOpenDetail(alert); }}>&#35814;&#24773;</button>
+                      <button type="button" className="message-detail-button" onClick={(event) => { event.stopPropagation(); onFeedback(alert); }}>&#21453;&#39304;</button>
+                    </div>
+                    <time>{alert.created_at ? formatAlertTime(alert.created_at) : "--"}</time>
+                  </div>
+                </div>
+                <b>{alert.score}</b>
+              </article>
+            ))}
           </div>
-          <b>{alert.score}</b>
-          <div className="message-card-actions">
-            <button type="button" className="message-detail-button" onClick={(event) => { event.stopPropagation(); onOpenDetail(alert); }}>&#35814;&#24773;</button>
-            <button type="button" className="message-detail-button" onClick={(event) => { event.stopPropagation(); onFeedback(alert); }}>&#21453;&#39304;</button>
-          </div>
-        </article>
+        </details>
       ))}
     </div>
   );
@@ -1914,6 +1980,34 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
     const useLongPressTooltip = window.matchMedia?.("(hover: none), (pointer: coarse)").matches ?? false;
     let zoomStart = start;
     let zoomEnd = end;
+    const getChartLayout = () => {
+      const height = Math.max(320, chartEl.clientHeight || 0);
+      const top = 34;
+      const bottom = height < 420 ? 20 : 24;
+      const zoomHeight = height < 420 ? 14 : 18;
+      const zoomGap = height < 420 ? 8 : 12;
+      const volumeHeight = Math.max(44, Math.min(78, Math.round(height * 0.17)));
+      const volumeGap = height < 420 ? 16 : 24;
+      const available = height - top - bottom - zoomHeight - zoomGap - volumeHeight - volumeGap;
+      const priceHeight = Math.max(150, available);
+      const volumeTop = top + priceHeight + volumeGap;
+      return { bottom, zoomHeight, priceHeight, volumeTop, volumeHeight };
+    };
+    const applyChartLayout = () => {
+      const layout = getChartLayout();
+      chart.setOption({
+        grid: [
+          { left: 14, right: 58, top: 34, height: layout.priceHeight },
+          { left: 14, right: 58, top: layout.volumeTop, height: layout.volumeHeight },
+        ],
+        dataZoom: [
+          {},
+          { bottom: 10, height: layout.zoomHeight },
+        ],
+      });
+      chart.resize();
+    };
+    const initialLayout = getChartLayout();
 
     chart.setOption({
       backgroundColor: "#ffffff",
@@ -1944,8 +2038,8 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
         formatter: (params: unknown) => formatChartTooltip(params, candles),
       },
       grid: [
-        { left: 14, right: 58, top: 34, height: 292 },
-        { left: 14, right: 58, top: 352, height: 78 },
+        { left: 14, right: 58, top: 34, height: initialLayout.priceHeight },
+        { left: 14, right: 58, top: initialLayout.volumeTop, height: initialLayout.volumeHeight },
       ],
       xAxis: [
         {
@@ -2002,8 +2096,8 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
         {
           type: "slider",
           xAxisIndex: [0, 1],
-          bottom: 6,
-          height: 18,
+          bottom: initialLayout.bottom,
+          height: initialLayout.zoomHeight,
           realtime: false,
           brushSelect: false,
           borderColor: "#e0e0e0",
@@ -2208,7 +2302,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
     chartEl.addEventListener("pointercancel", onPointerEnd);
     chartEl.addEventListener("contextmenu", onContextMenu);
 
-    const observer = new ResizeObserver(() => chart.resize());
+    const observer = new ResizeObserver(() => applyChartLayout());
     observer.observe(chartEl);
     return () => {
       chartEl.removeEventListener("pointerdown", onPointerDown);

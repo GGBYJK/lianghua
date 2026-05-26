@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.config import get_symbol_prefix, load_head_shoulder_config
 from app.csv_loader import normalize_kline_dataframe
 from app.main import app
+from app import strategy as strategy_module
 from app.market_client import (
     extract_rows,
     normalize_period,
@@ -40,6 +41,7 @@ from app.strategy import (
     find_pivots,
     iter_pattern_candidates,
     validate_head_shoulders_structure,
+    passes_one_minute_head_neck_bar_limit,
     scan_head_shoulders,
     scan_head_shoulders_top,
     scan_inverse_head_shoulders,
@@ -416,6 +418,70 @@ def test_top_scan_keeps_first_right_shoulder_for_same_left_setup() -> None:
 
     assert len(same_setup_signals) == 1
     assert same_setup_signals[0].right_shoulder.index == 9
+
+
+def test_one_minute_head_neck_bar_limit_applies_to_top_and_inverse_patterns() -> None:
+    times = pd.date_range("2026-05-25 09:00:00", periods=130, freq="min")
+    left_neck = PivotPoint(10, times[10], 100, "low")
+    head_allowed = PivotPoint(69, times[69], 110, "high")
+    right_neck_allowed = PivotPoint(128, times[128], 100, "low")
+    head_left_too_far = PivotPoint(70, times[70], 110, "high")
+    right_neck_too_far = PivotPoint(129, times[129], 100, "low")
+
+    assert passes_one_minute_head_neck_bar_limit("1m", left_neck, head_allowed, right_neck_allowed)
+    assert not passes_one_minute_head_neck_bar_limit("1m", left_neck, head_left_too_far, right_neck_allowed)
+    assert not passes_one_minute_head_neck_bar_limit("1m", left_neck, head_allowed, right_neck_too_far)
+    assert passes_one_minute_head_neck_bar_limit("5m", left_neck, head_left_too_far, right_neck_too_far)
+
+
+def test_one_minute_top_scan_filters_candidates_with_wide_head_neck_distance(monkeypatch) -> None:
+    times = pd.date_range("2026-05-25 09:00:00", periods=130, freq="min")
+    candidate = (
+        PivotPoint(0, times[0], 100, "high"),
+        PivotPoint(10, times[10], 90, "low"),
+        PivotPoint(70, times[70], 110, "high"),
+        PivotPoint(80, times[80], 90, "low"),
+        PivotPoint(90, times[90], 100, "high"),
+    )
+    df = pd.DataFrame({
+        "datetime": times,
+        "open": [100] * len(times),
+        "high": [101] * len(times),
+        "low": [99] * len(times),
+        "close": [100] * len(times),
+        "volume": [1000] * len(times),
+    })
+
+    monkeypatch.setattr(strategy_module, "find_pivots", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(strategy_module, "compress_pivots", lambda pivots: pivots)
+    monkeypatch.setattr(strategy_module, "iter_pattern_candidates", lambda *_args, **_kwargs: [candidate])
+
+    assert scan_head_shoulders_top(df, "a2607", "1m", HeadShoulderTopConfig()) == []
+
+
+def test_one_minute_inverse_scan_filters_candidates_with_wide_head_neck_distance(monkeypatch) -> None:
+    times = pd.date_range("2026-05-25 09:00:00", periods=130, freq="min")
+    candidate = (
+        PivotPoint(0, times[0], 100, "low"),
+        PivotPoint(10, times[10], 110, "high"),
+        PivotPoint(70, times[70], 90, "low"),
+        PivotPoint(80, times[80], 110, "high"),
+        PivotPoint(90, times[90], 100, "low"),
+    )
+    df = pd.DataFrame({
+        "datetime": times,
+        "open": [100] * len(times),
+        "high": [101] * len(times),
+        "low": [99] * len(times),
+        "close": [100] * len(times),
+        "volume": [1000] * len(times),
+    })
+
+    monkeypatch.setattr(strategy_module, "find_pivots", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(strategy_module, "compress_pivots", lambda pivots: pivots)
+    monkeypatch.setattr(strategy_module, "iter_pattern_candidates", lambda *_args, **_kwargs: [candidate])
+
+    assert scan_inverse_head_shoulders(df, "a2607", "1m", HeadShoulderTopConfig()) == []
 
 
 def test_mirrored_sample_finds_confirmed_inverse_signal() -> None:

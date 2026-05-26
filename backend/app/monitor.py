@@ -228,7 +228,19 @@ def signal_latest_detection_time(signal: dict[str, Any]) -> datetime | None:
     return max(times) if times else None
 
 
-def should_emit_signal_for_item(signal: dict[str, Any], item: dict[str, Any]) -> bool:
+def is_signal_from_current_watch_day(signal: dict[str, Any], now: datetime | None = None) -> bool:
+    latest_detection_time = signal_latest_detection_time(signal)
+    if latest_detection_time is None:
+        return True
+    current = now or datetime.now(WATCH_POOL_TIMEZONE)
+    signal_date = latest_detection_time.astimezone(WATCH_POOL_TIMEZONE).date()
+    current_date = current.astimezone(WATCH_POOL_TIMEZONE).date()
+    return signal_date == current_date
+
+
+def should_emit_signal_for_item(signal: dict[str, Any], item: dict[str, Any], now: datetime | None = None) -> bool:
+    if not is_signal_from_current_watch_day(signal, now=now):
+        return False
     monitor_started_at = parse_monitor_started_at(item.get("monitor_started_at"))
     if monitor_started_at is None:
         return True

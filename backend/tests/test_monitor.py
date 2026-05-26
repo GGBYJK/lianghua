@@ -260,21 +260,52 @@ def make_signal(**overrides):
 def test_signal_before_monitor_start_is_skipped() -> None:
     item = {"monitor_started_at": "2026-05-20T01:00:00+00:00"}
 
-    assert not should_emit_signal_for_item(make_signal(), item)
+    assert not should_emit_signal_for_item(make_signal(), item, now=datetime(2026, 5, 20, 9, 0, tzinfo=TZ))
 
 
 def test_signal_with_right_shoulder_after_monitor_start_is_emitted() -> None:
     item = {"monitor_started_at": "2026-05-20T01:00:00+00:00"}
     signal = make_signal(right_shoulder={"time": "2026-05-20T09:01:00"})
 
-    assert should_emit_signal_for_item(signal, item)
+    assert should_emit_signal_for_item(signal, item, now=datetime(2026, 5, 20, 9, 2, tzinfo=TZ))
 
 
 def test_signal_with_break_after_monitor_start_is_emitted() -> None:
     item = {"monitor_started_at": "2026-05-20T01:00:00+00:00"}
     signal = make_signal(break_time="2026-05-20T09:02:00")
 
-    assert should_emit_signal_for_item(signal, item)
+    assert should_emit_signal_for_item(signal, item, now=datetime(2026, 5, 20, 9, 3, tzinfo=TZ))
+
+
+def test_previous_day_signal_is_not_emitted_on_current_watch_day() -> None:
+    item = {"monitor_started_at": "2026-05-20T01:00:00+00:00"}
+    now = datetime(2026, 5, 26, 14, 30, tzinfo=TZ)
+
+    assert not should_emit_signal_for_item(
+        make_signal(
+            right_shoulder={"time": "2026-05-25T11:02:00"},
+            break_time=None,
+            retest_time=None,
+        ),
+        item,
+        now=now,
+    )
+    assert not should_emit_signal_for_item(
+        make_signal(
+            right_shoulder={"time": "2026-05-25T22:50:00"},
+            break_time=None,
+            retest_time=None,
+        ),
+        item,
+        now=now,
+    )
+
+
+def test_current_day_signal_is_emitted_on_current_watch_day() -> None:
+    item = {"monitor_started_at": "2026-05-20T01:00:00+00:00"}
+    signal = make_signal(right_shoulder={"time": "2026-05-26T14:30:00"})
+
+    assert should_emit_signal_for_item(signal, item, now=datetime(2026, 5, 26, 14, 31, tzinfo=TZ))
 
 
 def test_wechat_workbot_content_includes_core_signal_fields() -> None:
