@@ -1572,62 +1572,61 @@ function MonitorAlertFeed({
       {alerts.length === 0 ? (
         <p className="empty">&#26242;&#26080;&#30417;&#25511;&#28040;&#24687;&#12290;</p>
       ) : groupedAlerts.map((group) => (
-        <details
-          className="message-tree-group"
-          key={group.symbol}
-          open
-          ref={(element) => {
-            groupRefs.current[group.symbol] = element;
-          }}
-        >
-          <summary className="message-tree-summary">
-            <span className="message-tree-marker" aria-hidden="true" />
-            <div>
-              <strong>{group.symbol}</strong>
-              <small>{group.alerts.length} &#26465;&#30417;&#25511;&#28040;&#24687;</small>
-            </div>
-            {group.confirmedCount > 0 && <b>{group.confirmedCount}</b>}
-          </summary>
-          <div className="message-tree-children">
-            {group.alerts.map((alert) => (
-              <article
-                className={`message-item ${alert.alert_type === "neckline_break" ? "confirmed" : ""} ${selectedId === alert.id ? "selected" : ""}`}
-                key={alert.id}
-                onClick={() => onSelect(alert)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onSelect(alert);
-                  }
-                }}
-              >
-                <button type="button" className="message-close-button monitor-close-button" aria-label="&#20851;&#38381;" onClick={(event) => { event.stopPropagation(); onHide(alert.id); }}>
-                  <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                    <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
-                  </svg>
-                </button>
-                <div className="message-main monitor-message-main">
-                  <div className="monitor-alert-tags">
-                    <span className={`monitor-tag timeframe-tag timeframe-${alert.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{alert.timeframe}</span>
-                    <span className={`monitor-tag pattern-tag ${alert.pattern}`}>{patternLabel(alert.pattern)}</span>
-                    <span className={`monitor-tag alert-tag ${alert.alert_type}`}>{alertTypeLabel(alert.alert_type)}</span>
-                    <span className="monitor-tag score-tag">{alert.score}</span>
-                  </div>
-                  <div className="monitor-message-footer">
-                    <div className="message-card-actions">
-                      <button type="button" className="message-detail-button" onClick={(event) => { event.stopPropagation(); onOpenDetail(alert); }}>&#35814;&#24773;</button>
-                      <button type="button" className="message-detail-button" onClick={(event) => { event.stopPropagation(); onFeedback(alert); }}>&#21453;&#39304;</button>
-                    </div>
-                    <time>{alert.created_at ? formatAlertTime(alert.created_at) : "--"}</time>
-                  </div>
+            <details
+              className="message-tree-group"
+              key={group.symbol}
+              ref={(element) => {
+                groupRefs.current[group.symbol] = element;
+              }}
+            >
+              <summary className="message-tree-summary">
+                <span className="message-tree-marker" aria-hidden="true" />
+                <div>
+                  <strong>{group.symbol}</strong>
+                  <small>{group.alerts.length} &#26465;&#30417;&#25511;&#28040;&#24687;</small>
                 </div>
-                <b>{alert.score}</b>
-              </article>
-            ))}
-          </div>
-        </details>
+                {group.confirmedCount > 0 && <b>{group.confirmedCount}</b>}
+              </summary>
+              <div className="message-tree-children">
+                {group.alerts.map((alert) => (
+                  <article
+                    className={`message-item ${alert.alert_type === "neckline_break" ? "confirmed" : ""} ${selectedId === alert.id ? "selected" : ""}`}
+                    key={alert.id}
+                    onClick={() => onSelect(alert)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onSelect(alert);
+                      }
+                    }}
+                  >
+                    <button type="button" className="message-close-button monitor-close-button" aria-label="&#20851;&#38381;" onClick={(event) => { event.stopPropagation(); onHide(alert.id); }}>
+                      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                        <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+                      </svg>
+                    </button>
+                    <div className="message-main monitor-message-main">
+                      <div className="monitor-alert-tags">
+                        <span className={`monitor-tag timeframe-tag timeframe-${alert.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{alert.timeframe}</span>
+                        <span className={`monitor-tag pattern-tag ${alert.pattern}`}>{patternLabel(alert.pattern)}</span>
+                        <span className={`monitor-tag alert-tag ${alert.alert_type}`}>{alertTypeLabel(alert.alert_type)}</span>
+                        <span className="monitor-tag score-tag">{alert.score}</span>
+                      </div>
+                      <div className="monitor-message-footer">
+                        <div className="message-card-actions">
+                          <button type="button" className="message-detail-button" onClick={(event) => { event.stopPropagation(); onOpenDetail(alert); }}>&#35814;&#24773;</button>
+                          <button type="button" className="message-detail-button" onClick={(event) => { event.stopPropagation(); onFeedback(alert); }}>&#21453;&#39304;</button>
+                        </div>
+                        <time>{alert.created_at ? formatAlertTime(alert.created_at) : "--"}</time>
+                      </div>
+                    </div>
+                    <b>{alert.score}</b>
+                  </article>
+                ))}
+              </div>
+            </details>
       ))}
     </div>
   );
