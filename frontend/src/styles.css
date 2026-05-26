@@ -5145,7 +5145,35 @@ button:disabled {
   font-size: 12px;
 }
 
-.message-tree-summary > b {
+.message-tree-summary-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.message-tree-latest-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.message-tree-latest-time svg {
+  width: 13px;
+  height: 13px;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.message-tree-summary-meta > b {
   min-width: 28px;
   border-radius: 999px;
   background: rgba(0, 102, 204, 0.08);

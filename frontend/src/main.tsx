@@ -1549,6 +1549,15 @@ function MonitorAlertFeed({
       symbol,
       alerts: items,
       confirmedCount: items.filter((alert) => alert.alert_type === "neckline_break").length,
+      latestTime: formatMessageTreeLatestTime(items.reduce<string | null>((latest, alert) => {
+        if (!alert.created_at) {
+          return latest;
+        }
+        if (!latest) {
+          return alert.created_at;
+        }
+        return alert.created_at > latest ? alert.created_at : latest;
+      }, null)),
     }));
   }, [alerts]);
 
@@ -1585,7 +1594,16 @@ function MonitorAlertFeed({
                   <strong>{group.symbol}</strong>
                   <small>{group.alerts.length} &#26465;&#30417;&#25511;&#28040;&#24687;</small>
                 </div>
-                {group.confirmedCount > 0 && <b>{group.confirmedCount}</b>}
+                <span className="message-tree-summary-meta">
+                  <span className="message-tree-latest-time">
+                    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                      <circle cx="8" cy="8" r="5.5" />
+                      <path d="M8 4.8v3.4l2.3 1.4" />
+                    </svg>
+                    {group.latestTime}
+                  </span>
+                  {group.confirmedCount > 0 && <b>{group.confirmedCount}</b>}
+                </span>
               </summary>
               <div className="message-tree-children">
                 {group.alerts.map((alert) => (
@@ -2690,6 +2708,31 @@ function formatAlertTime(value: string) {
   return formatDateInShanghai(date);
 }
 
+function formatMessageTreeLatestTime(value: string | null) {
+  if (!value) {
+    return "--";
+  }
+  const date = parseBackendTimestamp(value) ?? parseLocalTimestamp(value);
+  if (!date) {
+    return formatTime(value).slice(5, 16);
+  }
+  const parts = getShanghaiDateParts(date);
+  const nowParts = getShanghaiDateParts(new Date());
+  const dateOnly = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day));
+  const todayOnly = Date.UTC(Number(nowParts.year), Number(nowParts.month) - 1, Number(nowParts.day));
+  const dayDiff = Math.round((todayOnly - dateOnly) / 86400000);
+  if (dayDiff === 0) {
+    return `${parts.hour}:${parts.minute}`;
+  }
+  if (dayDiff === 1) {
+    return "昨天";
+  }
+  if (parts.year === nowParts.year) {
+    return `${parts.month}-${parts.day}`;
+  }
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 function parseBackendTimestamp(value: string) {
   const trimmed = value.trim();
   if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(trimmed)) {
@@ -2701,6 +2744,37 @@ function parseBackendTimestamp(value: string) {
   }
   const date = new Date(trimmed);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseLocalTimestamp(value: string) {
+  const normalized = value.trim().replace("T", " ");
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})[ ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) {
+    return null;
+  }
+  const [, year, month, day, hour, minute, second = "0"] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getShanghaiDateParts(date: Date) {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
+  return {
+    year: part("year"),
+    month: part("month"),
+    day: part("day"),
+    hour: part("hour"),
+    minute: part("minute"),
+  };
 }
 
 function formatDateInShanghai(date: Date) {
