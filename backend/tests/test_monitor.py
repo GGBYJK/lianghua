@@ -285,14 +285,5 @@ def test_wechat_workbot_content_includes_core_signal_fields() -> None:
         "alert_type": "right_shoulder_confirmed",
         "score": 88,
         "right_shoulder": {"time": "2026-05-20T09:01:00", "price": 3329},
-        "neckline_price": 3300,
-        "message": "test message",
     }
-
-    content = build_wechat_workbot_content(signal, {"name": "玉米主力"})
-
-    assert "玉米主力（c0）" in content
-    assert "周期：5m" in content
-    assert "形态：头肩顶" in content
-    assert "评分：88" in content
-    assert "右肩价：3329.00" in content
+    assert build_wechat_workbot_content(signal, {"name": "c0"}) == "新形态：c0，5m，头肩顶，20260520 09:01"

@@ -10,9 +10,10 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import httpx
@@ -27,6 +28,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT_DIR / ".env", override=True)
 load_dotenv(ROOT_DIR / "backend" / ".env", override=False)
 logger = logging.getLogger("app.market_client")
+MARKET_TIMEZONE = ZoneInfo(os.getenv("MARKET_TIMEZONE", os.getenv("WATCH_POOL_TIMEZONE", "Asia/Shanghai")))
 
 TQ_SYMBOL_MAP = {
     "c0": "KQ.m@DCE.c",
@@ -542,7 +544,14 @@ def tqsdk_dataframe_to_kline(df: pd.DataFrame, tq_symbol: str = "") -> pd.DataFr
     missing = [column for column in required_columns if column not in df.columns]
     if missing:
         raise MarketApiError(f"TqSdk K线数据缺少字段：{', '.join(missing)}")
-    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+    if pd.api.types.is_numeric_dtype(df["datetime"]):
+        df["datetime"] = (
+            pd.to_datetime(df["datetime"], errors="coerce", unit="ns", utc=True)
+            .dt.tz_convert(MARKET_TIMEZONE)
+            .dt.tz_localize(None)
+        )
+    else:
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=required_columns).sort_values("datetime").reset_index(drop=True)
@@ -1046,8 +1055,10 @@ def normalize_time(value: Any) -> Any:
         value = int(value)
     if isinstance(value, (int, float)):
         number = float(value)
+        if number > 10_000_000_000_000_000:
+            return datetime.fromtimestamp(number / 1_000_000_000, tz=timezone.utc).astimezone(MARKET_TIMEZONE).replace(tzinfo=None)
         if number > 10_000_000_000:
-            return datetime.fromtimestamp(number / 1000)
+            return datetime.fromtimestamp(number / 1000, tz=timezone.utc).astimezone(MARKET_TIMEZONE).replace(tzinfo=None)
         if number > 1_000_000_000:
-            return datetime.fromtimestamp(number)
+            return datetime.fromtimestamp(number, tz=timezone.utc).astimezone(MARKET_TIMEZONE).replace(tzinfo=None)
     return value

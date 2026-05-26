@@ -77,10 +77,12 @@ def _zh(value: str) -> str:
 ZH = {
     "inverse_pattern": "\u53cd\u5411\u5934\u80a9\u5f62\u6001",
     "top_pattern": "\u5934\u80a9\u9876",
+    "inverse_pattern_short": "\u53cd\u5411\u5934\u80a9",
     "right_shoulder_confirmed": "\u53f3\u80a9\u786e\u8ba4",
     "neckline_break": "\u8dcc\u7834\u9888\u7ebf\u786e\u8ba4",
     "shape_alert": "\u5f62\u6001\u63d0\u9192",
     "new_alert": "\u76d1\u63a7\u5230\u65b0\u7684\u5f62\u6001\u63d0\u9192",
+    "new_pattern": "\u65b0\u5f62\u6001",
     "symbol": "\u54c1\u79cd",
     "timeframe": "\u5468\u671f",
     "pattern": "\u5f62\u6001",
@@ -106,6 +108,12 @@ def pattern_label(pattern: str | None) -> str:
     return ZH["top_pattern"]
 
 
+def compact_pattern_label(pattern: str | None) -> str:
+    if pattern == "inverse_head_shoulders":
+        return ZH["inverse_pattern_short"]
+    return ZH["top_pattern"]
+
+
 def alert_type_label(alert_type: str | None) -> str:
     if alert_type == "right_shoulder_confirmed":
         return ZH["right_shoulder_confirmed"]
@@ -121,34 +129,31 @@ def format_signal_time(value: str | None) -> str:
     return parsed.astimezone(WATCH_POOL_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def format_compact_signal_time(value: str | None) -> str:
+    parsed = parse_signal_time(value)
+    if parsed is None:
+        return "-"
+    return parsed.astimezone(WATCH_POOL_TIMEZONE).strftime("%Y%m%d %H:%M")
+
+
+def signal_notification_time(signal: dict[str, Any]) -> str | None:
+    return (
+        signal.get("retest_time")
+        or signal.get("break_time")
+        or signal.get("right_shoulder", {}).get("time")
+    )
+
+
 def build_wechat_workbot_content(signal: dict[str, Any], item: dict[str, Any]) -> str:
-    right_shoulder = signal.get("right_shoulder", {})
     colon = ZH["colon"]
-    lines = [
-        ZH["new_alert"],
-        f"{ZH['symbol']}{colon}{item.get('name') or signal.get('symbol')}{ZH['left_paren']}{signal.get('symbol')}{ZH['right_paren']}",
-        f"{ZH['timeframe']}{colon}{signal.get('timeframe')}",
-        f"{ZH['pattern']}{colon}{pattern_label(signal.get('pattern'))}",
-        f"{ZH['alert']}{colon}{alert_type_label(signal.get('alert_type'))}",
-        f"{ZH['score']}{colon}{signal.get('score', '-')}",
-        f"{ZH['right_shoulder_price']}{colon}{float(right_shoulder.get('price', 0)):.2f}" if right_shoulder.get("price") is not None else f"{ZH['right_shoulder_price']}{colon}-",
-        f"{ZH['right_shoulder_time']}{colon}{format_signal_time(right_shoulder.get('time'))}",
-    ]
-    if signal.get("retest_time"):
-        lines.extend([
-            f"{ZH['trigger_time']}{colon}{format_signal_time(signal.get('retest_time'))}",
-            f"{ZH['trigger_price']}{colon}{float(signal['retest_price']):.2f}" if signal.get("retest_price") is not None else f"{ZH['trigger_price']}{colon}-",
-        ])
-    elif signal.get("break_time"):
-        lines.extend([
-            f"{ZH['trigger_time']}{colon}{format_signal_time(signal.get('break_time'))}",
-            f"{ZH['break_price']}{colon}{float(signal['break_price']):.2f}" if signal.get("break_price") is not None else f"{ZH['break_price']}{colon}-",
-        ])
-    if signal.get("neckline_price") is not None:
-        lines.append(f"{ZH['neckline_price']}{colon}{float(signal['neckline_price']):.2f}")
-    if signal.get("message"):
-        lines.append(f"{ZH['message']}{colon}{signal['message']}")
-    return "\n".join(lines)
+    comma = "\uff0c"
+    return (
+        f"{ZH['new_pattern']}{colon}"
+        f"{signal.get('symbol')}{comma}"
+        f"{signal.get('timeframe')}{comma}"
+        f"{compact_pattern_label(signal.get('pattern'))}{comma}"
+        f"{format_compact_signal_time(signal_notification_time(signal))}"
+    )
 
 
 async def send_wechat_workbot_notification(signal: dict[str, Any], item: dict[str, Any]) -> None:

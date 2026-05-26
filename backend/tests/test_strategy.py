@@ -46,6 +46,7 @@ from app.strategy import (
     validate_inverse_head_shoulders_structure,
 )
 from app.monitor import build_signal_unique_key
+from app.monitor import build_wechat_workbot_content
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -138,6 +139,31 @@ def test_tqsdk_period_mapping_symbol_hints_and_dataframe() -> None:
     normalized = tqsdk_dataframe_to_kline(df)
     assert list(normalized.columns) == ["datetime", "open", "high", "low", "close", "volume"]
     assert normalized["close"].iloc[-1] == 2002
+    assert normalized["datetime"].iloc[0].isoformat() == "2026-04-28T11:40:00"
+
+
+def test_tqsdk_utc_timestamp_displays_as_beijing_time_in_wechat_message() -> None:
+    df = pd.DataFrame({
+        "datetime": [1777347600000000000],
+        "open": [2000],
+        "high": [2002],
+        "low": [1999],
+        "close": [2001],
+        "volume": [100],
+    })
+    normalized = tqsdk_dataframe_to_kline(df)
+    signal = {
+        "symbol": "c0",
+        "timeframe": "1m",
+        "pattern": "head_shoulders_top",
+        "alert_type": "right_shoulder_confirmed",
+        "score": 80,
+        "right_shoulder": {"time": normalized["datetime"].iloc[0].isoformat(), "price": 3329},
+    }
+
+    content = build_wechat_workbot_content(signal, {"name": "c0"})
+
+    assert content == "新形态：c0，1m，头肩顶，20260428 11:40"
 
 
 def test_tqsdk_contract_query_filters_target_exchanges() -> None:
