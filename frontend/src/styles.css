@@ -3187,6 +3187,20 @@ button:hover:not(:disabled) {
 
 .pool-card {
   position: relative;
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+
+.pool-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(0, 102, 204, 0.28);
+  background: #ffffff;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.1);
+}
+
+.pool-card:focus-visible {
+  outline: 2px solid rgba(0, 102, 204, 0.42);
+  outline-offset: 2px;
 }
 
 .pool-card-top {
@@ -5305,6 +5319,43 @@ button:disabled {
 
 .monitor-message-list .message-item > b {
   display: none;
+}
+
+.current-signal-list .message-item {
+  border-left-color: #b8c2cc;
+}
+
+.current-signal-list .message-item.confirmed {
+  border-left-color: #0b5cab;
+}
+
+.current-signal-list .message-item.selected {
+  border-left-color: var(--primary);
+}
+
+.message-card-actions .message-detail-button,
+.monitor-message-footer .message-detail-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  border: 1px solid #d2d2d7;
+  background: #ffffff;
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.message-card-actions .message-detail-button:hover:not(:disabled),
+.monitor-message-footer .message-detail-button:hover:not(:disabled) {
+  border-color: rgba(0, 102, 204, 0.38);
+  background: rgba(0, 102, 204, 0.08);
+  color: var(--primary);
+}
+
+.message-card-actions .message-detail-button.muted-button:hover:not(:disabled) {
+  border-color: rgba(214, 57, 57, 0.35);
+  background: #fff5f5;
+  color: #d63939;
 }
 
 @media (max-width: 1180px) {

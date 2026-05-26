@@ -235,7 +235,9 @@ function App() {
   const [selectedFeedbackId, setSelectedFeedbackId] = useState<string | null>(null);
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
   const [detailSource, setDetailSource] = useState<DetailSource>(null);
+  const [monitorScrollTargetSymbol, setMonitorScrollTargetSymbol] = useState<string | null>(null);
   const seenSignalKeys = useRef<Set<string>>(new Set());
+  const feedbackPanelRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!symbol) {
@@ -278,6 +280,12 @@ function App() {
     return () => document.body.classList.remove("modal-open");
   }, [configOpen, watchEditorOpen, detailSource, feedbackTarget, feedbackListOpen, contractCenterOpen]);
 
+  function scrollToPanel(ref: React.RefObject<HTMLElement | null>) {
+    window.setTimeout(() => {
+      ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }
+
   async function pollMarket() {
     if (!symbol) {
       setError("请先选择监控品种");
@@ -295,6 +303,8 @@ function App() {
       saveMarketScanCache(response, marketLimit);
       setMarketLastFetch(`接口 ${new Date().toLocaleTimeString()}`);
       pushNewAlerts(response.signals);
+      setFeedbackTab("current");
+      scrollToPanel(feedbackPanelRef);
     } catch (err) {
       setError(err instanceof Error ? err.message : "实盘行情拉取失败");
     } finally {
@@ -588,6 +598,12 @@ function App() {
     setDetailSource({ kind: "current", signal });
   }
 
+  function focusWatchPoolMessages(item: WatchPoolItem) {
+    setFeedbackTab("alerts");
+    setMonitorScrollTargetSymbol(item.symbol);
+    scrollToPanel(feedbackPanelRef);
+  }
+
   function applyAlertResult(fullAlert: HeadShouldersAlert) {
     setSelectedAlertId(fullAlert.id);
     setSelectedFeedbackId(null);
@@ -854,11 +870,13 @@ function App() {
         onSave={saveWatchPoolItem}
         onCancel={resetWatchDraft}
         onEdit={startEditWatch}
-        onDelete={removeWatchPoolItem}
-        onToggleEnabled={toggleWatchPoolEnabled}
-        onEnableAll={enableAllWatchPool}
-        onDisableAll={disableAllWatchPool}
-        onDownloadTemplate={() => void downloadWatchTemplate()}
+          onDelete={removeWatchPoolItem}
+          onToggleEnabled={toggleWatchPoolEnabled}
+          onFocusMessages={focusWatchPoolMessages}
+          onEnableAll={enableAllWatchPool}
+          onDisableAll={disableAllWatchPool}
+          onScanNow={() => void scanWatchPoolNow()}
+          onDownloadTemplate={() => void downloadWatchTemplate()}
         onImportFile={(file) => void importWatchPoolFile(file)}
         importOpen={watchImportOpen}
         onImportOpen={() => setWatchImportOpen(true)}
@@ -869,7 +887,7 @@ function App() {
         />
         </section>
 
-        <aside className="feedback-panel">
+        <aside className="feedback-panel" ref={feedbackPanelRef}>
           <FeedbackTabs
             activeTab={feedbackTab}
             onTabChange={setFeedbackTab}
@@ -883,11 +901,12 @@ function App() {
             onOpenAlertDetail={(alert) => void openMonitorAlertDetail(alert)}
             onHideAlert={(alertId) => void hideMonitorAlert(alertId)}
             onFeedbackAlert={startAlertFeedback}
+            monitorScrollTargetSymbol={monitorScrollTargetSymbol}
+            onMonitorScrollComplete={() => setMonitorScrollTargetSymbol(null)}
             onFocusCurrentSignal={focusCurrentSignal}
             onSelectCurrentSignal={selectCurrentSignal}
             onSelectFeedback={selectFeedback}
             onDeleteFeedback={(id) => void removeFeedback(id)}
-            onScanNow={() => void scanWatchPoolNow()}
           />
         </aside>
       </section>
@@ -1047,30 +1066,7 @@ function Metric({ label, value, tone }: { label: string; value: React.ReactNode;
   );
 }
 
-function WatchPool({
-  items,
-  draft,
-  contractOptions,
-  editingId,
-  editorOpen,
-  onDraftChange,
-  onNew,
-  onSave,
-  onCancel,
-  onEdit,
-  onDelete,
-  onToggleEnabled,
-  onEnableAll,
-  onDisableAll,
-  onDownloadTemplate,
-  onImportFile,
-  importOpen,
-  onImportOpen,
-  onImportClose,
-  importResult,
-  importing,
-  togglePendingIds,
-}: {
+const WatchPool = React.forwardRef<HTMLElement, {
   items: WatchPoolItem[];
   draft: WatchPoolDraft;
   contractOptions: ContractSymbolOption[];
@@ -1093,7 +1089,34 @@ function WatchPool({
   importResult: WatchPoolImportResult | null;
   importing: boolean;
   togglePendingIds: Set<string>;
-}) {
+  onScanNow: () => void;
+  onFocusMessages: (item: WatchPoolItem) => void;
+}>(function WatchPool({
+  items,
+  draft,
+  contractOptions,
+  editingId,
+  editorOpen,
+  onDraftChange,
+  onNew,
+  onSave,
+  onCancel,
+  onEdit,
+  onDelete,
+  onToggleEnabled,
+  onEnableAll,
+  onDisableAll,
+  onDownloadTemplate,
+  onImportFile,
+  importOpen,
+  onImportOpen,
+  onImportClose,
+  importResult,
+  importing,
+  togglePendingIds,
+  onScanNow,
+  onFocusMessages,
+}, ref) {
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const groupedItems = [
@@ -1110,7 +1133,19 @@ function WatchPool({
   const renderPoolCard = (item: WatchPoolItem) => {
     const togglePending = togglePendingIds.has(item.id);
     return (
-    <article className="pool-card" key={item.id}>
+    <article
+      className="pool-card"
+      key={item.id}
+      onClick={() => onFocusMessages(item)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onFocusMessages(item);
+        }
+      }}
+    >
       <div className="pool-card-top">
         <div>
           <strong>{item.name}</strong>
@@ -1122,7 +1157,10 @@ function WatchPool({
           aria-label={item.enabled ? "关闭监控" : "开启监控"}
           aria-pressed={item.enabled}
           disabled={togglePending}
-          onClick={() => onToggleEnabled(item)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleEnabled(item);
+          }}
         >
           <span />
           {togglePending && <i aria-hidden="true" />}
@@ -1135,15 +1173,15 @@ function WatchPool({
         <span>创建 <b>{item.createdAt}</b></span>
       </div>
       <div className="row-actions">
-        <button type="button" onClick={() => onEdit(item)}>修改</button>
-        <button type="button" className="danger-button" onClick={() => onDelete(item.id)}>删除</button>
+        <button type="button" onClick={(event) => { event.stopPropagation(); onEdit(item); }}>修改</button>
+        <button type="button" className="danger-button" onClick={(event) => { event.stopPropagation(); onDelete(item.id); }}>删除</button>
       </div>
     </article>
   );
   };
 
   return (
-    <section className="result-panel pool-panel">
+    <section className="result-panel pool-panel" ref={ref}>
       <div className="pool-head">
         <div>
           <p className="eyebrow">Watch Pool</p>
@@ -1152,6 +1190,7 @@ function WatchPool({
         <div className="pool-head-actions">
           <AntButton className="compact-button" onClick={onEnableAll} disabled={items.length === 0 || allEnabled}>一键开启检测</AntButton>
           <AntButton className="compact-button muted-button" onClick={onDisableAll} disabled={items.length === 0 || allDisabled}>一键关闭检测</AntButton>
+          <AntButton className="compact-button" onClick={onScanNow} disabled={items.length === 0 || enabledCount === 0}>立即检测</AntButton>
           <AntButton className="compact-button" loading={importing} onClick={onImportOpen}>批量导入</AntButton>
           <span className="badge">{enabledCount} 个监控中</span>
           <AntButton className="compact-button" onClick={onNew}>新增品种</AntButton>
@@ -1389,7 +1428,7 @@ function WatchPool({
       )}
     </section>
   );
-}
+});
 
 function FeedbackTabs({
   activeTab,
@@ -1404,6 +1443,8 @@ function FeedbackTabs({
   onOpenAlertDetail,
   onHideAlert,
   onFeedbackAlert,
+  monitorScrollTargetSymbol,
+  onMonitorScrollComplete,
   onFocusCurrentSignal,
   onSelectCurrentSignal,
   onSelectFeedback,
@@ -1421,11 +1462,12 @@ function FeedbackTabs({
   onOpenAlertDetail: (alert: HeadShouldersAlertSummary) => void;
   onHideAlert: (alertId: string) => void;
   onFeedbackAlert: (alert: HeadShouldersAlertSummary) => void;
+  monitorScrollTargetSymbol: string | null;
+  onMonitorScrollComplete: () => void;
   onFocusCurrentSignal: (signal: Signal) => void;
   onSelectCurrentSignal: (signal: Signal) => void;
   onSelectFeedback: (feedback: AlertFeedback) => void;
   onDeleteFeedback: (id: string) => void;
-  onScanNow: () => void;
 }) {
   return (
     <section className="message-panel feedback-tabs-panel">
@@ -1448,6 +1490,8 @@ function FeedbackTabs({
           onOpenDetail={onOpenAlertDetail}
           onHide={onHideAlert}
           onFeedback={onFeedbackAlert}
+          targetSymbol={monitorScrollTargetSymbol}
+          onTargetHandled={onMonitorScrollComplete}
         />
       )}
       {activeTab === "current" && (
@@ -1477,6 +1521,8 @@ function MonitorAlertFeed({
   onOpenDetail,
   onHide,
   onFeedback,
+  targetSymbol,
+  onTargetHandled,
 }: {
   alerts: HeadShouldersAlertSummary[];
   selectedId: string | null;
@@ -1484,7 +1530,10 @@ function MonitorAlertFeed({
   onOpenDetail: (alert: HeadShouldersAlertSummary) => void;
   onHide: (alertId: string) => void;
   onFeedback: (alert: HeadShouldersAlertSummary) => void;
+  targetSymbol: string | null;
+  onTargetHandled: () => void;
 }) {
+  const groupRefs = useRef<Record<string, HTMLDetailsElement | null>>({});
   const groupedAlerts = useMemo(() => {
     const groups = new Map<string, HeadShouldersAlertSummary[]>();
     for (const alert of alerts) {
@@ -1503,12 +1552,34 @@ function MonitorAlertFeed({
     }));
   }, [alerts]);
 
+  useEffect(() => {
+    if (!targetSymbol) {
+      return;
+    }
+    const target = groupRefs.current[targetSymbol];
+    if (!target) {
+      return;
+    }
+    target.open = true;
+    window.setTimeout(() => {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      onTargetHandled();
+    }, 0);
+  }, [targetSymbol, groupedAlerts, onTargetHandled]);
+
   return (
     <div className="message-list monitor-message-list">
       {alerts.length === 0 ? (
         <p className="empty">&#26242;&#26080;&#30417;&#25511;&#28040;&#24687;&#12290;</p>
       ) : groupedAlerts.map((group) => (
-        <details className="message-tree-group" key={group.symbol} open>
+        <details
+          className="message-tree-group"
+          key={group.symbol}
+          open
+          ref={(element) => {
+            groupRefs.current[group.symbol] = element;
+          }}
+        >
           <summary className="message-tree-summary">
             <span className="message-tree-marker" aria-hidden="true" />
             <div>
@@ -1738,11 +1809,12 @@ function CurrentSignalFeed({
 }) {
   return (
     <>
-      <div className="message-list">
+      <div className="message-list current-signal-list monitor-message-list">
         {signals.length === 0 ? (
           <p className="empty">当前图暂无头肩顶结果。左侧直接搜索识别到的结果会显示在这里。</p>
         ) : signals.map((signal) => {
           const key = signalKey(signal);
+          const displayTime = signal.break_time ?? signal.retest_time ?? signal.right_shoulder.time;
           return (
             <article
               className={`message-item ${signal.confirmed ? "confirmed" : ""} ${selectedKey === key ? "selected" : ""}`}
@@ -1757,22 +1829,29 @@ function CurrentSignalFeed({
                 }
               }}
             >
-              <div>
-                <strong>{signal.symbol} / {signal.timeframe}</strong>
-                <span>{patternLabel(signal.pattern)} · {alertTypeLabel(signal.alert_type)}</span>
+              <div className="message-main monitor-message-main">
+                <div className="monitor-alert-tags">
+                  <span className={`monitor-tag timeframe-tag timeframe-${signal.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{signal.timeframe}</span>
+                  <span className={`monitor-tag pattern-tag ${signal.pattern}`}>{patternLabel(signal.pattern)}</span>
+                  <span className={`monitor-tag alert-tag ${signal.alert_type}`}>{alertTypeLabel(signal.alert_type)}</span>
+                  <span className="monitor-tag score-tag">{signal.score}</span>
+                </div>
+                <div className="monitor-message-footer">
+                  <div className="message-card-actions">
+                    <button
+                      type="button"
+                      className="message-detail-button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onSelect(signal);
+                      }}
+                    >
+                      详情
+                    </button>
+                  </div>
+                  <time>{formatTime(displayTime)}</time>
+                </div>
               </div>
-              <b>{signal.score}</b>
-              <small>{formatTime(signal.break_time ?? signal.retest_time ?? signal.right_shoulder.time)}</small>
-              <button
-                type="button"
-                className="message-detail-button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onSelect(signal);
-                }}
-              >
-                详情
-              </button>
             </article>
           );
         })}
