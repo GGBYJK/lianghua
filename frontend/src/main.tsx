@@ -2507,29 +2507,27 @@ function formatPrice(value: number) {
 }
 
 function formatTime(value: string) {
-  const date = parseBackendDate(value);
-  if (date) {
-    return formatDateInShanghai(date);
-  }
   return value.replace("T", " ").slice(0, 19);
 }
 
 function formatAlertTime(value: string) {
-  const date = parseBackendDate(value);
+  const date = parseBackendTimestamp(value);
   if (!date) {
     return formatTime(value);
   }
   return formatDateInShanghai(date);
 }
 
-function parseBackendDate(value: string) {
+function parseBackendTimestamp(value: string) {
   const trimmed = value.trim();
   if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(trimmed)) {
     return null;
   }
   const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(trimmed);
-  const normalized = hasTimezone ? trimmed : `${trimmed.replace(" ", "T")}Z`;
-  const date = new Date(normalized);
+  if (!hasTimezone) {
+    return null;
+  }
+  const date = new Date(trimmed);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
