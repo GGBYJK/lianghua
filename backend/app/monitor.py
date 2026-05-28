@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from typing import Any
 
@@ -46,10 +46,28 @@ def selected_trading_windows(trading_sessions: str | None = None) -> tuple[tuple
     return tuple(windows) or tuple(window for group in WATCH_POOL_TRADING_SESSIONS.values() for window in group)
 
 
+def current_trading_window(
+    now: datetime | None = None,
+    trading_sessions: str | None = None,
+) -> tuple[datetime, datetime] | None:
+    current = (now or datetime.now(WATCH_POOL_TIMEZONE)).astimezone(WATCH_POOL_TIMEZONE)
+    for start, end in selected_trading_windows(trading_sessions):
+        if start <= end:
+            start_at = datetime.combine(current.date(), start, tzinfo=WATCH_POOL_TIMEZONE)
+            end_at = datetime.combine(current.date(), end, tzinfo=WATCH_POOL_TIMEZONE)
+        elif current.time() >= start:
+            start_at = datetime.combine(current.date(), start, tzinfo=WATCH_POOL_TIMEZONE)
+            end_at = datetime.combine(current.date(), end, tzinfo=WATCH_POOL_TIMEZONE) + timedelta(days=1)
+        else:
+            start_at = datetime.combine(current.date(), start, tzinfo=WATCH_POOL_TIMEZONE) - timedelta(days=1)
+            end_at = datetime.combine(current.date(), end, tzinfo=WATCH_POOL_TIMEZONE)
+        if start_at <= current <= end_at:
+            return start_at.astimezone(ZoneInfo("UTC")), end_at.astimezone(ZoneInfo("UTC"))
+    return None
+
+
 def is_in_trading_session(now: datetime | None = None, trading_sessions: str | None = None) -> bool:
-    current = now or datetime.now(WATCH_POOL_TIMEZONE)
-    current_time = current.astimezone(WATCH_POOL_TIMEZONE).time()
-    return any(start <= current_time <= end for start, end in selected_trading_windows(trading_sessions))
+    return current_trading_window(now=now, trading_sessions=trading_sessions) is not None
 
 
 def build_signal_unique_key(signal: dict[str, Any]) -> str:
@@ -228,26 +246,47 @@ def signal_latest_detection_time(signal: dict[str, Any]) -> datetime | None:
     return max(times) if times else None
 
 
+def signal_emit_time(signal: dict[str, Any]) -> datetime | None:
+    return parse_signal_time(signal_notification_time(signal)) or signal_latest_detection_time(signal)
+
+
 def is_signal_from_current_watch_day(signal: dict[str, Any], now: datetime | None = None) -> bool:
-    latest_detection_time = signal_latest_detection_time(signal)
-    if latest_detection_time is None:
+    emit_time = signal_emit_time(signal)
+    if emit_time is None:
         return True
     current = now or datetime.now(WATCH_POOL_TIMEZONE)
-    signal_date = latest_detection_time.astimezone(WATCH_POOL_TIMEZONE).date()
+    signal_date = emit_time.astimezone(WATCH_POOL_TIMEZONE).date()
     current_date = current.astimezone(WATCH_POOL_TIMEZONE).date()
     return signal_date == current_date
+
+
+def is_signal_from_current_trading_window(
+    signal: dict[str, Any],
+    item: dict[str, Any],
+    now: datetime | None = None,
+) -> bool:
+    emit_time = signal_emit_time(signal)
+    if emit_time is None:
+        return True
+    window = current_trading_window(now=now, trading_sessions=item.get("trading_sessions"))
+    if window is None:
+        return False
+    start_at, end_at = window
+    return start_at <= emit_time <= end_at
 
 
 def should_emit_signal_for_item(signal: dict[str, Any], item: dict[str, Any], now: datetime | None = None) -> bool:
     if not is_signal_from_current_watch_day(signal, now=now):
         return False
+    if not is_signal_from_current_trading_window(signal, item, now=now):
+        return False
     monitor_started_at = parse_monitor_started_at(item.get("monitor_started_at"))
     if monitor_started_at is None:
         return True
-    latest_detection_time = signal_latest_detection_time(signal)
-    if latest_detection_time is None:
+    emit_time = signal_emit_time(signal)
+    if emit_time is None:
         return True
-    return latest_detection_time > monitor_started_at
+    return emit_time > monitor_started_at
 
 
 def scan_dataframe_payload(

@@ -308,6 +308,20 @@ def test_current_day_signal_is_emitted_on_current_watch_day() -> None:
     assert should_emit_signal_for_item(signal, item, now=datetime(2026, 5, 26, 14, 31, tzinfo=TZ))
 
 
+def test_day_session_signal_is_not_emitted_during_night_session() -> None:
+    item = {"monitor_started_at": "2026-05-27T00:00:00+00:00", "trading_sessions": "day,night"}
+    signal = make_signal(right_shoulder={"time": "2026-05-27T09:18:00"})
+
+    assert not should_emit_signal_for_item(signal, item, now=datetime(2026, 5, 27, 22, 31, tzinfo=TZ))
+
+
+def test_night_session_signal_is_emitted_during_night_session() -> None:
+    item = {"monitor_started_at": "2026-05-27T00:00:00+00:00", "trading_sessions": "day,night"}
+    signal = make_signal(right_shoulder={"time": "2026-05-27T22:09:00"})
+
+    assert should_emit_signal_for_item(signal, item, now=datetime(2026, 5, 27, 22, 31, tzinfo=TZ))
+
+
 def test_wechat_workbot_content_includes_core_signal_fields() -> None:
     signal = {
         "symbol": "c0",
