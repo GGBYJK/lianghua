@@ -3137,7 +3137,31 @@ button:hover:not(:disabled) {
 }
 
 .pool-group-head {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
   border-bottom: 1px solid var(--line-soft);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.pool-group-head::-webkit-details-marker {
+  display: none;
+}
+
+.pool-group:not([open]) {
+  gap: 0;
+}
+
+.pool-group[open] > .pool-group-head .message-tree-marker {
+  transform: rotate(90deg);
+}
+
+.pool-group-body {
+  display: grid;
+  gap: 10px;
 }
 
 .pool-card-grid {

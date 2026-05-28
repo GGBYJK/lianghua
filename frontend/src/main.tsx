@@ -1198,16 +1198,19 @@ const WatchPool = React.forwardRef<HTMLElement, {
       </div>
       <div className="pool-groups" aria-label="品种检测池子">
         {groupedItems.map((group) => (
-          <section className="pool-group" key={group.key}>
-            <div className="pool-group-head">
+          <details className="pool-group" key={group.key} open>
+            <summary className="pool-group-head">
+              <span className="message-tree-marker" aria-hidden="true" />
               <h3>{group.title}</h3>
               <span>{group.items.length} 个</span>
-            </div>
-            <div className="pool-card-grid">
-              {group.items.map(renderPoolCard)}
-            </div>
+            </summary>
+            <div className="pool-group-body">
+              <div className="pool-card-grid">
+                {group.items.map(renderPoolCard)}
+              </div>
             {group.items.length === 0 && <p className="empty pool-group-empty">暂无{group.title}品种。</p>}
-          </section>
+            </div>
+          </details>
         ))}
       </div>
       {items.length === 0 && <p className="empty">暂无检测品种，点击“新增品种”创建监控项。</p>}
