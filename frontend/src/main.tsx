@@ -1198,7 +1198,7 @@ const WatchPool = React.forwardRef<HTMLElement, {
       </div>
       <div className="pool-groups" aria-label="品种检测池子">
         {groupedItems.map((group) => (
-          <details className="pool-group" key={group.key} open>
+          <details className="pool-group" key={group.key}>
             <summary className="pool-group-head">
               <span className="message-tree-marker" aria-hidden="true" />
               <h3>{group.title}</h3>
