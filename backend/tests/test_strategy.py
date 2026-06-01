@@ -80,16 +80,19 @@ def test_config_merge_override() -> None:
     assert config.min_score_to_alert == 65
 
 
-def test_one_minute_config_enables_strict_shape_rules() -> None:
+def test_five_minute_config_also_enables_strict_shape_rules() -> None:
     config_1m = load_head_shoulder_config("rb2405", "1m")
     config_5m = load_head_shoulder_config("rb2405", "5m")
+    config_15m = load_head_shoulder_config("rb2405", "15m")
 
     assert config_1m.require_head_beyond_shoulders_and_necks is True
     assert config_1m.require_shoulders_between_opposite_neck_and_head is True
     assert config_1m.min_shoulder_to_neck_height == 4
-    assert config_5m.require_head_beyond_shoulders_and_necks is False
-    assert config_5m.require_shoulders_between_opposite_neck_and_head is False
+    assert config_5m.require_head_beyond_shoulders_and_necks is True
+    assert config_5m.require_shoulders_between_opposite_neck_and_head is True
     assert config_5m.min_shoulder_to_neck_height == 0
+    assert config_15m.require_head_beyond_shoulders_and_necks is False
+    assert config_15m.require_shoulders_between_opposite_neck_and_head is False
 
 
 def test_infoway_kline_payload_normalizes_to_dataframe() -> None:

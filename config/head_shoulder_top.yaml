@@ -49,6 +49,8 @@ timeframes:
   5m:
     pivot_left: 3
     pivot_right: 3
+    require_head_beyond_shoulders_and_necks: true
+    require_shoulders_between_opposite_neck_and_head: true
     macd_price_new_high_pct: 0.0005
     max_signal_age_bars: 150
     min_score_to_alert: 70
