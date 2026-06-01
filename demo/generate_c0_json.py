@@ -105,6 +105,7 @@ def fetch_tqsdk_kline(symbol: str, period: str, limit: int, timeout: float) -> p
 
     duration_map = {
         "1m": 60,
+        "3m": 180,
         "5m": 300,
         "15m": 900,
         "30m": 1800,

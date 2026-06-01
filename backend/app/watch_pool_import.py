@@ -8,7 +8,7 @@ from openpyxl import load_workbook
 
 
 EXPECTED_HEADERS = ["品种名称", "监控品种", "监控周期", "检测时长", "头部到颈线最小高度", "交易时间段", "监控开关"]
-ALLOWED_TIMEFRAMES = {"1m", "5m", "15m", "30m", "60m", "1h"}
+ALLOWED_TIMEFRAMES = {"1m", "3m", "5m", "15m", "30m", "60m", "1h"}
 DEFAULT_TRADING_SESSIONS = "day,night"
 
 
@@ -67,7 +67,7 @@ def parse_watch_pool_excel(content: bytes, contract_lookup: dict[str, str]) -> t
         elif symbol not in normalized_contracts:
             row_errors.append(ImportIssue(index, "监控品种必须存在于合约中心", symbol, timeframe or None, "监控品种"))
         if timeframe not in ALLOWED_TIMEFRAMES:
-            row_errors.append(ImportIssue(index, "监控周期必须是 1m、5m、15m、30m、60m 或 1h", symbol or None, timeframe or None, "监控周期"))
+            row_errors.append(ImportIssue(index, "监控周期必须是 1m、3m、5m、15m、30m、60m 或 1h", symbol or None, timeframe or None, "监控周期"))
 
         monitor_minutes = parse_int(raw.get("检测时长"), default=30)
         if monitor_minutes is None or monitor_minutes < 1 or monitor_minutes > 1440:

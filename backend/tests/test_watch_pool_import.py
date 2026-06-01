@@ -23,6 +23,7 @@ def make_workbook(rows: list[list[object]]) -> bytes:
 def test_parse_watch_pool_excel_validates_rows() -> None:
     content = make_workbook([
         ["螺纹钢", "SHFE.rb2605", "1m", 30, 0, "day,night", "开启"],
+        ["热卷", "SHFE.hc2610", "3m", 60, 8, "day", "开启"],
         ["不存在", "SHFE.nope2605", "1m", 30, 0, "day", "开启"],
         ["热卷", "SHFE.hc2610", "1d", 30, 0, "day", "开启"],
         ["热卷", "SHFE.hc2610", "5m", 0, -1, "bad", "maybe"],
@@ -30,7 +31,7 @@ def test_parse_watch_pool_excel_validates_rows() -> None:
 
     items, errors = parse_watch_pool_excel(content, {"SHFE.rb2605": "螺纹钢", "SHFE.hc2610": "热卷"})
 
-    assert [item["symbol"] for item in items] == ["SHFE.rb2605"]
+    assert [(item["symbol"], item["timeframe"]) for item in items] == [("SHFE.rb2605", "1m"), ("SHFE.hc2610", "3m")]
     assert any(error.field == "监控品种" for error in errors)
     assert any(error.field == "监控周期" for error in errors)
     assert any(error.field == "检测时长" for error in errors)
@@ -44,7 +45,7 @@ def test_import_watch_pool_skips_existing_and_creates_new(monkeypatch) -> None:
 
     content = make_workbook([
         ["螺纹钢", "SHFE.rb2605", "1m", 30, 0, "day,night", "开启"],
-        ["热卷", "SHFE.hc2610", "5m", 60, 8, "day", "开启"],
+        ["热卷", "SHFE.hc2610", "3m", 60, 8, "day", "开启"],
     ])
     created: list[dict[str, object]] = []
 
@@ -83,6 +84,7 @@ def test_import_watch_pool_skips_existing_and_creates_new(monkeypatch) -> None:
     assert body["failed"] == 0
     assert body["duplicates"][0]["symbol"] == "SHFE.rb2605"
     assert created[0]["symbol"] == "SHFE.hc2610"
+    assert created[0]["timeframe"] == "3m"
 
 
 def test_import_watch_pool_rejects_non_xlsx() -> None:

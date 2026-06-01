@@ -5303,6 +5303,11 @@ button:disabled {
   color: #0b5cab;
 }
 
+.timeframe-3m {
+  background: #edf9f7;
+  color: #087565;
+}
+
 .timeframe-5m {
   background: #f1f8ec;
   color: #2f6b16;

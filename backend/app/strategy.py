@@ -8,6 +8,7 @@ import pandas as pd
 
 MAX_HEAD_NECK_BARS_BY_TIMEFRAME = {
     "1m": 60,
+    "3m": 60,
     "5m": 60,
 }
 

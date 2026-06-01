@@ -512,6 +512,7 @@ def is_listed_futures_contract(contract: Any) -> bool:
 def normalize_tqsdk_period(period: str) -> int:
     mapping = {
         "1m": 60,
+        "3m": 180,
         "5m": 300,
         "15m": 900,
         "30m": 1800,
@@ -705,7 +706,7 @@ def _fetch_kline_from_tushare_market_sync(symbol: str, period: str, limit: int =
     pro = get_tushare_pro()
     ts_code = normalize_tushare_symbol(symbol)
     try:
-        if period in {"1m", "5m", "15m", "30m", "60m", "1h"}:
+        if period in {"1m", "3m", "5m", "15m", "30m", "60m", "1h"}:
             df = fetch_tushare_minute_kline(pro, ts_code, period, limit)
             if df is not None and not df.empty:
                 return tushare_dataframe_to_kline(df)
@@ -729,7 +730,7 @@ def fetch_tushare_daily_kline(pro: Any, ts_code: str, limit: int) -> pd.DataFram
 
 
 def fetch_tushare_minute_kline(pro: Any, ts_code: str, period: str, limit: int) -> pd.DataFrame | None:
-    freq_map = {"1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min", "60m": "60min", "1h": "60min"}
+    freq_map = {"1m": "1min", "3m": "3min", "5m": "5min", "15m": "15min", "30m": "30min", "60m": "60min", "1h": "60min"}
     freq = freq_map.get(period)
     if freq is None:
         return None
@@ -997,6 +998,7 @@ def normalize_period(period: str) -> int | str:
 def normalize_aliyun_period(period: str) -> str:
     mapping = {
         "1m": "1",
+        "3m": "3",
         "5m": "5",
         "15m": "15",
         "30m": "30",

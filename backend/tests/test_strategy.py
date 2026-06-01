@@ -82,12 +82,16 @@ def test_config_merge_override() -> None:
 
 def test_five_minute_config_also_enables_strict_shape_rules() -> None:
     config_1m = load_head_shoulder_config("rb2405", "1m")
+    config_3m = load_head_shoulder_config("rb2405", "3m")
     config_5m = load_head_shoulder_config("rb2405", "5m")
     config_15m = load_head_shoulder_config("rb2405", "15m")
 
     assert config_1m.require_head_beyond_shoulders_and_necks is True
     assert config_1m.require_shoulders_between_opposite_neck_and_head is True
     assert config_1m.min_shoulder_to_neck_height == 4
+    assert config_3m.require_head_beyond_shoulders_and_necks is True
+    assert config_3m.require_shoulders_between_opposite_neck_and_head is True
+    assert config_3m.min_shoulder_to_neck_height == 0
     assert config_5m.require_head_beyond_shoulders_and_necks is True
     assert config_5m.require_shoulders_between_opposite_neck_and_head is True
     assert config_5m.min_shoulder_to_neck_height == 0
@@ -114,12 +118,14 @@ def test_infoway_kline_payload_normalizes_to_dataframe() -> None:
 
 def test_infoway_period_mapping() -> None:
     assert normalize_period("1m") == 1
+    assert normalize_period("3m") == "3m"
     assert normalize_period("5m") == 2
     assert normalize_period("1h") == 5
     assert normalize_period("1d") == 8
 
 
 def test_aliyun_period_mapping_and_symbol_hints() -> None:
+    assert normalize_aliyun_period("3m") == "3"
     assert normalize_aliyun_period("1h") == "60"
     assert normalize_aliyun_period("1d") == "day"
     hints = aliyun_symbol_hints("c0")
@@ -127,6 +133,7 @@ def test_aliyun_period_mapping_and_symbol_hints() -> None:
 
 
 def test_tqsdk_period_mapping_symbol_hints_and_dataframe() -> None:
+    assert normalize_tqsdk_period("3m") == 180
     assert normalize_tqsdk_period("1h") == 3600
     assert normalize_tqsdk_period("1d") == 86400
     assert normalize_tqsdk_symbol("c0") == "KQ.m@DCE.c"
@@ -451,6 +458,19 @@ def test_five_minute_head_neck_bar_limit_applies_to_top_and_inverse_patterns() -
     assert not passes_head_neck_bar_limit("5m", left_neck, head_allowed, right_neck_too_far)
 
 
+def test_three_minute_head_neck_bar_limit_applies_to_top_and_inverse_patterns() -> None:
+    times = pd.date_range("2026-05-25 09:00:00", periods=130, freq="3min")
+    left_neck = PivotPoint(10, times[10], 100, "low")
+    head_allowed = PivotPoint(69, times[69], 110, "high")
+    right_neck_allowed = PivotPoint(128, times[128], 100, "low")
+    head_left_too_far = PivotPoint(70, times[70], 110, "high")
+    right_neck_too_far = PivotPoint(129, times[129], 100, "low")
+
+    assert passes_head_neck_bar_limit("3m", left_neck, head_allowed, right_neck_allowed)
+    assert not passes_head_neck_bar_limit("3m", left_neck, head_left_too_far, right_neck_allowed)
+    assert not passes_head_neck_bar_limit("3m", left_neck, head_allowed, right_neck_too_far)
+
+
 def test_one_minute_top_scan_filters_candidates_with_wide_head_neck_distance(monkeypatch) -> None:
     times = pd.date_range("2026-05-25 09:00:00", periods=130, freq="min")
     candidate = (
@@ -549,6 +569,56 @@ def test_five_minute_inverse_scan_filters_candidates_with_wide_head_neck_distanc
     monkeypatch.setattr(strategy_module, "iter_pattern_candidates", lambda *_args, **_kwargs: [candidate])
 
     assert scan_inverse_head_shoulders(df, "a2607", "5m", HeadShoulderTopConfig()) == []
+
+
+def test_three_minute_top_scan_filters_candidates_with_wide_head_neck_distance(monkeypatch) -> None:
+    times = pd.date_range("2026-05-25 09:00:00", periods=130, freq="3min")
+    candidate = (
+        PivotPoint(0, times[0], 100, "high"),
+        PivotPoint(10, times[10], 90, "low"),
+        PivotPoint(70, times[70], 110, "high"),
+        PivotPoint(80, times[80], 90, "low"),
+        PivotPoint(90, times[90], 100, "high"),
+    )
+    df = pd.DataFrame({
+        "datetime": times,
+        "open": [100] * len(times),
+        "high": [101] * len(times),
+        "low": [99] * len(times),
+        "close": [100] * len(times),
+        "volume": [1000] * len(times),
+    })
+
+    monkeypatch.setattr(strategy_module, "find_pivots", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(strategy_module, "compress_pivots", lambda pivots: pivots)
+    monkeypatch.setattr(strategy_module, "iter_pattern_candidates", lambda *_args, **_kwargs: [candidate])
+
+    assert scan_head_shoulders_top(df, "a2607", "3m", HeadShoulderTopConfig()) == []
+
+
+def test_three_minute_inverse_scan_filters_candidates_with_wide_head_neck_distance(monkeypatch) -> None:
+    times = pd.date_range("2026-05-25 09:00:00", periods=130, freq="3min")
+    candidate = (
+        PivotPoint(0, times[0], 100, "low"),
+        PivotPoint(10, times[10], 110, "high"),
+        PivotPoint(70, times[70], 90, "low"),
+        PivotPoint(80, times[80], 110, "high"),
+        PivotPoint(90, times[90], 100, "low"),
+    )
+    df = pd.DataFrame({
+        "datetime": times,
+        "open": [100] * len(times),
+        "high": [101] * len(times),
+        "low": [99] * len(times),
+        "close": [100] * len(times),
+        "volume": [1000] * len(times),
+    })
+
+    monkeypatch.setattr(strategy_module, "find_pivots", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(strategy_module, "compress_pivots", lambda pivots: pivots)
+    monkeypatch.setattr(strategy_module, "iter_pattern_candidates", lambda *_args, **_kwargs: [candidate])
+
+    assert scan_inverse_head_shoulders(df, "a2607", "3m", HeadShoulderTopConfig()) == []
 
 
 def test_mirrored_sample_finds_confirmed_inverse_signal() -> None:

@@ -77,6 +77,7 @@ const EMPTY_NECKLINES: Neckline[] = [];
 const DEFAULT_TRADING_SESSIONS = "day,night";
 const TIMEFRAME_OPTIONS = [
   { value: "1m", label: "1分钟" },
+  { value: "3m", label: "3分钟" },
   { value: "5m", label: "5分钟" },
   { value: "15m", label: "15分钟" },
   { value: "30m", label: "30分钟" },
@@ -155,7 +156,7 @@ type ContractSymbolOption = {
 const watchPoolImportDemo = [
   ["品种名称", "监控品种", "监控周期", "检测时长", "头部到颈线最小高度", "交易时间段", "监控开关"],
   ["螺纹钢", "SHFE.rb2605", "1m", "30", "0", "day,night", "开启"],
-  ["热卷", "SHFE.hc2610", "5m", "60", "8", "day", "开启"],
+  ["热卷", "SHFE.hc2610", "3m", "60", "8", "day", "开启"],
 ];
 
 const tradingSessionOptions: Array<{ key: TradingSessionKey; label: string; range: string }> = [
@@ -1121,8 +1122,9 @@ const WatchPool = React.forwardRef<HTMLElement, {
   const [dragActive, setDragActive] = useState(false);
   const groupedItems = [
     { key: "1m", title: "1分钟检测池", items: items.filter((item) => item.timeframe === "1m") },
+    { key: "3m", title: "3分钟检测池", items: items.filter((item) => item.timeframe === "3m") },
     { key: "5m", title: "5分钟检测池", items: items.filter((item) => item.timeframe === "5m") },
-    { key: "other", title: "其他检测池", items: items.filter((item) => item.timeframe !== "1m" && item.timeframe !== "5m") },
+    { key: "other", title: "其他检测池", items: items.filter((item) => item.timeframe !== "1m" && item.timeframe !== "3m" && item.timeframe !== "5m") },
   ];
   const enabledCount = items.filter((item) => item.enabled).length;
   const allEnabled = items.length > 0 && enabledCount === items.length;
