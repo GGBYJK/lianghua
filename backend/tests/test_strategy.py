@@ -695,7 +695,7 @@ def test_combined_scan_includes_inverse_pattern() -> None:
 def test_bearish_ma_trend_score_uses_new_fifty_point_system() -> None:
     closes = [180 - i * 0.2 for i in range(40)] + [172 - (i - 39) * 3 for i in range(40, 80)]
     df = pd.DataFrame({
-        "datetime": pd.date_range("2026-06-01 09:00:00", periods=80, freq="min"),
+        "datetime": pd.date_range("2026-03-14 09:00:00", periods=80, freq="h"),
         "open": closes,
         "high": [close + 1 for close in closes],
         "low": [close - 1 for close in closes],
@@ -730,14 +730,39 @@ def test_bullish_ma_trend_score_uses_new_fifty_point_system() -> None:
     assert any("Close above MA60 confirmation: 5.0/5" in reason for reason in reasons)
 
 
-def test_combined_trend_score_adds_current_and_daily_scores_to_one_hundred() -> None:
-    intraday_closes = [180 - i * 0.2 for i in range(40)] + [172 - (i - 39) * 3 for i in range(40, 80)]
-    intraday = pd.DataFrame({
+def test_bullish_ma_slope_score_uses_ma20_and_ma60() -> None:
+    df = pd.DataFrame({
+        "datetime": pd.date_range("2026-06-01 09:00:00", periods=80, freq="h"),
+        "open": [100] * 80,
+        "high": [101] * 80,
+        "low": [99] * 80,
+        "close": [100] * 80,
+        "volume": [1000] * 80,
+    })
+    for period in [5, 10, 20, 30, 60]:
+        df[f"ma{period}"] = 100.0
+    index = len(df) - 1
+    df.loc[index - 5, "ma20"] = 98.0
+    df.loc[index, "ma20"] = 99.0
+    df.loc[index - 5, "ma60"] = 96.0
+    df.loc[index, "ma60"] = 97.0
+    df.loc[index - 5, "ma10"] = 120.0
+    df.loc[index, "ma10"] = 110.0
+
+    score, reasons = calculate_ma_trend_score(df, index, bullish=True)
+
+    assert any("MA20/MA60 slope target up" in reason and "10.0/10" in reason for reason in reasons)
+    assert score > 0
+
+
+def test_combined_trend_score_adds_hourly_and_daily_scores_to_one_hundred() -> None:
+    hourly_closes = [180 - i * 0.2 for i in range(40)] + [172 - (i - 39) * 3 for i in range(40, 80)]
+    hourly = pd.DataFrame({
         "datetime": pd.date_range("2026-06-01 09:00:00", periods=80, freq="min"),
-        "open": intraday_closes,
-        "high": [close + 1 for close in intraday_closes],
-        "low": [close - 1 for close in intraday_closes],
-        "close": intraday_closes,
+        "open": hourly_closes,
+        "high": [close + 1 for close in hourly_closes],
+        "low": [close - 1 for close in hourly_closes],
+        "close": hourly_closes,
         "volume": [1000] * 80,
     })
     daily_closes = [180 - i * 0.2 for i in range(40)] + [172 - (i - 39) * 3 for i in range(40, 80)]
@@ -749,19 +774,16 @@ def test_combined_trend_score_adds_current_and_daily_scores_to_one_hundred() -> 
         "close": daily_closes,
         "volume": [1000] * 80,
     })
-    config = HeadShoulderTopConfig()
-    intraday = strategy_module.add_ma_columns(intraday, config)
 
     score, reasons = calculate_combined_trend_score(
-        intraday,
-        len(intraday) - 1,
+        hourly,
         bullish=False,
+        signal_time=hourly["datetime"].iloc[-1],
         daily_df=daily,
-        signal_time=intraday["datetime"].iloc[-1],
     )
 
     assert score == 100
-    assert "Current timeframe score: 50/50" in reasons
+    assert "Hourly timeframe score: 50/50" in reasons
     assert "Daily timeframe score: 50/50" in reasons
 
 
@@ -1396,4 +1418,5 @@ def test_market_scan_fetches_daily_klines_for_combined_score(monkeypatch) -> Non
 
     assert response.status_code == 200
     assert ("5m", 120) in calls
+    assert ("1h", 120) in calls
     assert ("1d", 120) in calls

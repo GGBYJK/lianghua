@@ -239,25 +239,35 @@ def _ma_slope_score(df: pd.DataFrame, index: int, bullish: bool) -> tuple[float,
 
     row = df.loc[index]
     prev = df.loc[index - lookback]
-    ma10 = _safe_float(row.get("ma10"))
-    ma20 = _safe_float(row.get("ma20"))
-    prev_ma10 = _safe_float(prev.get("ma10"))
-    prev_ma20 = _safe_float(prev.get("ma20"))
-    if ma10 is None or ma20 is None or prev_ma10 is None or prev_ma20 is None:
-        return 0.0, "MA10/MA20 slope data is insufficient: 0/10"
+    periods = (20, 60) if bullish else (10, 20)
+    current = [_safe_float(row.get(f"ma{period}")) for period in periods]
+    previous = [_safe_float(prev.get(f"ma{period}")) for period in periods]
+    if any(value is None for value in [*current, *previous]):
+        period_names = "/".join(f"MA{period}" for period in periods)
+        return 0.0, f"{period_names} slope data is insufficient: 0/10"
 
-    ma10_ok = ma10 > prev_ma10 if bullish else ma10 < prev_ma10
-    ma20_ok = ma20 > prev_ma20 if bullish else ma20 < prev_ma20
-    if ma10_ok and ma20_ok:
+    first_current, second_current = current
+    first_previous, second_previous = previous
+    assert first_current is not None and second_current is not None
+    assert first_previous is not None and second_previous is not None
+    first_ok = first_current > first_previous if bullish else first_current < first_previous
+    second_ok = second_current > second_previous if bullish else second_current < second_previous
+    first_opposed = first_current < first_previous if bullish else first_current > first_previous
+    second_opposed = second_current < second_previous if bullish else second_current > second_previous
+
+    if first_ok and second_ok:
         score = 10.0
-    elif ma10_ok:
-        score = 7.5
-    elif ma20_ok:
+    elif first_ok:
+        score = 7.5 if bullish else 5.0
+    elif second_ok:
+        score = 5.0 if bullish else 7.5
+    elif not first_opposed and not second_opposed:
         score = 5.0
     else:
         score = 0.0
     direction = "up" if bullish else "down"
-    return score, f"MA10/MA20 slope target {direction}, lookback {lookback}: {score:.1f}/10"
+    period_names = "/".join(f"MA{period}" for period in periods)
+    return score, f"{period_names} slope target {direction}, lookback {lookback}: {score:.1f}/10"
 
 
 def _price_location_score(row: pd.Series, values: dict[int, float], bullish: bool) -> tuple[float, str]:
@@ -304,15 +314,18 @@ def _ma_bandwidth_score(df: pd.DataFrame, index: int, values: dict[int, float], 
     if target_aligned and expanding:
         score = 10.0
         state = "target trend expanding"
+    elif target_aligned and not expanding:
+        score = 5.0
+        state = "target trend narrowing"
     elif opposite_aligned and expanding:
         score = 0.0
         state = "opposite trend expanding"
-    elif not expanding:
-        score = 5.0
-        state = "bandwidth narrowing"
+    elif opposite_aligned and not expanding:
+        score = 2.5
+        state = "opposite trend narrowing"
     else:
         score = 5.0
-        state = "mixed trend expanding"
+        state = "mixed trend"
     return score, f"MA bandwidth {state}: {score:.1f}/10"
 
 
@@ -344,45 +357,47 @@ def calculate_ma_trend_score(df: pd.DataFrame, index: int, bullish: bool) -> tup
     total += ma60_score
 
     return int(round(total)), reasons
-
-
-def _daily_score_index(daily_df: pd.DataFrame, signal_time: pd.Timestamp) -> int | None:
-    if len(daily_df) == 0:
+def _timeframe_score_index(score_df: pd.DataFrame, signal_time: pd.Timestamp) -> int | None:
+    if len(score_df) == 0:
         return None
-    datetimes = pd.to_datetime(daily_df["datetime"])
-    matching = daily_df.index[datetimes <= signal_time]
+    datetimes = pd.to_datetime(score_df["datetime"])
+    matching = score_df.index[datetimes <= signal_time]
     if len(matching) == 0:
         return None
     return int(matching[-1])
 
 
-def calculate_combined_trend_score(
-    intraday_df: pd.DataFrame,
-    intraday_index: int,
+def _prepare_ma_score_df(df: pd.DataFrame) -> pd.DataFrame:
+    score_df = df.copy().reset_index(drop=True)
+    score_df["datetime"] = pd.to_datetime(score_df["datetime"])
+    return add_ma_columns(score_df, HeadShoulderTopConfig())
+
+
+def _score_named_timeframe(
+    df: pd.DataFrame | None,
+    name: str,
     bullish: bool,
-    daily_df: pd.DataFrame | None = None,
-    signal_time: pd.Timestamp | None = None,
+    signal_time: pd.Timestamp | None,
 ) -> tuple[int, list[str]]:
-    intraday_score, intraday_reasons = calculate_ma_trend_score(intraday_df, intraday_index, bullish=bullish)
-    reasons = [f"Current timeframe score: {intraday_score}/50", *intraday_reasons]
-    total = intraday_score
+    if df is None:
+        return 0, [f"{name} timeframe score unavailable: 0/50"]
+    score_df = _prepare_ma_score_df(df)
+    score_index = len(score_df) - 1 if signal_time is None else _timeframe_score_index(score_df, signal_time)
+    if score_index is None:
+        return 0, [f"{name} timeframe has no bar at or before signal time: 0/50"]
+    score, reasons = calculate_ma_trend_score(score_df, score_index, bullish=bullish)
+    return score, [f"{name} timeframe score: {score}/50", *reasons]
 
-    if daily_df is None:
-        reasons.append("Daily timeframe score unavailable: 0/50")
-        return total, reasons
 
-    daily = daily_df.copy().reset_index(drop=True)
-    daily["datetime"] = pd.to_datetime(daily["datetime"])
-    daily = add_ma_columns(daily, HeadShoulderTopConfig())
-    daily_index = len(daily) - 1 if signal_time is None else _daily_score_index(daily, signal_time)
-    if daily_index is None:
-        reasons.append("Daily timeframe has no bar at or before signal time: 0/50")
-        return total, reasons
-
-    daily_score, daily_reasons = calculate_ma_trend_score(daily, daily_index, bullish=bullish)
-    total += daily_score
-    reasons.extend([f"Daily timeframe score: {daily_score}/50", *daily_reasons])
-    return total, reasons
+def calculate_combined_trend_score(
+    hourly_df: pd.DataFrame | None,
+    bullish: bool,
+    signal_time: pd.Timestamp | None = None,
+    daily_df: pd.DataFrame | None = None,
+) -> tuple[int, list[str]]:
+    hourly_score, hourly_reasons = _score_named_timeframe(hourly_df, "Hourly", bullish, signal_time)
+    daily_score, daily_reasons = _score_named_timeframe(daily_df, "Daily", bullish, signal_time)
+    return hourly_score + daily_score, [*hourly_reasons, *daily_reasons]
 
 
 def passes_head_neck_bar_limit(
@@ -831,6 +846,7 @@ def scan_head_shoulders_top(
     symbol: str,
     timeframe: str,
     config: HeadShoulderTopConfig,
+    hourly_df: pd.DataFrame | None = None,
     daily_df: pd.DataFrame | None = None,
 ) -> list[HeadShoulderTopSignal]:
     df = df.copy().reset_index(drop=True)
@@ -850,11 +866,10 @@ def scan_head_shoulders_top(
         if not ok:
             continue
         trend_score, trend_reasons = calculate_combined_trend_score(
-            df,
-            p5.index,
+            hourly_df,
             bullish=False,
-            daily_df=daily_df,
             signal_time=p5.time,
+            daily_df=daily_df,
         )
         total_score += trend_score
         reasons.extend(trend_reasons)
@@ -925,6 +940,7 @@ def scan_inverse_head_shoulders(
     symbol: str,
     timeframe: str,
     config: HeadShoulderTopConfig,
+    hourly_df: pd.DataFrame | None = None,
     daily_df: pd.DataFrame | None = None,
 ) -> list[HeadShoulderTopSignal]:
     df = df.copy().reset_index(drop=True)
@@ -940,11 +956,10 @@ def scan_inverse_head_shoulders(
         if not ok:
             continue
         trend_score, trend_reasons = calculate_combined_trend_score(
-            df,
-            p5.index,
+            hourly_df,
             bullish=True,
-            daily_df=daily_df,
             signal_time=p5.time,
+            daily_df=daily_df,
         )
         total_score += trend_score
         reasons.extend(trend_reasons)
@@ -1110,10 +1125,11 @@ def scan_head_shoulders(
     symbol: str,
     timeframe: str,
     config: HeadShoulderTopConfig,
+    hourly_df: pd.DataFrame | None = None,
     daily_df: pd.DataFrame | None = None,
 ) -> list[HeadShoulderTopSignal]:
-    signals = scan_head_shoulders_top(df, symbol=symbol, timeframe=timeframe, config=config, daily_df=daily_df)
-    signals.extend(scan_inverse_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config, daily_df=daily_df))
+    signals = scan_head_shoulders_top(df, symbol=symbol, timeframe=timeframe, config=config, hourly_df=hourly_df, daily_df=daily_df)
+    signals.extend(scan_inverse_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config, hourly_df=hourly_df, daily_df=daily_df))
     if config.max_signal_age_bars > 0:
         min_right_shoulder_index = max(0, len(df) - config.max_signal_age_bars)
         signals = [

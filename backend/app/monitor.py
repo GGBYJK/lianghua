@@ -294,15 +294,19 @@ def scan_dataframe_payload(
     symbol: str,
     timeframe: str,
     config_overrides: dict[str, Any] | None = None,
+    hourly_df: pd.DataFrame | None = None,
     daily_df: pd.DataFrame | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     df = df.copy().reset_index(drop=True)
     df["datetime"] = pd.to_datetime(df["datetime"])
+    if hourly_df is not None:
+        hourly_df = hourly_df.copy().reset_index(drop=True)
+        hourly_df["datetime"] = pd.to_datetime(hourly_df["datetime"])
     if daily_df is not None:
         daily_df = daily_df.copy().reset_index(drop=True)
         daily_df["datetime"] = pd.to_datetime(daily_df["datetime"])
     config = load_head_shoulder_config(symbol=symbol, timeframe=timeframe, overrides=config_overrides)
-    signals = scan_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config, daily_df=daily_df)
+    signals = scan_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config, hourly_df=hourly_df, daily_df=daily_df)
     enriched_df = add_macd_columns(add_ma_columns(df, config), config)
     pivots = find_pivots(enriched_df, left=config.pivot_left, right=config.pivot_right)
     chart = prepare_chart_payload(enriched_df, pivots, signals, config)
@@ -317,8 +321,9 @@ async def scan_watch_pool_once(limit: int = 420) -> int:
     for item in items:
         try:
             scanned += 1
-            df, daily_df = await asyncio.gather(
+            df, hourly_df, daily_df = await asyncio.gather(
                 fetch_kline_from_market(symbol=item["symbol"], period=item["timeframe"], limit=limit),
+                fetch_kline_from_market(symbol=item["symbol"], period="1h", limit=max(80, min(limit, 240))),
                 fetch_kline_from_market(symbol=item["symbol"], period="1d", limit=max(80, min(limit, 240))),
             )
             config_overrides = {}
@@ -329,6 +334,7 @@ async def scan_watch_pool_once(limit: int = 420) -> int:
                 symbol=item["symbol"],
                 timeframe=item["timeframe"],
                 config_overrides=config_overrides or None,
+                hourly_df=hourly_df,
                 daily_df=daily_df,
             )
             for signal in signals:
@@ -412,8 +418,9 @@ async def monitor_watch_pool_loop(stop_event: asyncio.Event) -> None:
                         item["timeframe"],
                         interval,
                     )
-                    df, daily_df = await asyncio.gather(
+                    df, hourly_df, daily_df = await asyncio.gather(
                         fetch_kline_from_market(symbol=item["symbol"], period=item["timeframe"], limit=kline_limit),
+                        fetch_kline_from_market(symbol=item["symbol"], period="1h", limit=max(80, min(kline_limit, 240))),
                         fetch_kline_from_market(symbol=item["symbol"], period="1d", limit=max(80, min(kline_limit, 240))),
                     )
                     config_overrides = {}
@@ -424,6 +431,7 @@ async def monitor_watch_pool_loop(stop_event: asyncio.Event) -> None:
                         symbol=item["symbol"],
                         timeframe=item["timeframe"],
                         config_overrides=config_overrides or None,
+                        hourly_df=hourly_df,
                         daily_df=daily_df,
                     )
                     inserted_for_item = 0
