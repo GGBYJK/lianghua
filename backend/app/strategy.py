@@ -187,6 +187,204 @@ def min_head_to_neck_height_by_price(head_price: float) -> float:
     return 10
 
 
+def _safe_float(value: Any) -> float | None:
+    if pd.isna(value):
+        return None
+    return float(value)
+
+
+def _ma_values(row: pd.Series) -> dict[int, float] | None:
+    values: dict[int, float] = {}
+    for period in [5, 10, 20, 30, 60]:
+        value = _safe_float(row.get(f"ma{period}"))
+        if value is None:
+            return None
+        values[period] = value
+    return values
+
+
+def _ma_relation_score(values: dict[int, float], bullish: bool) -> tuple[float, str]:
+    periods = [5, 10, 20, 30, 60]
+    favored = 0
+    opposed = 0
+    symbol = ">" if bullish else "<"
+    for left, right in zip(periods, periods[1:]):
+        if bullish:
+            if values[left] > values[right]:
+                favored += 1
+            elif values[left] < values[right]:
+                opposed += 1
+        else:
+            if values[left] < values[right]:
+                favored += 1
+            elif values[left] > values[right]:
+                opposed += 1
+    score = 7.5 + (favored - opposed) / 4 * 7.5
+    score = max(0.0, min(15.0, score))
+    return score, f"MA arrangement target MA5 {symbol} MA10 {symbol} MA20 {symbol} MA30 {symbol} MA60: {score:.1f}/15"
+
+
+def _slope_lookback(index: int) -> int | None:
+    if index >= 5:
+        return 5
+    if index >= 3:
+        return 3
+    return None
+
+
+def _ma_slope_score(df: pd.DataFrame, index: int, bullish: bool) -> tuple[float, str]:
+    lookback = _slope_lookback(index)
+    if lookback is None:
+        return 0.0, "MA slope data is insufficient: 0/10"
+
+    row = df.loc[index]
+    prev = df.loc[index - lookback]
+    ma10 = _safe_float(row.get("ma10"))
+    ma20 = _safe_float(row.get("ma20"))
+    prev_ma10 = _safe_float(prev.get("ma10"))
+    prev_ma20 = _safe_float(prev.get("ma20"))
+    if ma10 is None or ma20 is None or prev_ma10 is None or prev_ma20 is None:
+        return 0.0, "MA10/MA20 slope data is insufficient: 0/10"
+
+    ma10_ok = ma10 > prev_ma10 if bullish else ma10 < prev_ma10
+    ma20_ok = ma20 > prev_ma20 if bullish else ma20 < prev_ma20
+    if ma10_ok and ma20_ok:
+        score = 10.0
+    elif ma10_ok:
+        score = 7.5
+    elif ma20_ok:
+        score = 5.0
+    else:
+        score = 0.0
+    direction = "up" if bullish else "down"
+    return score, f"MA10/MA20 slope target {direction}, lookback {lookback}: {score:.1f}/10"
+
+
+def _price_location_score(row: pd.Series, values: dict[int, float], bullish: bool) -> tuple[float, str]:
+    close = float(row["close"])
+    periods = [5, 10, 20, 30, 60]
+    matched = [
+        period
+        for period in periods
+        if (close > values[period] if bullish else close < values[period])
+    ]
+    score = float(len(matched) * 2)
+    side = "above" if bullish else "below"
+    return score, f"Close {side} {len(matched)}/5 tracked MAs: {score:.1f}/10"
+
+
+def _is_full_alignment(values: dict[int, float], bullish: bool) -> bool:
+    periods = [5, 10, 20, 30, 60]
+    if bullish:
+        return all(values[left] > values[right] for left, right in zip(periods, periods[1:]))
+    return all(values[left] < values[right] for left, right in zip(periods, periods[1:]))
+
+
+def _ma_bandwidth(values: dict[int, float]) -> float:
+    denominator = abs(values[60])
+    if denominator == 0:
+        denominator = 1.0
+    return (max(values.values()) - min(values.values())) / denominator
+
+
+def _ma_bandwidth_score(df: pd.DataFrame, index: int, values: dict[int, float], bullish: bool) -> tuple[float, str]:
+    lookback = _slope_lookback(index)
+    if lookback is None:
+        return 0.0, "MA bandwidth data is insufficient: 0/10"
+    prev_values = _ma_values(df.loc[index - lookback])
+    if prev_values is None:
+        return 0.0, "MA bandwidth comparison data is insufficient: 0/10"
+
+    current_width = _ma_bandwidth(values)
+    previous_width = _ma_bandwidth(prev_values)
+    expanding = current_width > previous_width
+    target_aligned = _is_full_alignment(values, bullish)
+    opposite_aligned = _is_full_alignment(values, not bullish)
+
+    if target_aligned and expanding:
+        score = 10.0
+        state = "target trend expanding"
+    elif opposite_aligned and expanding:
+        score = 0.0
+        state = "opposite trend expanding"
+    elif not expanding:
+        score = 5.0
+        state = "bandwidth narrowing"
+    else:
+        score = 5.0
+        state = "mixed trend expanding"
+    return score, f"MA bandwidth {state}: {score:.1f}/10"
+
+
+def calculate_ma_trend_score(df: pd.DataFrame, index: int, bullish: bool) -> tuple[int, list[str]]:
+    if index < 0 or index >= len(df):
+        return 0, ["MA score index is outside dataframe"]
+
+    row = df.loc[index]
+    values = _ma_values(row)
+    if values is None:
+        return 0, ["MA5/MA10/MA20/MA30/MA60 data is insufficient: 0/50"]
+
+    reasons: list[str] = []
+    total = 0.0
+    for score, reason in [
+        _ma_relation_score(values, bullish),
+        _ma_slope_score(df, index, bullish),
+        _price_location_score(row, values, bullish),
+        _ma_bandwidth_score(df, index, values, bullish),
+    ]:
+        total += score
+        reasons.append(reason)
+
+    close = float(row["close"])
+    above_or_below_ma60 = close > values[60] if bullish else close < values[60]
+    ma60_score = 5.0 if above_or_below_ma60 else 0.0
+    side = "above" if bullish else "below"
+    reasons.append(f"Close {side} MA60 confirmation: {ma60_score:.1f}/5")
+    total += ma60_score
+
+    return int(round(total)), reasons
+
+
+def _daily_score_index(daily_df: pd.DataFrame, signal_time: pd.Timestamp) -> int | None:
+    if len(daily_df) == 0:
+        return None
+    datetimes = pd.to_datetime(daily_df["datetime"])
+    matching = daily_df.index[datetimes <= signal_time]
+    if len(matching) == 0:
+        return None
+    return int(matching[-1])
+
+
+def calculate_combined_trend_score(
+    intraday_df: pd.DataFrame,
+    intraday_index: int,
+    bullish: bool,
+    daily_df: pd.DataFrame | None = None,
+    signal_time: pd.Timestamp | None = None,
+) -> tuple[int, list[str]]:
+    intraday_score, intraday_reasons = calculate_ma_trend_score(intraday_df, intraday_index, bullish=bullish)
+    reasons = [f"Current timeframe score: {intraday_score}/50", *intraday_reasons]
+    total = intraday_score
+
+    if daily_df is None:
+        reasons.append("Daily timeframe score unavailable: 0/50")
+        return total, reasons
+
+    daily = daily_df.copy().reset_index(drop=True)
+    daily["datetime"] = pd.to_datetime(daily["datetime"])
+    daily = add_ma_columns(daily, HeadShoulderTopConfig())
+    daily_index = len(daily) - 1 if signal_time is None else _daily_score_index(daily, signal_time)
+    if daily_index is None:
+        reasons.append("Daily timeframe has no bar at or before signal time: 0/50")
+        return total, reasons
+
+    daily_score, daily_reasons = calculate_ma_trend_score(daily, daily_index, bullish=bullish)
+    total += daily_score
+    reasons.extend([f"Daily timeframe score: {daily_score}/50", *daily_reasons])
+    return total, reasons
+
+
 def passes_head_neck_bar_limit(
     timeframe: str,
     left_neck: "PivotPoint",
@@ -364,7 +562,7 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
         f"头部到右颈K线数量为左颈到头部的 {neck_head_ratio:.2f} 倍",
         "右肩没有过度走弱",
         "右肩低于头部",
-    ], 60
+    ], 0
 
 
 def validate_inverse_head_shoulders_structure(
@@ -471,10 +669,17 @@ def validate_inverse_head_shoulders_structure(
         f"Head to right-neck bar count is {neck_head_ratio:.2f}x of left-neck to head",
         "Right shoulder has not rebounded too far",
         "Right shoulder is above the head",
-    ], 60
+    ], 0
 
 
 def check_ma_bearish_filter(df: pd.DataFrame, index: int, config: HeadShoulderTopConfig) -> tuple[bool, str, int]:
+    if not config.enable_ma_filter:
+        return True, "MA filter disabled", 0
+    score, reasons = calculate_ma_trend_score(df, index, bullish=False)
+    if score == 0:
+        return False, "; ".join(reasons), 0
+    return True, "; ".join(reasons), score
+
     if not config.enable_ma_filter:
         return True, "未启用均线过滤", 0
     row = df.loc[index]
@@ -501,6 +706,13 @@ def check_ma_bearish_filter(df: pd.DataFrame, index: int, config: HeadShoulderTo
 
 
 def check_ma_bullish_filter(df: pd.DataFrame, index: int, config: HeadShoulderTopConfig) -> tuple[bool, str, int]:
+    if not config.enable_ma_filter:
+        return True, "MA filter disabled", 0
+    score, reasons = calculate_ma_trend_score(df, index, bullish=True)
+    if score == 0:
+        return False, "; ".join(reasons), 0
+    return True, "; ".join(reasons), score
+
     if not config.enable_ma_filter:
         return True, "未启用均线过滤", 0
     row = df.loc[index]
@@ -619,6 +831,7 @@ def scan_head_shoulders_top(
     symbol: str,
     timeframe: str,
     config: HeadShoulderTopConfig,
+    daily_df: pd.DataFrame | None = None,
 ) -> list[HeadShoulderTopSignal]:
     df = df.copy().reset_index(drop=True)
     df["datetime"] = pd.to_datetime(df["datetime"])
@@ -636,6 +849,15 @@ def scan_head_shoulders_top(
         ok, reasons, total_score = validate_head_shoulders_structure([p1, p2, p3, p4, p5], config)
         if not ok:
             continue
+        trend_score, trend_reasons = calculate_combined_trend_score(
+            df,
+            p5.index,
+            bullish=False,
+            daily_df=daily_df,
+            signal_time=p5.time,
+        )
+        total_score += trend_score
+        reasons.extend(trend_reasons)
         used_right_shoulder_setups.add(setup_key)
 
         neckline_price = calculate_neckline_price(p2, p4, p5.index)
@@ -703,6 +925,7 @@ def scan_inverse_head_shoulders(
     symbol: str,
     timeframe: str,
     config: HeadShoulderTopConfig,
+    daily_df: pd.DataFrame | None = None,
 ) -> list[HeadShoulderTopSignal]:
     df = df.copy().reset_index(drop=True)
     df["datetime"] = pd.to_datetime(df["datetime"])
@@ -716,6 +939,15 @@ def scan_inverse_head_shoulders(
         ok, reasons, total_score = validate_inverse_head_shoulders_structure([p1, p2, p3, p4, p5], config)
         if not ok:
             continue
+        trend_score, trend_reasons = calculate_combined_trend_score(
+            df,
+            p5.index,
+            bullish=True,
+            daily_df=daily_df,
+            signal_time=p5.time,
+        )
+        total_score += trend_score
+        reasons.extend(trend_reasons)
 
         neckline_price = calculate_neckline_price(p2, p4, p5.index)
         signals.append(HeadShoulderTopSignal(
@@ -878,9 +1110,10 @@ def scan_head_shoulders(
     symbol: str,
     timeframe: str,
     config: HeadShoulderTopConfig,
+    daily_df: pd.DataFrame | None = None,
 ) -> list[HeadShoulderTopSignal]:
-    signals = scan_head_shoulders_top(df, symbol=symbol, timeframe=timeframe, config=config)
-    signals.extend(scan_inverse_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config))
+    signals = scan_head_shoulders_top(df, symbol=symbol, timeframe=timeframe, config=config, daily_df=daily_df)
+    signals.extend(scan_inverse_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config, daily_df=daily_df))
     if config.max_signal_age_bars > 0:
         min_right_shoulder_index = max(0, len(df) - config.max_signal_age_bars)
         signals = [

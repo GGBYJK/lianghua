@@ -294,11 +294,15 @@ def scan_dataframe_payload(
     symbol: str,
     timeframe: str,
     config_overrides: dict[str, Any] | None = None,
+    daily_df: pd.DataFrame | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     df = df.copy().reset_index(drop=True)
     df["datetime"] = pd.to_datetime(df["datetime"])
+    if daily_df is not None:
+        daily_df = daily_df.copy().reset_index(drop=True)
+        daily_df["datetime"] = pd.to_datetime(daily_df["datetime"])
     config = load_head_shoulder_config(symbol=symbol, timeframe=timeframe, overrides=config_overrides)
-    signals = scan_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config)
+    signals = scan_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config, daily_df=daily_df)
     enriched_df = add_macd_columns(add_ma_columns(df, config), config)
     pivots = find_pivots(enriched_df, left=config.pivot_left, right=config.pivot_right)
     chart = prepare_chart_payload(enriched_df, pivots, signals, config)
@@ -313,11 +317,20 @@ async def scan_watch_pool_once(limit: int = 420) -> int:
     for item in items:
         try:
             scanned += 1
-            df = await fetch_kline_from_market(symbol=item["symbol"], period=item["timeframe"], limit=limit)
+            df, daily_df = await asyncio.gather(
+                fetch_kline_from_market(symbol=item["symbol"], period=item["timeframe"], limit=limit),
+                fetch_kline_from_market(symbol=item["symbol"], period="1d", limit=max(80, min(limit, 240))),
+            )
             config_overrides = {}
             if float(item.get("min_head_to_neck_height", 0)) > 0:
                 config_overrides["min_head_to_neck_height"] = float(item["min_head_to_neck_height"])
-            signals, chart = scan_dataframe_payload(df, symbol=item["symbol"], timeframe=item["timeframe"], config_overrides=config_overrides or None)
+            signals, chart = scan_dataframe_payload(
+                df,
+                symbol=item["symbol"],
+                timeframe=item["timeframe"],
+                config_overrides=config_overrides or None,
+                daily_df=daily_df,
+            )
             for signal in signals:
                 if not should_emit_signal_for_item(signal, item):
                     logger.info(
@@ -399,11 +412,20 @@ async def monitor_watch_pool_loop(stop_event: asyncio.Event) -> None:
                         item["timeframe"],
                         interval,
                     )
-                    df = await fetch_kline_from_market(symbol=item["symbol"], period=item["timeframe"], limit=kline_limit)
+                    df, daily_df = await asyncio.gather(
+                        fetch_kline_from_market(symbol=item["symbol"], period=item["timeframe"], limit=kline_limit),
+                        fetch_kline_from_market(symbol=item["symbol"], period="1d", limit=max(80, min(kline_limit, 240))),
+                    )
                     config_overrides = {}
                     if float(item.get("min_head_to_neck_height", 0)) > 0:
                         config_overrides["min_head_to_neck_height"] = float(item["min_head_to_neck_height"])
-                    signals, chart = scan_dataframe_payload(df, symbol=item["symbol"], timeframe=item["timeframe"], config_overrides=config_overrides or None)
+                    signals, chart = scan_dataframe_payload(
+                        df,
+                        symbol=item["symbol"],
+                        timeframe=item["timeframe"],
+                        config_overrides=config_overrides or None,
+                        daily_df=daily_df,
+                    )
                     inserted_for_item = 0
                     for signal in signals:
                         if not should_emit_signal_for_item(signal, item):

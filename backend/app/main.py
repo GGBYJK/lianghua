@@ -132,11 +132,15 @@ def build_scan_response(
     symbol: str,
     timeframe: str,
     overrides: dict[str, Any] | None,
+    daily_df: pd.DataFrame | None = None,
 ) -> ScanResponse:
     df = df.copy()
     df["datetime"] = pd.to_datetime(df["datetime"])
+    if daily_df is not None:
+        daily_df = daily_df.copy()
+        daily_df["datetime"] = pd.to_datetime(daily_df["datetime"])
     config = load_head_shoulder_config(symbol=symbol, timeframe=timeframe, overrides=overrides)
-    signals = scan_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config)
+    signals = scan_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config, daily_df=daily_df)
     enriched_df = add_macd_columns(add_ma_columns(df, config), config)
     pivots = find_pivots(enriched_df, left=config.pivot_left, right=config.pivot_right)
     chart = prepare_chart_payload(enriched_df, pivots, signals, config)
@@ -422,7 +426,8 @@ async def scan_market(
     try:
         overrides = parse_overrides(config_overrides)
         df = await fetch_kline_from_market(symbol=symbol, period=timeframe, limit=limit)
-        return build_scan_response(df, symbol=symbol, timeframe=timeframe, overrides=overrides)
+        daily_df = await fetch_kline_from_market(symbol=symbol, period="1d", limit=max(80, min(limit, 240)))
+        return build_scan_response(df, symbol=symbol, timeframe=timeframe, overrides=overrides, daily_df=daily_df)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except MarketApiError as exc:

@@ -47,6 +47,8 @@ from app.strategy import (
     scan_head_shoulders_top,
     scan_inverse_head_shoulders,
     validate_inverse_head_shoulders_structure,
+    calculate_ma_trend_score,
+    calculate_combined_trend_score,
 )
 from app.monitor import build_signal_unique_key
 from app.monitor import build_wechat_workbot_content
@@ -690,6 +692,79 @@ def test_combined_scan_includes_inverse_pattern() -> None:
     assert any(signal.pattern == "inverse_head_shoulders" for signal in signals)
 
 
+def test_bearish_ma_trend_score_uses_new_fifty_point_system() -> None:
+    closes = [180 - i * 0.2 for i in range(40)] + [172 - (i - 39) * 3 for i in range(40, 80)]
+    df = pd.DataFrame({
+        "datetime": pd.date_range("2026-06-01 09:00:00", periods=80, freq="min"),
+        "open": closes,
+        "high": [close + 1 for close in closes],
+        "low": [close - 1 for close in closes],
+        "close": closes,
+        "volume": [1000] * 80,
+    })
+    enriched = strategy_module.add_ma_columns(df, HeadShoulderTopConfig())
+
+    score, reasons = calculate_ma_trend_score(enriched, len(enriched) - 1, bullish=False)
+
+    assert score == 50
+    assert any("MA arrangement" in reason and "15.0/15" in reason for reason in reasons)
+    assert any("Close below MA60 confirmation: 5.0/5" in reason for reason in reasons)
+
+
+def test_bullish_ma_trend_score_uses_new_fifty_point_system() -> None:
+    closes = [100 + i * 0.2 for i in range(40)] + [108 + (i - 39) * 3 for i in range(40, 80)]
+    df = pd.DataFrame({
+        "datetime": pd.date_range("2026-06-01 09:00:00", periods=80, freq="min"),
+        "open": closes,
+        "high": [close + 1 for close in closes],
+        "low": [close - 1 for close in closes],
+        "close": closes,
+        "volume": [1000] * 80,
+    })
+    enriched = strategy_module.add_ma_columns(df, HeadShoulderTopConfig())
+
+    score, reasons = calculate_ma_trend_score(enriched, len(enriched) - 1, bullish=True)
+
+    assert score == 50
+    assert any("MA arrangement" in reason and "15.0/15" in reason for reason in reasons)
+    assert any("Close above MA60 confirmation: 5.0/5" in reason for reason in reasons)
+
+
+def test_combined_trend_score_adds_current_and_daily_scores_to_one_hundred() -> None:
+    intraday_closes = [180 - i * 0.2 for i in range(40)] + [172 - (i - 39) * 3 for i in range(40, 80)]
+    intraday = pd.DataFrame({
+        "datetime": pd.date_range("2026-06-01 09:00:00", periods=80, freq="min"),
+        "open": intraday_closes,
+        "high": [close + 1 for close in intraday_closes],
+        "low": [close - 1 for close in intraday_closes],
+        "close": intraday_closes,
+        "volume": [1000] * 80,
+    })
+    daily_closes = [180 - i * 0.2 for i in range(40)] + [172 - (i - 39) * 3 for i in range(40, 80)]
+    daily = pd.DataFrame({
+        "datetime": pd.date_range("2026-03-14", periods=80, freq="D"),
+        "open": daily_closes,
+        "high": [close + 1 for close in daily_closes],
+        "low": [close - 1 for close in daily_closes],
+        "close": daily_closes,
+        "volume": [1000] * 80,
+    })
+    config = HeadShoulderTopConfig()
+    intraday = strategy_module.add_ma_columns(intraday, config)
+
+    score, reasons = calculate_combined_trend_score(
+        intraday,
+        len(intraday) - 1,
+        bullish=False,
+        daily_df=daily,
+        signal_time=intraday["datetime"].iloc[-1],
+    )
+
+    assert score == 100
+    assert "Current timeframe score: 50/50" in reasons
+    assert "Daily timeframe score: 50/50" in reasons
+
+
 def test_pivots_and_neckline() -> None:
     df = pd.read_csv(SAMPLE)
     df["datetime"] = pd.to_datetime(df["datetime"])
@@ -1302,3 +1377,23 @@ def test_api_scan() -> None:
     body = response.json()
     assert body["rows"] > 0
     assert any(signal["alert_type"] == "right_shoulder_confirmed" for signal in body["signals"])
+
+
+def test_market_scan_fetches_daily_klines_for_combined_score(monkeypatch) -> None:
+    from app import main
+
+    calls: list[tuple[str, int]] = []
+    sample_df = pd.read_csv(SAMPLE)
+
+    async def fake_fetch_kline(symbol: str, period: str, limit: int = 120) -> pd.DataFrame:
+        calls.append((period, limit))
+        return sample_df.copy()
+
+    monkeypatch.setattr(main, "fetch_kline_from_market", fake_fetch_kline)
+
+    client = TestClient(app)
+    response = client.get("/api/market/scan", params={"symbol": "rb2405", "timeframe": "5m", "limit": 120})
+
+    assert response.status_code == 200
+    assert ("5m", 120) in calls
+    assert ("1d", 120) in calls
