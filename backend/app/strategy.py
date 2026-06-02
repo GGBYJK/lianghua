@@ -223,7 +223,8 @@ def _ma_relation_score(values: dict[int, float], bullish: bool) -> tuple[float, 
                 opposed += 1
     score = 7.5 + (favored - opposed) / 4 * 7.5
     score = max(0.0, min(15.0, score))
-    return score, f"MA arrangement target MA5 {symbol} MA10 {symbol} MA20 {symbol} MA30 {symbol} MA60: {score:.1f}/15"
+    direction = "多头排列" if bullish else "空头排列"
+    return score, f"均线排列目标为{direction} MA5 {symbol} MA10 {symbol} MA20 {symbol} MA30 {symbol} MA60：{score:.1f}/15"
 
 
 def _slope_lookback(index: int) -> int | None:
@@ -237,7 +238,7 @@ def _slope_lookback(index: int) -> int | None:
 def _ma_slope_score(df: pd.DataFrame, index: int, bullish: bool) -> tuple[float, str]:
     lookback = _slope_lookback(index)
     if lookback is None:
-        return 0.0, "MA slope data is insufficient: 0/10"
+        return 0.0, "均线斜率数据不足：0/10"
 
     row = df.loc[index]
     prev = df.loc[index - lookback]
@@ -246,7 +247,7 @@ def _ma_slope_score(df: pd.DataFrame, index: int, bullish: bool) -> tuple[float,
     previous = [_safe_float(prev.get(f"ma{period}")) for period in periods]
     if any(value is None for value in [*current, *previous]):
         period_names = "/".join(f"MA{period}" for period in periods)
-        return 0.0, f"{period_names} slope data is insufficient: 0/10"
+        return 0.0, f"{period_names} 斜率数据不足：0/10"
 
     first_current, second_current = current
     first_previous, second_previous = previous
@@ -267,9 +268,9 @@ def _ma_slope_score(df: pd.DataFrame, index: int, bullish: bool) -> tuple[float,
         score = 5.0
     else:
         score = 0.0
-    direction = "up" if bullish else "down"
+    direction = "向上" if bullish else "向下"
     period_names = "/".join(f"MA{period}" for period in periods)
-    return score, f"{period_names} slope target {direction}, lookback {lookback}: {score:.1f}/10"
+    return score, f"{period_names} 斜率目标为{direction}，回看 {lookback} 根K线：{score:.1f}/10"
 
 
 def _price_location_score(row: pd.Series, values: dict[int, float], bullish: bool) -> tuple[float, str]:
@@ -281,8 +282,8 @@ def _price_location_score(row: pd.Series, values: dict[int, float], bullish: boo
         if (close > values[period] if bullish else close < values[period])
     ]
     score = float(len(matched) * 2)
-    side = "above" if bullish else "below"
-    return score, f"Close {side} {len(matched)}/5 tracked MAs: {score:.1f}/10"
+    side = "上方" if bullish else "下方"
+    return score, f"收盘价位于 {len(matched)}/5 条跟踪均线{side}：{score:.1f}/10"
 
 
 def _is_full_alignment(values: dict[int, float], bullish: bool) -> bool:
@@ -302,10 +303,10 @@ def _ma_bandwidth(values: dict[int, float]) -> float:
 def _ma_bandwidth_score(df: pd.DataFrame, index: int, values: dict[int, float], bullish: bool) -> tuple[float, str]:
     lookback = _slope_lookback(index)
     if lookback is None:
-        return 0.0, "MA bandwidth data is insufficient: 0/10"
+        return 0.0, "均线带宽数据不足：0/10"
     prev_values = _ma_values(df.loc[index - lookback])
     if prev_values is None:
-        return 0.0, "MA bandwidth comparison data is insufficient: 0/10"
+        return 0.0, "均线带宽对比数据不足：0/10"
 
     current_width = _ma_bandwidth(values)
     previous_width = _ma_bandwidth(prev_values)
@@ -315,30 +316,30 @@ def _ma_bandwidth_score(df: pd.DataFrame, index: int, values: dict[int, float], 
 
     if target_aligned and expanding:
         score = 10.0
-        state = "target trend expanding"
+        state = "目标趋势排列且均线带宽扩大"
     elif target_aligned and not expanding:
         score = 5.0
-        state = "target trend narrowing"
+        state = "目标趋势排列但均线带宽收窄"
     elif opposite_aligned and expanding:
         score = 0.0
-        state = "opposite trend expanding"
+        state = "反向趋势排列且均线带宽扩大"
     elif opposite_aligned and not expanding:
         score = 2.5
-        state = "opposite trend narrowing"
+        state = "反向趋势排列但均线带宽收窄"
     else:
         score = 5.0
-        state = "mixed trend"
-    return score, f"MA bandwidth {state}: {score:.1f}/10"
+        state = "均线排列混合，偏震荡"
+    return score, f"均线带宽：{state}：{score:.1f}/10"
 
 
 def calculate_ma_trend_score(df: pd.DataFrame, index: int, bullish: bool) -> tuple[int, list[str]]:
     if index < 0 or index >= len(df):
-        return 0, ["MA score index is outside dataframe"]
+        return 0, ["均线评分位置超出数据范围"]
 
     row = df.loc[index]
     values = _ma_values(row)
     if values is None:
-        return 0, ["MA5/MA10/MA20/MA30/MA60 data is insufficient: 0/50"]
+        return 0, ["MA5/MA10/MA20/MA30/MA60 数据不足：0/50"]
 
     reasons: list[str] = []
     total = 0.0
@@ -354,8 +355,8 @@ def calculate_ma_trend_score(df: pd.DataFrame, index: int, bullish: bool) -> tup
     close = float(row["close"])
     above_or_below_ma60 = close > values[60] if bullish else close < values[60]
     ma60_score = 5.0 if above_or_below_ma60 else 0.0
-    side = "above" if bullish else "below"
-    reasons.append(f"Close {side} MA60 confirmation: {ma60_score:.1f}/5")
+    side = "站上" if bullish else "跌破"
+    reasons.append(f"收盘价{side} MA60 确认项：{ma60_score:.1f}/5")
     total += ma60_score
 
     return int(round(total)), reasons
@@ -382,13 +383,16 @@ def _score_named_timeframe(
     signal_time: pd.Timestamp | None,
 ) -> tuple[int, list[str]]:
     if df is None:
-        return 0, [f"{name} timeframe score unavailable: 0/50"]
+        name_cn = "小时线" if name == "Hourly" else "日线"
+        return 0, [f"{name_cn}评分数据不可用：0/50"]
     score_df = _prepare_ma_score_df(df)
     score_index = len(score_df) - 1 if signal_time is None else _timeframe_score_index(score_df, signal_time)
     if score_index is None:
-        return 0, [f"{name} timeframe has no bar at or before signal time: 0/50"]
+        name_cn = "小时线" if name == "Hourly" else "日线"
+        return 0, [f"{name_cn}在信号时间前没有可用K线：0/50"]
     score, reasons = calculate_ma_trend_score(score_df, score_index, bullish=bullish)
-    return score, [f"{name} timeframe score: {score}/50", *reasons]
+    name_cn = "小时线" if name == "Hourly" else "日线"
+    return score, [f"{name_cn}评分：{score}/50", *reasons]
 
 
 def calculate_combined_trend_score(
@@ -610,68 +614,68 @@ def validate_inverse_head_shoulders_structure(
     config: HeadShoulderTopConfig,
 ) -> tuple[bool, list[str], int]:
     if len(points) != 5:
-        return False, ["Key point count is not 5"], 0
+        return False, ["关键点数量不是5个"], 0
     p1, p2, p3, p4, p5 = points
     if [p.kind for p in points] != ["low", "high", "low", "high", "low"]:
-        return False, ["Structure is not low-high-low-high-low"], 0
+        return False, ["结构不是低-高-低-高-低"], 0
 
     if p3.price > min(p1.price, p5.price):
-        return False, ["Head is above the left or right shoulder; inverse structure is invalid"], 0
+        return False, ["头部高于左肩或右肩，反向头肩底结构不成立"], 0
     if config.require_head_beyond_shoulders_and_necks and p3.price >= min(p1.price, p2.price, p4.price, p5.price):
-        return False, ["Head must be below the left shoulder, right shoulder, left neck, and right neck"], 0
+        return False, ["头部必须低于左肩、右肩、左颈、右颈"], 0
 
     min_head_to_neck_height = config.min_head_to_neck_height if config.min_head_to_neck_height > 0 else min_head_to_neck_height_by_price(p3.price)
     left_head_to_neck_height = p2.price - p3.price
     right_head_to_neck_height = p4.price - p3.price
     if left_head_to_neck_height <= min_head_to_neck_height and right_head_to_neck_height <= min_head_to_neck_height:
         return False, [
-            f"C to A1/A2 height is insufficient: A1-C {left_head_to_neck_height:.2f}, "
-            f"A2-C {right_head_to_neck_height:.2f}; at least one side must be greater than {min_head_to_neck_height:.2f}"
+            f"C到A1/A2高度不足：A1-C {left_head_to_neck_height:.2f}，"
+            f"A2-C {right_head_to_neck_height:.2f}，要求至少一侧大于 {min_head_to_neck_height:.2f}"
         ], 0
 
     shoulder_diff = abs(p1.price - p5.price) / max(p1.price, p5.price)
     if shoulder_diff > config.max_shoulder_diff_pct:
-        return False, [f"Left and right shoulder diff too large: {shoulder_diff * 100:.2f}%"], 0
+        return False, [f"左右肩差异过大，当前 {shoulder_diff * 100:.2f}%"], 0
 
     neck_diff = abs(p2.price - p4.price) / max(p2.price, p4.price)
     if neck_diff > config.max_neck_diff_pct:
-        return False, [f"Two neckline highs differ too much: {neck_diff * 100:.2f}%"], 0
+        return False, [f"两个颈线高点差异过大，当前 {neck_diff * 100:.2f}%"], 0
 
     max_right_shoulder_price = p1.price * (2 - config.min_right_shoulder_ratio_to_left)
     if p5.price > max_right_shoulder_price:
-        return False, ["Right shoulder is too high for a standard inverse head-and-shoulders"], 0
+        return False, ["右肩过高，不像标准反向头肩底"], 0
 
     if config.right_shoulder_must_below_head and p5.price <= p3.price:
-        return False, ["Right shoulder is lower than or equal to the head; inverse structure is invalid"], 0
+        return False, ["右肩低于或等于头部，反向头肩底结构不成立"], 0
 
     left_shoulder_to_neck_height = p2.price - p1.price
     left_neck_to_head_height = p2.price - p3.price
     if left_shoulder_to_neck_height <= 0 or left_neck_to_head_height <= 0:
-        return False, ["Left shoulder, left neck, and head height relationship is invalid"], 0
+        return False, ["左肩、左颈、头部高度关系不成立"], 0
     left_shoulder_height_ratio = left_shoulder_to_neck_height / left_neck_to_head_height
 
     right_shoulder_to_neck_height = p4.price - p5.price
     right_neck_to_head_height = p4.price - p3.price
     if right_shoulder_to_neck_height <= 0 or right_neck_to_head_height <= 0:
-        return False, ["Right shoulder, right neck, and head height relationship is invalid"], 0
+        return False, ["右肩、右颈、头部高度关系不成立"], 0
     if config.min_shoulder_to_neck_height > 0:
         if left_shoulder_to_neck_height < config.min_shoulder_to_neck_height:
-            return False, [f"Left neck to left shoulder price difference is below {config.min_shoulder_to_neck_height:.2f}: {left_shoulder_to_neck_height:.2f}"], 0
+            return False, [f"左颈到左肩价格差不足 {config.min_shoulder_to_neck_height:.2f}，当前 {left_shoulder_to_neck_height:.2f}"], 0
         if right_shoulder_to_neck_height < config.min_shoulder_to_neck_height:
-            return False, [f"Right neck to right shoulder price difference is below {config.min_shoulder_to_neck_height:.2f}: {right_shoulder_to_neck_height:.2f}"], 0
+            return False, [f"右颈到右肩价格差不足 {config.min_shoulder_to_neck_height:.2f}，当前 {right_shoulder_to_neck_height:.2f}"], 0
     if config.require_shoulders_between_opposite_neck_and_head:
         if not (p3.price <= p1.price <= p4.price):
-            return False, ["Left shoulder price must be between the head and right neck"], 0
+            return False, ["左肩价格必须位于头部到右颈价格之间"], 0
         if not (p3.price <= p5.price <= p2.price):
-            return False, ["Right shoulder price must be between the left neck and head"], 0
+            return False, ["右肩价格必须位于头部到左颈价格之间"], 0
     right_shoulder_height_ratio = right_shoulder_to_neck_height / right_neck_to_head_height
     if (
         left_shoulder_height_ratio < config.min_shoulder_to_head_height_ratio
         and right_shoulder_height_ratio < config.min_shoulder_to_head_height_ratio
     ):
         return False, [
-            f"Both shoulder-to-neck height ratios are insufficient: left {left_shoulder_height_ratio * 100:.2f}%, "
-            f"right {right_shoulder_height_ratio * 100:.2f}%; at least one side must reach "
+            f"左右肩到颈线高度占颈线到头部高度均不足，左侧 {left_shoulder_height_ratio * 100:.2f}%，"
+            f"右侧 {right_shoulder_height_ratio * 100:.2f}%，要求至少一侧达到 "
             f"{config.min_shoulder_to_head_height_ratio * 100:.2f}%"
         ], 0
 
@@ -680,8 +684,8 @@ def validate_inverse_head_shoulders_structure(
     leg_ratio = right_leg_bars / left_leg_bars
     if leg_ratio < config.min_right_leg_to_left_leg_ratio or leg_ratio > config.max_right_leg_to_left_leg_ratio:
         return False, [
-            f"Right-neck to right-shoulder bar count mismatch: {leg_ratio:.2f}x of left-shoulder to left-neck, "
-            f"required {config.min_right_leg_to_left_leg_ratio:.2f}-{config.max_right_leg_to_left_leg_ratio:.2f}x"
+            f"右颈到右肩K线数量不匹配，当前为左肩到左颈的 {leg_ratio:.2f} 倍，"
+            f"要求 {config.min_right_leg_to_left_leg_ratio:.2f}-{config.max_right_leg_to_left_leg_ratio:.2f} 倍"
         ], 0
 
     left_neck_to_head_bars = max(1, p3.index - p2.index)
@@ -693,28 +697,28 @@ def validate_inverse_head_shoulders_structure(
         or neck_head_ratio > config.max_head_to_right_neck_to_left_neck_to_head_ratio
     ):
         return False, [
-            f"Head to right-neck bar count mismatch: {neck_head_ratio:.2f}x of left-neck to head, "
-            f"required {config.min_head_to_right_neck_to_left_neck_to_head_ratio:.2f}-"
-            f"{config.max_head_to_right_neck_to_left_neck_to_head_ratio:.2f}x"
+            f"头部到右颈K线数量不匹配，当前为左颈到头部的 {neck_head_ratio:.2f} 倍，"
+            f"要求 {config.min_head_to_right_neck_to_left_neck_to_head_ratio:.2f}-"
+            f"{config.max_head_to_right_neck_to_left_neck_to_head_ratio:.2f} 倍"
         ], 0
 
     return True, [
-        "Head is below both shoulders",
-        f"Left and right shoulders are close; diff {shoulder_diff * 100:.2f}%",
-        f"Two neckline highs are close; diff {neck_diff * 100:.2f}%",
-        f"Left shoulder height is {left_shoulder_height_ratio * 100:.2f}% of left-neck-to-head height",
-        f"Right shoulder height is {right_shoulder_height_ratio * 100:.2f}% of right-neck-to-head height",
-        f"Right-neck to right-shoulder bar count is {leg_ratio:.2f}x of left-shoulder to left-neck",
-        f"Left neck to head is {left_neck_to_head_bars} bars; head to right neck is {head_to_right_neck_bars} bars",
-        f"Head to right-neck bar count is {neck_head_ratio:.2f}x of left-neck to head",
-        "Right shoulder has not rebounded too far",
-        "Right shoulder is above the head",
+        "头部低于左右肩",
+        f"左右肩高度接近，差异 {shoulder_diff * 100:.2f}%",
+        f"两个颈线高点接近，差异 {neck_diff * 100:.2f}%",
+        f"左肩高度占左颈到头部高度 {left_shoulder_height_ratio * 100:.2f}%",
+        f"右肩高度占右颈到头部高度 {right_shoulder_height_ratio * 100:.2f}%",
+        f"右颈到右肩K线数量为左肩到左颈的 {leg_ratio:.2f} 倍",
+        f"左颈到头部 {left_neck_to_head_bars} 根K线，头部到右颈 {head_to_right_neck_bars} 根K线",
+        f"头部到右颈K线数量为左颈到头部的 {neck_head_ratio:.2f} 倍",
+        "右肩没有反弹过高",
+        "右肩高于头部",
     ], 0
 
 
 def check_ma_bearish_filter(df: pd.DataFrame, index: int, config: HeadShoulderTopConfig) -> tuple[bool, str, int]:
     if not config.enable_ma_filter:
-        return True, "MA filter disabled", 0
+        return True, "未启用均线过滤", 0
     score, reasons = calculate_ma_trend_score(df, index, bullish=False)
     if score == 0:
         return False, "; ".join(reasons), 0
@@ -747,7 +751,7 @@ def check_ma_bearish_filter(df: pd.DataFrame, index: int, config: HeadShoulderTo
 
 def check_ma_bullish_filter(df: pd.DataFrame, index: int, config: HeadShoulderTopConfig) -> tuple[bool, str, int]:
     if not config.enable_ma_filter:
-        return True, "MA filter disabled", 0
+        return True, "未启用均线过滤", 0
     score, reasons = calculate_ma_trend_score(df, index, bullish=True)
     if score == 0:
         return False, "; ".join(reasons), 0
@@ -1007,7 +1011,7 @@ def scan_inverse_head_shoulders(
             score=total_score,
             trend_label=trend_label_from_score(total_score, bullish=True),
             reasons=reasons,
-            message=f"{symbol} {timeframe} inverse head-and-shoulders right shoulder confirmed, score {total_score}",
+            message=f"{symbol} {timeframe} 反向头肩底右肩确认，评分 {total_score}",
         ))
         continue
 

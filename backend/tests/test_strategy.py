@@ -708,8 +708,8 @@ def test_bearish_ma_trend_score_uses_new_fifty_point_system() -> None:
     score, reasons = calculate_ma_trend_score(enriched, len(enriched) - 1, bullish=False)
 
     assert score == 50
-    assert any("MA arrangement" in reason and "15.0/15" in reason for reason in reasons)
-    assert any("Close below MA60 confirmation: 5.0/5" in reason for reason in reasons)
+    assert any("均线排列目标为空头排列" in reason and "15.0/15" in reason for reason in reasons)
+    assert any("收盘价跌破 MA60 确认项：5.0/5" in reason for reason in reasons)
 
 
 def test_bullish_ma_trend_score_uses_new_fifty_point_system() -> None:
@@ -727,8 +727,8 @@ def test_bullish_ma_trend_score_uses_new_fifty_point_system() -> None:
     score, reasons = calculate_ma_trend_score(enriched, len(enriched) - 1, bullish=True)
 
     assert score == 50
-    assert any("MA arrangement" in reason and "15.0/15" in reason for reason in reasons)
-    assert any("Close above MA60 confirmation: 5.0/5" in reason for reason in reasons)
+    assert any("均线排列目标为多头排列" in reason and "15.0/15" in reason for reason in reasons)
+    assert any("收盘价站上 MA60 确认项：5.0/5" in reason for reason in reasons)
 
 
 def test_bullish_ma_slope_score_uses_ma20_and_ma60() -> None:
@@ -752,7 +752,7 @@ def test_bullish_ma_slope_score_uses_ma20_and_ma60() -> None:
 
     score, reasons = calculate_ma_trend_score(df, index, bullish=True)
 
-    assert any("MA20/MA60 slope target up" in reason and "10.0/10" in reason for reason in reasons)
+    assert any("MA20/MA60 斜率目标为向上" in reason and "10.0/10" in reason for reason in reasons)
     assert score > 0
 
 
@@ -784,8 +784,8 @@ def test_combined_trend_score_adds_hourly_and_daily_scores_to_one_hundred() -> N
     )
 
     assert score == 100
-    assert "Hourly timeframe score: 50/50" in reasons
-    assert "Daily timeframe score: 50/50" in reasons
+    assert "小时线评分：50/50" in reasons
+    assert "日线评分：50/50" in reasons
 
 
 def test_trend_label_maps_score_by_pattern_direction() -> None:
@@ -954,7 +954,7 @@ def test_inverse_head_shoulders_requires_price_tier_head_to_neck_height() -> Non
     ], config)
 
     assert not ok
-    assert "height is insufficient" in reasons[0]
+    assert "高度不足" in reasons[0]
 
 
 def test_inverse_head_shoulders_price_tier_height_boundaries() -> None:

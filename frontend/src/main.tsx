@@ -2043,12 +2043,13 @@ function buildScoreSection(
   marker: "Hourly" | "Daily",
   title: string,
 ): ScoreSection {
-  const startIndex = reasons.findIndex((reason) => reason.startsWith(`${marker} timeframe`));
+  const markerTitle = marker === "Hourly" ? "小时线" : "日线";
+  const startIndex = reasons.findIndex((reason) => reason.startsWith(`${marker} timeframe`) || reason.startsWith(`${markerTitle}评分`));
   if (startIndex < 0) {
     return { key, title, score: "0/50", items: [] };
   }
 
-  const nextIndex = reasons.findIndex((reason, index) => index > startIndex && /^(Hourly|Daily) timeframe/.test(reason));
+  const nextIndex = reasons.findIndex((reason, index) => index > startIndex && (/^(Hourly|Daily) timeframe/.test(reason) || /^(小时线|日线)评分/.test(reason)));
   const endIndex = nextIndex < 0 ? reasons.length : nextIndex;
   const header = reasons[startIndex];
   const detailReasons = reasons.slice(startIndex + 1, endIndex).filter(isScoreDetailReason);
@@ -2069,13 +2070,21 @@ function buildScoreSection(
 function isScoreDetailReason(reason: string) {
   return (
     reason.startsWith("MA arrangement") ||
+    reason.startsWith("均线排列目标为") ||
     reason.includes("slope target") ||
+    reason.includes("斜率目标为") ||
     /^Close (above|below) \d+\/\d+ tracked MAs/.test(reason) ||
+    /^收盘价位于 \d+\/5 条跟踪均线/.test(reason) ||
     reason.startsWith("MA bandwidth") ||
+    reason.startsWith("均线带宽") ||
     /^Close (above|below) MA60 confirmation/.test(reason) ||
+    /^收盘价(站上|跌破) MA60 确认项/.test(reason) ||
     reason.includes("score unavailable") ||
+    reason.includes("评分数据不可用") ||
     reason.includes("data is insufficient") ||
-    reason.includes("has no bar at or before signal time")
+    reason.includes("数据不足") ||
+    reason.includes("has no bar at or before signal time") ||
+    reason.includes("没有可用K线")
   );
 }
 
@@ -2095,16 +2104,19 @@ function scoreReasonLabel(reason: string) {
   if (reason.startsWith("MA arrangement")) {
     return "均线排列";
   }
-  if (reason.includes("slope target")) {
+  if (reason.startsWith("均线排列目标为")) {
+    return "均线排列";
+  }
+  if (reason.includes("slope target") || reason.includes("斜率目标为")) {
     return "均线斜率";
   }
-  if (/^Close (above|below) \d+\/\d+ tracked MAs/.test(reason)) {
+  if (/^Close (above|below) \d+\/\d+ tracked MAs/.test(reason) || /^收盘价位于 \d+\/5 条跟踪均线/.test(reason)) {
     return "价格位置";
   }
-  if (reason.startsWith("MA bandwidth")) {
+  if (reason.startsWith("MA bandwidth") || reason.startsWith("均线带宽")) {
     return "均线发散/收敛";
   }
-  if (/^Close (above|below) MA60 confirmation/.test(reason)) {
+  if (/^Close (above|below) MA60 confirmation/.test(reason) || /^收盘价(站上|跌破) MA60 确认项/.test(reason)) {
     return "MA60确认";
   }
   return "数据状态";
@@ -2116,10 +2128,18 @@ function translateScoreReason(reason: string) {
     const direction = arrangement[1].includes(">") ? "多头排列" : "空头排列";
     return `目标为${direction}：${arrangement[1]}，得分 ${arrangement[2]}`;
   }
+  const chineseArrangement = reason.match(/^均线排列目标为(多头排列|空头排列) (MA5 [<>] MA10 [<>] MA20 [<>] MA30 [<>] MA60)：([\d.]+\/\d+)/);
+  if (chineseArrangement) {
+    return `目标为${chineseArrangement[1]}：${chineseArrangement[2]}，得分 ${chineseArrangement[3]}`;
+  }
 
   const slope = reason.match(/^(MA\d+\/MA\d+) slope target (up|down), lookback (\d+): ([\d.]+\/\d+)/);
   if (slope) {
     return `${slope[1]} 斜率目标为${slope[2] === "up" ? "向上" : "向下"}，回看 ${slope[3]} 根K线，得分 ${slope[4]}`;
+  }
+  const chineseSlope = reason.match(/^(MA\d+\/MA\d+) 斜率目标为(向上|向下)，回看 (\d+) 根K线：([\d.]+\/\d+)/);
+  if (chineseSlope) {
+    return `${chineseSlope[1]} 斜率目标为${chineseSlope[2]}，回看 ${chineseSlope[3]} 根K线，得分 ${chineseSlope[4]}`;
   }
 
   const slopeInsufficient = reason.match(/^(MA\d+\/MA\d+) slope data is insufficient: ([\d.]+\/\d+)/);
@@ -2130,6 +2150,10 @@ function translateScoreReason(reason: string) {
   const priceLocation = reason.match(/^Close (above|below) (\d+)\/5 tracked MAs: ([\d.]+\/\d+)/);
   if (priceLocation) {
     return `收盘价位于 ${priceLocation[2]}/5 条跟踪均线${priceLocation[1] === "above" ? "上方" : "下方"}，得分 ${priceLocation[3]}`;
+  }
+  const chinesePriceLocation = reason.match(/^收盘价位于 (\d+)\/5 条跟踪均线(上方|下方)：([\d.]+\/\d+)/);
+  if (chinesePriceLocation) {
+    return `收盘价位于 ${chinesePriceLocation[1]}/5 条跟踪均线${chinesePriceLocation[2]}，得分 ${chinesePriceLocation[3]}`;
   }
 
   const bandwidth = reason.match(/^MA bandwidth (target trend expanding|target trend narrowing|opposite trend expanding|opposite trend narrowing|mixed trend): ([\d.]+\/\d+)/);
@@ -2143,10 +2167,22 @@ function translateScoreReason(reason: string) {
     };
     return `${states[bandwidth[1]]}，得分 ${bandwidth[2]}`;
   }
+  const chineseBandwidth = reason.match(/^均线带宽：(.+)：([\d.]+\/\d+)/);
+  if (chineseBandwidth) {
+    return `${chineseBandwidth[1]}，得分 ${chineseBandwidth[2]}`;
+  }
 
   const confirmation = reason.match(/^Close (above|below) MA60 confirmation: ([\d.]+\/\d+)/);
   if (confirmation) {
     return `收盘价${confirmation[1] === "above" ? "站上" : "跌破"} MA60 确认项，得分 ${confirmation[2]}`;
+  }
+  const chineseConfirmation = reason.match(/^收盘价(站上|跌破) MA60 确认项：([\d.]+\/\d+)/);
+  if (chineseConfirmation) {
+    return `收盘价${chineseConfirmation[1]} MA60 确认项，得分 ${chineseConfirmation[2]}`;
+  }
+  const chineseTimeframeScore = reason.match(/^(小时线|日线)评分：([\d.]+\/\d+)/);
+  if (chineseTimeframeScore) {
+    return `${chineseTimeframeScore[1]}评分 ${chineseTimeframeScore[2]}`;
   }
 
   const timeframeScore = reason.match(/^(Hourly|Daily) timeframe score: ([\d.]+\/\d+)/);
