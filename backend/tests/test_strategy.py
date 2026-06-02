@@ -49,6 +49,7 @@ from app.strategy import (
     validate_inverse_head_shoulders_structure,
     calculate_ma_trend_score,
     calculate_combined_trend_score,
+    trend_label_from_score,
 )
 from app.monitor import build_signal_unique_key
 from app.monitor import build_wechat_workbot_content
@@ -785,6 +786,22 @@ def test_combined_trend_score_adds_hourly_and_daily_scores_to_one_hundred() -> N
     assert score == 100
     assert "Hourly timeframe score: 50/50" in reasons
     assert "Daily timeframe score: 50/50" in reasons
+
+
+def test_trend_label_maps_score_by_pattern_direction() -> None:
+    assert trend_label_from_score(85, bullish=False) == "强空头趋势"
+    assert trend_label_from_score(70, bullish=False) == "空头趋势"
+    assert trend_label_from_score(60, bullish=False) == "空头趋势下震荡"
+    assert trend_label_from_score(45, bullish=False) == "震荡趋势"
+    assert trend_label_from_score(30, bullish=False) == "多头趋势下震荡"
+    assert trend_label_from_score(10, bullish=False) == "多头趋势"
+
+    assert trend_label_from_score(85, bullish=True) == "强多头趋势"
+    assert trend_label_from_score(70, bullish=True) == "多头趋势"
+    assert trend_label_from_score(60, bullish=True) == "多头趋势下震荡"
+    assert trend_label_from_score(45, bullish=True) == "震荡趋势"
+    assert trend_label_from_score(30, bullish=True) == "空头趋势下震荡"
+    assert trend_label_from_score(10, bullish=True) == "空头趋势"
 
 
 def test_pivots_and_neckline() -> None:

@@ -236,6 +236,7 @@ function App() {
   const [selectedFeedbackId, setSelectedFeedbackId] = useState<string | null>(null);
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
   const [detailSource, setDetailSource] = useState<DetailSource>(null);
+  const [scoreDetailSignal, setScoreDetailSignal] = useState<Signal | null>(null);
   const [monitorScrollTargetSymbol, setMonitorScrollTargetSymbol] = useState<string | null>(null);
   const seenSignalKeys = useRef<Set<string>>(new Set());
   const feedbackPanelRef = useRef<HTMLElement | null>(null);
@@ -277,9 +278,9 @@ function App() {
   }, []);
 
   useEffect(() => {
-    document.body.classList.toggle("modal-open", configOpen || watchEditorOpen || detailSource !== null || feedbackTarget !== null || feedbackListOpen || contractCenterOpen);
+    document.body.classList.toggle("modal-open", configOpen || watchEditorOpen || detailSource !== null || scoreDetailSignal !== null || feedbackTarget !== null || feedbackListOpen || contractCenterOpen);
     return () => document.body.classList.remove("modal-open");
-  }, [configOpen, watchEditorOpen, detailSource, feedbackTarget, feedbackListOpen, contractCenterOpen]);
+  }, [configOpen, watchEditorOpen, detailSource, scoreDetailSignal, feedbackTarget, feedbackListOpen, contractCenterOpen]);
 
   function scrollToPanel(ref: React.RefObject<HTMLElement | null>) {
     window.setTimeout(() => {
@@ -900,12 +901,14 @@ function App() {
             selectedFeedbackId={selectedFeedbackId}
             onSelectAlert={(alert) => void selectMonitorAlert(alert)}
             onOpenAlertDetail={(alert) => void openMonitorAlertDetail(alert)}
+            onOpenScoreDetail={(signal) => setScoreDetailSignal(signal)}
             onHideAlert={(alertId) => void hideMonitorAlert(alertId)}
             onFeedbackAlert={startAlertFeedback}
             monitorScrollTargetSymbol={monitorScrollTargetSymbol}
             onMonitorScrollComplete={() => setMonitorScrollTargetSymbol(null)}
             onFocusCurrentSignal={focusCurrentSignal}
             onSelectCurrentSignal={selectCurrentSignal}
+            onOpenCurrentScoreDetail={(signal) => setScoreDetailSignal(signal)}
             onSelectFeedback={selectFeedback}
             onDeleteFeedback={(id) => void removeFeedback(id)}
           />
@@ -925,10 +928,15 @@ function App() {
               signal={detailSource.kind === "alert" ? detailSource.alert.signal_payload : detailSource.signal}
               sourceLabel={detailSource.kind === "alert" ? "监控消息" : "当前图结果"}
               titleId="detail-title"
+              onOpenScoreDetail={(signal) => setScoreDetailSignal(signal)}
               onClose={() => setDetailSource(null)}
             />
           </section>
         </div>
+      )}
+
+      {scoreDetailSignal && (
+        <ScoreDetailModal signal={scoreDetailSignal} onClose={() => setScoreDetailSignal(null)} />
       )}
 
       {feedbackTarget && (
@@ -1375,7 +1383,7 @@ const WatchPool = React.forwardRef<HTMLElement, {
                 />
               </label>
               <label>
-                头部到颈线最小高度
+                头部到左颈，头部到右颈最小高度
                 <InputNumber
                   min={0}
                   step={0.01}
@@ -1446,12 +1454,14 @@ function FeedbackTabs({
   selectedFeedbackId,
   onSelectAlert,
   onOpenAlertDetail,
+  onOpenScoreDetail,
   onHideAlert,
   onFeedbackAlert,
   monitorScrollTargetSymbol,
   onMonitorScrollComplete,
   onFocusCurrentSignal,
   onSelectCurrentSignal,
+  onOpenCurrentScoreDetail,
   onSelectFeedback,
   onDeleteFeedback,
 }: {
@@ -1465,12 +1475,14 @@ function FeedbackTabs({
   selectedFeedbackId: string | null;
   onSelectAlert: (alert: HeadShouldersAlertSummary) => void;
   onOpenAlertDetail: (alert: HeadShouldersAlertSummary) => void;
+  onOpenScoreDetail: (signal: Signal) => void;
   onHideAlert: (alertId: string) => void;
   onFeedbackAlert: (alert: HeadShouldersAlertSummary) => void;
   monitorScrollTargetSymbol: string | null;
   onMonitorScrollComplete: () => void;
   onFocusCurrentSignal: (signal: Signal) => void;
   onSelectCurrentSignal: (signal: Signal) => void;
+  onOpenCurrentScoreDetail: (signal: Signal) => void;
   onSelectFeedback: (feedback: AlertFeedback) => void;
   onDeleteFeedback: (id: string) => void;
 }) {
@@ -1493,6 +1505,7 @@ function FeedbackTabs({
           selectedId={selectedAlertId}
           onSelect={onSelectAlert}
           onOpenDetail={onOpenAlertDetail}
+          onOpenScoreDetail={onOpenScoreDetail}
           onHide={onHideAlert}
           onFeedback={onFeedbackAlert}
           targetSymbol={monitorScrollTargetSymbol}
@@ -1505,6 +1518,7 @@ function FeedbackTabs({
           selectedKey={selectedSignalKey}
           onFocus={onFocusCurrentSignal}
           onSelect={onSelectCurrentSignal}
+          onOpenScoreDetail={onOpenCurrentScoreDetail}
         />
       )}
       {activeTab === "feedbacks" && (
@@ -1524,6 +1538,7 @@ function MonitorAlertFeed({
   selectedId,
   onSelect,
   onOpenDetail,
+  onOpenScoreDetail,
   onHide,
   onFeedback,
   targetSymbol,
@@ -1533,6 +1548,7 @@ function MonitorAlertFeed({
   selectedId: string | null;
   onSelect: (alert: HeadShouldersAlertSummary) => void;
   onOpenDetail: (alert: HeadShouldersAlertSummary) => void;
+  onOpenScoreDetail: (signal: Signal) => void;
   onHide: (alertId: string) => void;
   onFeedback: (alert: HeadShouldersAlertSummary) => void;
   targetSymbol: string | null;
@@ -1635,7 +1651,7 @@ function MonitorAlertFeed({
                         <span className={`monitor-tag timeframe-tag timeframe-${alert.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{alert.timeframe}</span>
                         <span className={`monitor-tag pattern-tag ${alert.pattern}`}>{patternLabel(alert.pattern)}</span>
                         <span className={`monitor-tag alert-tag ${alert.alert_type}`}>{alertTypeLabel(alert.alert_type)}</span>
-                        <span className="monitor-tag score-tag">{alert.score}</span>
+                        <button type="button" className="monitor-tag score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>{alert.score}</button>
                       </div>
                       <div className="monitor-message-footer">
                         <div className="message-card-actions">
@@ -1645,7 +1661,7 @@ function MonitorAlertFeed({
                         <time>{alert.created_at ? formatAlertTime(alert.created_at) : "--"}</time>
                       </div>
                     </div>
-                    <b>{alert.score}</b>
+                    <button type="button" className="score-badge-button" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>{alert.score}</button>
                   </article>
                 ))}
               </div>
@@ -1823,11 +1839,13 @@ function CurrentSignalFeed({
   selectedKey,
   onFocus,
   onSelect,
+  onOpenScoreDetail,
 }: {
   signals: Signal[];
   selectedKey: string | null;
   onFocus: (signal: Signal) => void;
   onSelect: (signal: Signal) => void;
+  onOpenScoreDetail: (signal: Signal) => void;
 }) {
   return (
     <>
@@ -1856,7 +1874,7 @@ function CurrentSignalFeed({
                   <span className={`monitor-tag timeframe-tag timeframe-${signal.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{signal.timeframe}</span>
                   <span className={`monitor-tag pattern-tag ${signal.pattern}`}>{patternLabel(signal.pattern)}</span>
                   <span className={`monitor-tag alert-tag ${signal.alert_type}`}>{alertTypeLabel(signal.alert_type)}</span>
-                  <span className="monitor-tag score-tag">{signal.score}</span>
+                  <button type="button" className="monitor-tag score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(signal); }}>{signal.score}</button>
                 </div>
                 <div className="monitor-message-footer">
                   <div className="message-card-actions">
@@ -1882,11 +1900,11 @@ function CurrentSignalFeed({
   );
 }
 
-function FeedbackDetail({ source }: { source: DetailSource }) {
+function FeedbackDetail({ source, onOpenScoreDetail }: { source: DetailSource; onOpenScoreDetail: (signal: Signal) => void }) {
   const signal = source?.kind === "alert" ? source.alert.signal_payload : source?.signal ?? null;
   const sourceLabel = source?.kind === "alert" ? "监控消息" : source?.kind === "current" ? "当前图结果" : "";
   return (
-    <SignalDetail signal={signal} sourceLabel={sourceLabel} />
+    <SignalDetail signal={signal} sourceLabel={sourceLabel} onOpenScoreDetail={onOpenScoreDetail} />
   );
 }
 
@@ -1894,11 +1912,13 @@ function SignalDetail({
   signal,
   sourceLabel = "",
   titleId,
+  onOpenScoreDetail,
   onClose,
 }: {
   signal: Signal | null;
   sourceLabel?: string;
   titleId?: string;
+  onOpenScoreDetail?: (signal: Signal) => void;
   onClose?: () => void;
 }) {
   if (!signal) {
@@ -1926,8 +1946,8 @@ function SignalDetail({
         </div>
       </div>
       <div className="detail-score">
-        <strong>{signal.score}</strong>
-        <p>{translateResultText(signal.message)}</p>
+        <button type="button" className="detail-score-button" onClick={() => onOpenScoreDetail?.(signal)}>{signal.score}</button>
+        <p>{signal.trend_label ? `${signal.trend_label} · ` : ""}{translateResultText(signal.message)}</p>
       </div>
       <div className="detail-grid">
         <div><span>左肩</span><strong>{formatPrice(signal.left_shoulder.price)}</strong><small>{formatTime(signal.left_shoulder.time)}</small></div>
@@ -1942,6 +1962,222 @@ function SignalDetail({
       </ul>
     </section>
   );
+}
+
+type ScoreLine = {
+  label: string;
+  value: string;
+  raw: string;
+};
+
+type ScoreSection = {
+  key: "hourly" | "daily";
+  title: string;
+  score: string;
+  items: ScoreLine[];
+};
+
+function ScoreDetailModal({ signal, onClose }: { signal: Signal; onClose: () => void }) {
+  const sections = buildScoreSections(signal);
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="feedback-modal score-detail-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="score-detail-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <button type="button" className="modal-close-button" onClick={onClose} aria-label="关闭评分详情">关闭</button>
+        <div className="modal-head score-detail-head">
+          <div>
+            <p className="eyebrow">Score</p>
+            <h2 id="score-detail-title">评分详情</h2>
+          </div>
+          <div className="score-detail-total">
+            <strong>{signal.score}</strong>
+            <span>{signal.trend_label || "未分类"}</span>
+          </div>
+        </div>
+        <div className="score-detail-summary">
+          <span>{patternLabel(signal.pattern)}</span>
+          <span>{alertTypeLabel(signal.alert_type)}</span>
+          <span>{signal.timeframe}</span>
+        </div>
+        <div className="score-section-grid">
+          {sections.map((section) => (
+            <section className="score-section" key={section.key}>
+              <div className="score-section-head">
+                <h3>{section.title}</h3>
+                <strong>{section.score}</strong>
+              </div>
+              <div className="score-lines">
+                {section.items.length === 0 ? (
+                  <p className="score-empty">暂无评分细项</p>
+                ) : section.items.map((item) => (
+                  <div className="score-line" key={`${section.key}-${item.raw}`}>
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                    <small>{translateScoreReason(item.raw)}</small>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function buildScoreSections(signal: Signal): ScoreSection[] {
+  return [
+    buildScoreSection(signal.reasons, "hourly", "Hourly", "小时线"),
+    buildScoreSection(signal.reasons, "daily", "Daily", "日线"),
+  ];
+}
+
+function buildScoreSection(
+  reasons: string[],
+  key: ScoreSection["key"],
+  marker: "Hourly" | "Daily",
+  title: string,
+): ScoreSection {
+  const startIndex = reasons.findIndex((reason) => reason.startsWith(`${marker} timeframe`));
+  if (startIndex < 0) {
+    return { key, title, score: "0/50", items: [] };
+  }
+
+  const nextIndex = reasons.findIndex((reason, index) => index > startIndex && /^(Hourly|Daily) timeframe/.test(reason));
+  const endIndex = nextIndex < 0 ? reasons.length : nextIndex;
+  const header = reasons[startIndex];
+  const detailReasons = reasons.slice(startIndex + 1, endIndex).filter(isScoreDetailReason);
+  const items = detailReasons.map(scoreReasonToLine);
+
+  if (items.length === 0 && isScoreDetailReason(header)) {
+    items.push(scoreReasonToLine(header));
+  }
+
+  return {
+    key,
+    title,
+    score: parseScoreValue(header) ?? "0/50",
+    items,
+  };
+}
+
+function isScoreDetailReason(reason: string) {
+  return (
+    reason.startsWith("MA arrangement") ||
+    reason.includes("slope target") ||
+    /^Close (above|below) \d+\/\d+ tracked MAs/.test(reason) ||
+    reason.startsWith("MA bandwidth") ||
+    /^Close (above|below) MA60 confirmation/.test(reason) ||
+    reason.includes("score unavailable") ||
+    reason.includes("data is insufficient") ||
+    reason.includes("has no bar at or before signal time")
+  );
+}
+
+function scoreReasonToLine(reason: string): ScoreLine {
+  return {
+    label: scoreReasonLabel(reason),
+    value: parseScoreValue(reason) ?? "-",
+    raw: reason,
+  };
+}
+
+function parseScoreValue(reason: string) {
+  return reason.match(/(\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?)/)?.[1].replace(/\s+/g, "") ?? null;
+}
+
+function scoreReasonLabel(reason: string) {
+  if (reason.startsWith("MA arrangement")) {
+    return "均线排列";
+  }
+  if (reason.includes("slope target")) {
+    return "均线斜率";
+  }
+  if (/^Close (above|below) \d+\/\d+ tracked MAs/.test(reason)) {
+    return "价格位置";
+  }
+  if (reason.startsWith("MA bandwidth")) {
+    return "均线发散/收敛";
+  }
+  if (/^Close (above|below) MA60 confirmation/.test(reason)) {
+    return "MA60确认";
+  }
+  return "数据状态";
+}
+
+function translateScoreReason(reason: string) {
+  const arrangement = reason.match(/^MA arrangement target (MA5 [<>] MA10 [<>] MA20 [<>] MA30 [<>] MA60): ([\d.]+\/\d+)/);
+  if (arrangement) {
+    const direction = arrangement[1].includes(">") ? "多头排列" : "空头排列";
+    return `目标为${direction}：${arrangement[1]}，得分 ${arrangement[2]}`;
+  }
+
+  const slope = reason.match(/^(MA\d+\/MA\d+) slope target (up|down), lookback (\d+): ([\d.]+\/\d+)/);
+  if (slope) {
+    return `${slope[1]} 斜率目标为${slope[2] === "up" ? "向上" : "向下"}，回看 ${slope[3]} 根K线，得分 ${slope[4]}`;
+  }
+
+  const slopeInsufficient = reason.match(/^(MA\d+\/MA\d+) slope data is insufficient: ([\d.]+\/\d+)/);
+  if (slopeInsufficient) {
+    return `${slopeInsufficient[1]} 斜率数据不足，得分 ${slopeInsufficient[2]}`;
+  }
+
+  const priceLocation = reason.match(/^Close (above|below) (\d+)\/5 tracked MAs: ([\d.]+\/\d+)/);
+  if (priceLocation) {
+    return `收盘价位于 ${priceLocation[2]}/5 条跟踪均线${priceLocation[1] === "above" ? "上方" : "下方"}，得分 ${priceLocation[3]}`;
+  }
+
+  const bandwidth = reason.match(/^MA bandwidth (target trend expanding|target trend narrowing|opposite trend expanding|opposite trend narrowing|mixed trend): ([\d.]+\/\d+)/);
+  if (bandwidth) {
+    const states: Record<string, string> = {
+      "target trend expanding": "目标趋势排列且均线带宽扩大",
+      "target trend narrowing": "目标趋势排列但均线带宽收窄",
+      "opposite trend expanding": "反向趋势排列且均线带宽扩大",
+      "opposite trend narrowing": "反向趋势排列但均线带宽收窄",
+      "mixed trend": "均线排列混合，偏震荡",
+    };
+    return `${states[bandwidth[1]]}，得分 ${bandwidth[2]}`;
+  }
+
+  const confirmation = reason.match(/^Close (above|below) MA60 confirmation: ([\d.]+\/\d+)/);
+  if (confirmation) {
+    return `收盘价${confirmation[1] === "above" ? "站上" : "跌破"} MA60 确认项，得分 ${confirmation[2]}`;
+  }
+
+  const timeframeScore = reason.match(/^(Hourly|Daily) timeframe score: ([\d.]+\/\d+)/);
+  if (timeframeScore) {
+    return `${timeframeScore[1] === "Hourly" ? "小时线" : "日线"}评分 ${timeframeScore[2]}`;
+  }
+
+  const unavailable = reason.match(/^(Hourly|Daily) timeframe score unavailable: ([\d.]+\/\d+)/);
+  if (unavailable) {
+    return `${unavailable[1] === "Hourly" ? "小时线" : "日线"}评分数据不可用，得分 ${unavailable[2]}`;
+  }
+
+  const noBar = reason.match(/^(Hourly|Daily) timeframe has no bar at or before signal time: ([\d.]+\/\d+)/);
+  if (noBar) {
+    return `${noBar[1] === "Hourly" ? "小时线" : "日线"}在信号时间前没有可用K线，得分 ${noBar[2]}`;
+  }
+
+  if (reason === "MA slope data is insufficient: 0/10") {
+    return "均线斜率数据不足，得分 0/10";
+  }
+  if (reason === "MA bandwidth data is insufficient: 0/10") {
+    return "均线带宽数据不足，得分 0/10";
+  }
+  if (reason === "MA bandwidth comparison data is insufficient: 0/10") {
+    return "均线带宽对比数据不足，得分 0/10";
+  }
+  if (reason === "MA5/MA10/MA20/MA30/MA60 data is insufficient: 0/50") {
+    return "MA5、MA10、MA20、MA30、MA60 数据不足，得分 0/50";
+  }
+
+  return translateResultText(reason);
 }
 
 function SignalGroup({

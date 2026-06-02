@@ -84,6 +84,7 @@ class HeadShoulderTopSignal:
     confirmed: bool
     score: int
     reasons: list[str]
+    trend_label: str = ""
     break_time: pd.Timestamp | None = None
     break_price: float | None = None
     retest_time: pd.Timestamp | None = None
@@ -105,6 +106,7 @@ class HeadShoulderTopSignal:
             "neckline_price": self.neckline_price,
             "confirmed": self.confirmed,
             "score": self.score,
+            "trend_label": self.trend_label,
             "reasons": self.reasons,
             "break_time": self.break_time.isoformat() if self.break_time is not None else None,
             "break_price": self.break_price,
@@ -398,6 +400,29 @@ def calculate_combined_trend_score(
     hourly_score, hourly_reasons = _score_named_timeframe(hourly_df, "Hourly", bullish, signal_time)
     daily_score, daily_reasons = _score_named_timeframe(daily_df, "Daily", bullish, signal_time)
     return hourly_score + daily_score, [*hourly_reasons, *daily_reasons]
+
+
+def trend_label_from_score(score: int, bullish: bool) -> str:
+    bullish_labels = [
+        (80, "强多头趋势"),
+        (65, "多头趋势"),
+        (55, "多头趋势下震荡"),
+        (40, "震荡趋势"),
+        (25, "空头趋势下震荡"),
+        (0, "空头趋势"),
+    ]
+    bearish_labels = [
+        (80, "强空头趋势"),
+        (65, "空头趋势"),
+        (55, "空头趋势下震荡"),
+        (40, "震荡趋势"),
+        (25, "多头趋势下震荡"),
+        (0, "多头趋势"),
+    ]
+    for threshold, label in (bullish_labels if bullish else bearish_labels):
+        if score >= threshold:
+            return label
+    return "震荡趋势"
 
 
 def passes_head_neck_bar_limit(
@@ -889,6 +914,7 @@ def scan_head_shoulders_top(
             neckline_price=neckline_price,
             confirmed=False,
             score=total_score,
+            trend_label=trend_label_from_score(total_score, bullish=False),
             reasons=reasons + ["右肩已确认，等待跌破颈线确认"],
             message=(
                 f"{symbol} {timeframe} 头肩顶右肩确认，当前评分 {total_score}。"
@@ -923,6 +949,7 @@ def scan_head_shoulders_top(
             neckline_price=neckline_price,
             confirmed=True,
             score=total_score,
+            trend_label=trend_label_from_score(total_score, bullish=False),
             reasons=reasons,
             break_time=break_time,
             break_price=break_price,
@@ -978,6 +1005,7 @@ def scan_inverse_head_shoulders(
             neckline_price=neckline_price,
             confirmed=False,
             score=total_score,
+            trend_label=trend_label_from_score(total_score, bullish=True),
             reasons=reasons,
             message=f"{symbol} {timeframe} inverse head-and-shoulders right shoulder confirmed, score {total_score}",
         ))
@@ -998,6 +1026,7 @@ def scan_inverse_head_shoulders(
                 neckline_price=neckline_price,
                 confirmed=False,
                 score=total_score,
+                trend_label=trend_label_from_score(total_score, bullish=True),
                 reasons=reasons + [reason],
                 message=f"{symbol} {timeframe} 疑似反向头肩顶，等待突破颈线确认，当前评分 {total_score}",
             ))
@@ -1023,6 +1052,7 @@ def scan_inverse_head_shoulders(
             neckline_price=neckline_price,
             confirmed=True,
             score=total_score,
+            trend_label=trend_label_from_score(total_score, bullish=True),
             reasons=reasons,
             break_time=break_time,
             break_price=break_price,

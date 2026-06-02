@@ -1941,7 +1941,9 @@ body {
 }
 
 .message-item b,
+.score-badge-button,
 .detail-score strong,
+.detail-score-button,
 .signal-top strong {
   color: var(--warn);
 }
@@ -3469,16 +3471,27 @@ button:hover:not(:disabled) {
   padding: 18px 24px;
 }
 
-.detail-score strong {
+.detail-score strong,
+.detail-score-button {
   display: grid;
   place-items: center;
   width: 64px;
   height: 64px;
+  border: 0;
   border-radius: 50%;
   background: var(--primary);
   color: #ffffff;
   font-size: 28px;
   font-weight: 600;
+}
+
+.detail-score-button {
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(0, 102, 204, 0.18);
+}
+
+.detail-score-button:hover {
+  background: #0057b8;
 }
 
 .detail-score p {
@@ -4449,7 +4462,9 @@ button:disabled {
 }
 
 .message-item b,
+.score-badge-button,
 .detail-score strong,
+.detail-score-button,
 .signal-top strong {
   color: var(--primary);
 }
@@ -4987,16 +5002,23 @@ button:disabled {
   padding: 18px 24px;
 }
 
-.detail-score strong {
+.detail-score strong,
+.detail-score-button {
   display: grid;
   place-items: center;
   width: 64px;
   height: 64px;
+  border: 0;
   border-radius: 50%;
   background: var(--primary);
   color: #ffffff;
   font-size: 28px;
   font-weight: 600;
+}
+
+.detail-score-button {
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(0, 102, 204, 0.18);
 }
 
 .detail-score p {
@@ -5350,6 +5372,172 @@ button:disabled {
   color: var(--primary);
 }
 
+.score-detail-trigger {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  min-height: 24px;
+  border: 0;
+  padding: 3px 9px;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.score-detail-trigger:hover {
+  background: var(--primary);
+  color: #ffffff;
+  box-shadow: none;
+}
+
+.score-badge-button {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  align-self: start;
+  width: auto;
+  min-width: 44px;
+  min-height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0, 102, 204, 0.08);
+  padding: 5px 9px;
+  color: var(--primary);
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.score-badge-button:hover {
+  background: var(--primary);
+  color: #ffffff;
+  box-shadow: none;
+}
+
+.score-detail-modal {
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(760px, calc(100dvh - 32px));
+  overflow: auto;
+}
+
+.score-detail-head {
+  align-items: center;
+  padding-right: 104px;
+}
+
+.score-detail-total {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.score-detail-total strong {
+  color: var(--primary);
+  font-size: 34px;
+  line-height: 1;
+}
+
+.score-detail-total span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.score-detail-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-top: 1px solid var(--line-soft);
+  padding: 14px 24px 0;
+}
+
+.score-detail-summary span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  border-radius: 999px;
+  background: #f5f5f7;
+  padding: 4px 10px;
+  color: #515154;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.score-section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 18px 24px 24px;
+}
+
+.score-section {
+  min-width: 0;
+  border: 1px solid var(--line-soft);
+  background: #ffffff;
+}
+
+.score-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line-soft);
+  background: #fafafc;
+  padding: 14px;
+}
+
+.score-section-head h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.score-section-head strong {
+  color: var(--primary);
+  font-size: 18px;
+}
+
+.score-lines {
+  display: grid;
+  gap: 0;
+}
+
+.score-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
+  padding: 12px 14px;
+}
+
+.score-line + .score-line {
+  border-top: 1px solid #f0f0f2;
+}
+
+.score-line span {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.score-line strong {
+  color: var(--primary);
+  font-size: 14px;
+}
+
+.score-line small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.score-empty {
+  margin: 0;
+  padding: 18px 14px;
+  color: var(--muted);
+}
+
 .monitor-message-footer {
   display: flex;
   align-items: center;
@@ -5386,7 +5574,8 @@ button:disabled {
   white-space: nowrap;
 }
 
-.monitor-message-list .message-item > b {
+.monitor-message-list .message-item > b,
+.monitor-message-list .score-badge-button {
   display: none;
 }
 
