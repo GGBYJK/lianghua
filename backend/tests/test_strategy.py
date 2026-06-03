@@ -731,7 +731,7 @@ def test_bullish_ma_trend_score_uses_new_fifty_point_system() -> None:
     assert any("收盘价站上 MA60 确认项：5.0/5" in reason for reason in reasons)
 
 
-def test_bullish_ma_slope_score_uses_ma20_and_ma60() -> None:
+def test_bullish_ma_slope_score_uses_ma10_and_ma20() -> None:
     df = pd.DataFrame({
         "datetime": pd.date_range("2026-06-01 09:00:00", periods=80, freq="h"),
         "open": [100] * 80,
@@ -743,16 +743,16 @@ def test_bullish_ma_slope_score_uses_ma20_and_ma60() -> None:
     for period in [5, 10, 20, 30, 60]:
         df[f"ma{period}"] = 100.0
     index = len(df) - 1
+    df.loc[index - 5, "ma10"] = 98.0
+    df.loc[index, "ma10"] = 99.0
     df.loc[index - 5, "ma20"] = 98.0
     df.loc[index, "ma20"] = 99.0
     df.loc[index - 5, "ma60"] = 96.0
-    df.loc[index, "ma60"] = 97.0
-    df.loc[index - 5, "ma10"] = 120.0
-    df.loc[index, "ma10"] = 110.0
+    df.loc[index, "ma60"] = 95.0
 
     score, reasons = calculate_ma_trend_score(df, index, bullish=True)
 
-    assert any("MA20/MA60 斜率目标为向上" in reason and "10.0/10" in reason for reason in reasons)
+    assert any("MA10/MA20 斜率目标为向上" in reason and "10.0/10" in reason for reason in reasons)
     assert score > 0
 
 

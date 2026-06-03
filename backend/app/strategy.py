@@ -242,7 +242,7 @@ def _ma_slope_score(df: pd.DataFrame, index: int, bullish: bool) -> tuple[float,
 
     row = df.loc[index]
     prev = df.loc[index - lookback]
-    periods = (20, 60) if bullish else (10, 20)
+    periods = (10, 20)
     current = [_safe_float(row.get(f"ma{period}")) for period in periods]
     previous = [_safe_float(prev.get(f"ma{period}")) for period in periods]
     if any(value is None for value in [*current, *previous]):
