@@ -343,23 +343,53 @@ def test_sample_scan_finds_confirmed_signal() -> None:
     assert any(signal.alert_type == "right_shoulder_confirmed" for signal in signals)
 
 
-def test_monitor_unique_key_uses_pattern_key_points_and_trigger_time() -> None:
+def test_monitor_unique_key_uses_stable_pattern_structure() -> None:
     signal = {
         "symbol": "c0",
         "timeframe": "1m",
         "pattern": "head_shoulders_top",
         "alert_type": "neckline_break",
         "left_shoulder": {"time": "2026-05-12T09:00:00"},
+        "left_neck": {"time": "2026-05-12T09:05:00"},
         "head": {"time": "2026-05-12T09:10:00"},
+        "right_neck": {"time": "2026-05-12T09:15:00"},
         "right_shoulder": {"time": "2026-05-12T09:20:00"},
         "break_time": "2026-05-12T09:25:00",
         "retest_time": None,
     }
     assert build_signal_unique_key(signal) == (
         "c0|1m|head_shoulders_top|neckline_break|"
-        "2026-05-12T09:00:00|2026-05-12T09:10:00|"
-        "2026-05-12T09:20:00|2026-05-12T09:25:00"
+        "2026-05-12T09:00:00|2026-05-12T09:05:00|"
+        "2026-05-12T09:10:00|2026-05-12T09:15:00"
     )
+
+
+def test_monitor_unique_key_ignores_repeated_right_shoulder_updates() -> None:
+    signal = {
+        "symbol": "CZCE.SA609",
+        "timeframe": "3m",
+        "pattern": "inverse_head_shoulders",
+        "alert_type": "right_shoulder_confirmed",
+        "left_shoulder": {"time": "2026-06-02T21:15:00"},
+        "left_neck": {"time": "2026-06-02T21:24:00"},
+        "head": {"time": "2026-06-02T21:33:00"},
+        "right_neck": {"time": "2026-06-02T21:45:00"},
+        "right_shoulder": {"time": "2026-06-02T21:52:35"},
+        "break_time": None,
+        "retest_time": None,
+    }
+    repeated = {
+        **signal,
+        "right_shoulder": {"time": "2026-06-02T22:04:53"},
+    }
+    breakout = {
+        **repeated,
+        "alert_type": "neckline_break",
+        "break_time": "2026-06-02T22:10:00",
+    }
+
+    assert build_signal_unique_key(signal) == build_signal_unique_key(repeated)
+    assert build_signal_unique_key(signal) != build_signal_unique_key(breakout)
 
 
 def test_top_scan_emits_right_shoulder_alert_type_only() -> None:

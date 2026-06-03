@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -7,7 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi.testclient import TestClient
 
 from app.monitor import build_wechat_workbot_content, is_in_trading_session, should_emit_signal_for_item
-from app.watch_pool_store import _isoformat_utc
+from app.watch_pool_store import _alert_structure_exists, _deduplicate_alert_summaries, _isoformat_utc
 
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -38,6 +39,86 @@ def test_monitor_skips_outside_trading_sessions() -> None:
 
 def test_store_timestamps_are_returned_with_timezone() -> None:
     assert _isoformat_utc(datetime(2026, 5, 20, 1, 13, 6)) == "2026-05-20T01:13:06+00:00"
+
+
+def test_alert_summary_list_collapses_repeated_structure_updates() -> None:
+    base_signal = {
+        "symbol": "CZCE.SA609",
+        "timeframe": "3m",
+        "pattern": "inverse_head_shoulders",
+        "alert_type": "right_shoulder_confirmed",
+        "left_shoulder": {"time": "2026-06-02T21:15:00"},
+        "left_neck": {"time": "2026-06-02T21:24:00"},
+        "head": {"time": "2026-06-02T21:33:00"},
+        "right_neck": {"time": "2026-06-02T21:45:00"},
+        "right_shoulder": {"time": "2026-06-02T21:52:35"},
+    }
+    newer_alert = {
+        "id": "2",
+        "unique_key": "newer",
+        "signal_payload": {**base_signal, "right_shoulder": {"time": "2026-06-02T22:04:53"}},
+    }
+    older_alert = {
+        "id": "1",
+        "unique_key": "older",
+        "signal_payload": base_signal,
+    }
+    breakout_alert = {
+        "id": "3",
+        "unique_key": "breakout",
+        "signal_payload": {**base_signal, "alert_type": "neckline_break", "break_time": "2026-06-02T22:10:00"},
+    }
+
+    assert _deduplicate_alert_summaries([newer_alert, older_alert, breakout_alert]) == [newer_alert, breakout_alert]
+
+
+def test_alert_structure_exists_matches_legacy_unique_key_rows() -> None:
+    base_signal = {
+        "symbol": "CZCE.SA609",
+        "timeframe": "3m",
+        "pattern": "inverse_head_shoulders",
+        "alert_type": "right_shoulder_confirmed",
+        "left_shoulder": {"time": "2026-06-02T21:15:00"},
+        "left_neck": {"time": "2026-06-02T21:24:00"},
+        "head": {"time": "2026-06-02T21:33:00"},
+        "right_neck": {"time": "2026-06-02T21:45:00"},
+        "right_shoulder": {"time": "2026-06-02T21:52:35"},
+    }
+    inserted_signal = {
+        **base_signal,
+        "right_shoulder": {"time": "2026-06-02T22:04:53"},
+    }
+    inserted_alert = {
+        "symbol": "CZCE.SA609",
+        "timeframe": "3m",
+        "pattern": "inverse_head_shoulders",
+        "alert_type": "right_shoulder_confirmed",
+        "signal_payload": inserted_signal,
+    }
+
+    class Cursor:
+        def __init__(self) -> None:
+            self.params = None
+
+        def execute(self, sql, params) -> None:
+            self.params = params
+
+        def fetchall(self):
+            return [
+                {
+                    "unique_key": (
+                        "CZCE.SA609|3m|inverse_head_shoulders|right_shoulder_confirmed|"
+                        "2026-06-02T21:15:00|2026-06-02T21:33:00|"
+                        "2026-06-02T21:52:35|2026-06-02T21:52:35"
+                    ),
+                    "signal_payload": json.dumps(base_signal),
+                }
+            ]
+
+    cursor = Cursor()
+
+    assert _alert_structure_exists(cursor, inserted_alert)
+    assert cursor.params == ("CZCE.SA609", "3m", "inverse_head_shoulders", "right_shoulder_confirmed")
 
 
 def test_app_lifespan_starts_and_stops_watch_pool_monitor(monkeypatch) -> None:

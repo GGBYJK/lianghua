@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 import httpx
 
+from .alert_keys import build_signal_unique_key
 from .config import load_head_shoulder_config
 from .market_client import MarketApiError, fetch_kline_from_market
 from .strategy import add_macd_columns, add_ma_columns, find_pivots, prepare_chart_payload, scan_head_shoulders
@@ -68,22 +69,6 @@ def current_trading_window(
 
 def is_in_trading_session(now: datetime | None = None, trading_sessions: str | None = None) -> bool:
     return current_trading_window(now=now, trading_sessions=trading_sessions) is not None
-
-
-def build_signal_unique_key(signal: dict[str, Any]) -> str:
-    alert_type = signal.get("alert_type", "neckline_break")
-    trigger_time = signal.get("break_time") or signal["right_shoulder"]["time"]
-    parts = [
-        signal["symbol"],
-        signal["timeframe"],
-        signal["pattern"],
-        alert_type,
-        signal["left_shoulder"]["time"],
-        signal["head"]["time"],
-        signal["right_shoulder"]["time"],
-        trigger_time,
-    ]
-    return "|".join(str(part) for part in parts)
 
 
 def _zh(value: str) -> str:

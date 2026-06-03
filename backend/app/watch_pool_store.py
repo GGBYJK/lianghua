@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import mysql.connector
 from mysql.connector import Error as MySQLError
 
+from .alert_keys import build_alert_structure_key
 from .market_client import is_listed_futures_contract
 
 
@@ -464,9 +465,47 @@ def _row_to_alert_summary(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _deduplicate_alert_summaries(alerts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for alert in alerts:
+        key = build_alert_structure_key(alert)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        selected.append(alert)
+    return selected
+
+
+def _alert_structure_exists(cursor: Any, alert: dict[str, Any]) -> bool:
+    target_key = build_alert_structure_key(alert)
+    cursor.execute(
+        """
+        SELECT unique_key, signal_payload
+        FROM head_shoulders_alerts
+        WHERE hidden_at IS NULL
+          AND symbol = %s
+          AND timeframe = %s
+          AND pattern = %s
+          AND alert_type = %s
+        ORDER BY created_at DESC, id DESC
+        LIMIT 100
+        """,
+        (
+            alert["symbol"],
+            alert["timeframe"],
+            alert["pattern"],
+            alert["alert_type"],
+        ),
+    )
+    return any(build_alert_structure_key(row) == target_key for row in cursor.fetchall())
+
+
 def insert_head_shoulders_alert_if_new(alert: dict[str, Any]) -> bool:
     with mysql_connection() as conn:
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)
+        if _alert_structure_exists(cursor, alert):
+            return False
         cursor.execute(
             """
             INSERT IGNORE INTO head_shoulders_alerts (
@@ -505,7 +544,9 @@ def list_head_shoulders_alerts(
         filters.append("timeframe = %s")
         values.append(timeframe)
     where_clause = f"WHERE {' AND '.join(filters)}"
-    values.append(max(1, min(int(limit), 500)))
+    requested_limit = max(1, min(int(limit), 500))
+    fetch_limit = max(requested_limit, min(requested_limit * 5, 500))
+    values.append(fetch_limit)
 
     with mysql_connection() as conn:
         cursor = conn.cursor(dictionary=True)
@@ -520,7 +561,8 @@ def list_head_shoulders_alerts(
             """,
             tuple(values),
         )
-        return [_row_to_alert_summary(row) for row in cursor.fetchall()]
+        alerts = [_row_to_alert_summary(row) for row in cursor.fetchall()]
+        return _deduplicate_alert_summaries(alerts)[:requested_limit]
 
 
 def get_head_shoulders_alert(alert_id: str) -> dict[str, Any]:
