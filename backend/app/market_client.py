@@ -130,7 +130,7 @@ def _fetch_kline_from_tqsdk_market_sync(symbol: str, period: str, limit: int = 1
         base_df = get_tqsdk_service().get_kline(tq_symbol=tq_symbol, duration_seconds=300, limit=base_limit)
         return aggregate_exchange_hourly_bars(base_df).tail(limit).reset_index(drop=True)
     if should_aggregate_daily_from_intraday() and normalized_period in {"1d", "day"}:
-        base_limit = max(limit * 90, int(os.getenv("TQ_EXCHANGE_DAILY_BASE_LIMIT", "420")))
+        base_limit = max(limit * 90, int(os.getenv("TQ_EXCHANGE_DAILY_BASE_LIMIT", "9000")))
         base_df = get_tqsdk_service().get_kline(tq_symbol=tq_symbol, duration_seconds=300, limit=base_limit)
         return aggregate_exchange_daily_bars(base_df).tail(limit).reset_index(drop=True)
     duration_seconds = normalize_tqsdk_period(period)
@@ -390,7 +390,7 @@ def should_use_exchange_session_bars() -> bool:
 
 
 def should_aggregate_daily_from_intraday() -> bool:
-    return os.getenv("TQ_AGGREGATE_DAILY_FROM_INTRADAY", "0").strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("TQ_AGGREGATE_DAILY_FROM_INTRADAY", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def aggregate_exchange_hourly_bars(df: pd.DataFrame) -> pd.DataFrame:
@@ -447,12 +447,19 @@ def exchange_trading_day_start(value: Any) -> pd.Timestamp | None:
     ts = pd.Timestamp(value).tz_localize(None)
     minutes = ts.hour * 60 + ts.minute
     if minutes >= 21 * 60:
-        return (ts + pd.Timedelta(days=1)).normalize()
+        return roll_forward_weekend((ts + pd.Timedelta(days=1)).normalize())
     if minutes < 2 * 60 + 30:
-        return ts.normalize()
+        return roll_forward_weekend(ts.normalize())
     if 9 * 60 <= minutes < 15 * 60:
         return ts.normalize()
     return None
+
+
+def roll_forward_weekend(value: pd.Timestamp) -> pd.Timestamp:
+    ts = pd.Timestamp(value).normalize()
+    while ts.weekday() >= 5:
+        ts += pd.Timedelta(days=1)
+    return ts
 
 
 def ohlcv_from_groups(grouped: Any) -> pd.DataFrame:

@@ -281,6 +281,33 @@ def test_exchange_daily_bars_treat_night_session_as_next_trading_day() -> None:
     assert daily["volume"].iloc[0] == 10
 
 
+def test_exchange_daily_bars_roll_friday_night_session_to_monday() -> None:
+    df = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(
+                [
+                    "2026-05-29 21:00",
+                    "2026-05-29 22:55",
+                    "2026-06-01 09:00",
+                    "2026-06-01 14:55",
+                ]
+            ),
+            "open": [10, 11, 12, 13],
+            "high": [12, 13, 14, 15],
+            "low": [9, 10, 11, 12],
+            "close": [11, 12, 13, 14],
+            "volume": [1, 2, 3, 4],
+        }
+    )
+
+    daily = aggregate_exchange_daily_bars(df)
+
+    assert len(daily) == 1
+    assert daily["datetime"].iloc[0].isoformat() == "2026-06-01T00:00:00"
+    assert daily["open"].iloc[0] == 10
+    assert daily["close"].iloc[0] == 14
+
+
 def test_tqsdk_main_and_sub_contract_query_uses_open_interest() -> None:
     class FakeQuote:
         def __init__(self, open_interest: float) -> None:
