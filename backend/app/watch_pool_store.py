@@ -477,11 +477,34 @@ def _deduplicate_alert_summaries(alerts: list[dict[str, Any]]) -> list[dict[str,
     return selected
 
 
-def _alert_structure_exists(cursor: Any, alert: dict[str, Any]) -> bool:
+def _signal_has_score_details(signal: Any) -> bool:
+    if isinstance(signal, str):
+        try:
+            signal = json.loads(signal)
+        except json.JSONDecodeError:
+            return False
+    if not isinstance(signal, dict):
+        return False
+    reasons = signal.get("reasons")
+    if not isinstance(reasons, list):
+        return False
+    return any(
+        isinstance(reason, str)
+        and (
+            reason.startswith("小时线评分")
+            or reason.startswith("日线评分")
+            or reason.startswith("Hourly timeframe")
+            or reason.startswith("Daily timeframe")
+        )
+        for reason in reasons
+    )
+
+
+def _matching_alert_structure(cursor: Any, alert: dict[str, Any]) -> dict[str, Any] | None:
     target_key = build_alert_structure_key(alert)
     cursor.execute(
         """
-        SELECT unique_key, signal_payload
+        SELECT id, unique_key, signal_payload
         FROM head_shoulders_alerts
         WHERE hidden_at IS NULL
           AND symbol = %s
@@ -498,13 +521,46 @@ def _alert_structure_exists(cursor: Any, alert: dict[str, Any]) -> bool:
             alert["alert_type"],
         ),
     )
-    return any(build_alert_structure_key(row) == target_key for row in cursor.fetchall())
+    for row in cursor.fetchall():
+        if build_alert_structure_key(row) == target_key:
+            return row
+    return None
+
+
+def _alert_structure_exists(cursor: Any, alert: dict[str, Any]) -> bool:
+    return _matching_alert_structure(cursor, alert) is not None
+
+
+def _refresh_existing_alert_score_if_missing(cursor: Any, existing: dict[str, Any], alert: dict[str, Any]) -> None:
+    if _signal_has_score_details(existing.get("signal_payload")):
+        return
+    if not _signal_has_score_details(alert.get("signal_payload")):
+        return
+    cursor.execute(
+        """
+        UPDATE head_shoulders_alerts
+        SET score = %s,
+            message = %s,
+            signal_payload = %s,
+            chart_payload = %s
+        WHERE id = %s
+        """,
+        (
+            alert["score"],
+            alert["message"],
+            json.dumps(alert["signal_payload"], ensure_ascii=False),
+            json.dumps(alert["chart_payload"], ensure_ascii=False),
+            existing["id"],
+        ),
+    )
 
 
 def insert_head_shoulders_alert_if_new(alert: dict[str, Any]) -> bool:
     with mysql_connection() as conn:
         cursor = conn.cursor(dictionary=True)
-        if _alert_structure_exists(cursor, alert):
+        existing = _matching_alert_structure(cursor, alert)
+        if existing is not None:
+            _refresh_existing_alert_score_if_missing(cursor, existing, alert)
             return False
         cursor.execute(
             """

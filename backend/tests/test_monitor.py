@@ -8,7 +8,13 @@ from zoneinfo import ZoneInfo
 from fastapi.testclient import TestClient
 
 from app.monitor import build_wechat_workbot_content, is_in_trading_session, should_emit_signal_for_item
-from app.watch_pool_store import _alert_structure_exists, _deduplicate_alert_summaries, _isoformat_utc
+from app.watch_pool_store import (
+    _alert_structure_exists,
+    _deduplicate_alert_summaries,
+    _refresh_existing_alert_score_if_missing,
+    _signal_has_score_details,
+    _isoformat_utc,
+)
 
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -119,6 +125,37 @@ def test_alert_structure_exists_matches_legacy_unique_key_rows() -> None:
 
     assert _alert_structure_exists(cursor, inserted_alert)
     assert cursor.params == ("CZCE.SA609", "3m", "inverse_head_shoulders", "right_shoulder_confirmed")
+
+
+def test_score_detail_detection_handles_new_and_legacy_payloads() -> None:
+    assert _signal_has_score_details({"reasons": ["小时线评分：32/50"]})
+    assert _signal_has_score_details({"reasons": ["Daily timeframe score: 28/50"]})
+    assert not _signal_has_score_details({"reasons": ["头部高于左右肩", "右肩已确认"]})
+
+
+def test_existing_unscored_alert_is_refreshed_without_duplicate_insert() -> None:
+    executed: list[tuple[str, tuple[object, ...]]] = []
+    existing = {
+        "id": 9,
+        "signal_payload": json.dumps({"reasons": ["头部高于左右肩"]}),
+    }
+    alert = {
+        "score": 82,
+        "message": "scored",
+        "signal_payload": {"reasons": ["头部高于左右肩", "小时线评分：42/50"]},
+        "chart_payload": {"candles": []},
+    }
+
+    class Cursor:
+        def execute(self, sql, params) -> None:
+            executed.append((sql, params))
+
+    _refresh_existing_alert_score_if_missing(Cursor(), existing, alert)
+
+    assert len(executed) == 1
+    assert "UPDATE head_shoulders_alerts" in executed[0][0]
+    assert executed[0][1][0] == 82
+    assert executed[0][1][-1] == 9
 
 
 def test_app_lifespan_starts_and_stops_watch_pool_monitor(monkeypatch) -> None:
