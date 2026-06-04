@@ -35,6 +35,7 @@ class WatchPoolItemBase(BaseModel):
     monitor_minutes: int = Field(default=30, ge=1, le=1440)
     trading_sessions: str = Field(default="day,night", max_length=40)
     min_head_to_neck_height: float = Field(default=0.0, ge=0.0)
+    min_shoulder_to_neck_height: float = Field(default=0.0, ge=0.0)
 
 
 class WatchPoolItemCreate(WatchPoolItemBase):

@@ -298,6 +298,15 @@ def scan_dataframe_payload(
     return [signal.to_dict() for signal in signals], chart
 
 
+def build_watch_pool_config_overrides(item: dict[str, Any]) -> dict[str, Any] | None:
+    overrides: dict[str, Any] = {}
+    if float(item.get("min_head_to_neck_height", 0)) > 0:
+        overrides["min_head_to_neck_height"] = float(item["min_head_to_neck_height"])
+    if float(item.get("min_shoulder_to_neck_height", 0)) > 0:
+        overrides["min_shoulder_to_neck_height"] = float(item["min_shoulder_to_neck_height"])
+    return overrides or None
+
+
 async def scan_watch_pool_once(limit: int = 420) -> int:
     inserted = 0
     items = list_enabled_watch_pool_items()
@@ -311,14 +320,11 @@ async def scan_watch_pool_once(limit: int = 420) -> int:
                 fetch_kline_from_market(symbol=item["symbol"], period="1h", limit=max(80, min(limit, 240))),
                 fetch_kline_from_market(symbol=item["symbol"], period="1d", limit=max(80, min(limit, 240))),
             )
-            config_overrides = {}
-            if float(item.get("min_head_to_neck_height", 0)) > 0:
-                config_overrides["min_head_to_neck_height"] = float(item["min_head_to_neck_height"])
             signals, chart = scan_dataframe_payload(
                 df,
                 symbol=item["symbol"],
                 timeframe=item["timeframe"],
-                config_overrides=config_overrides or None,
+                config_overrides=build_watch_pool_config_overrides(item),
                 hourly_df=hourly_df,
                 daily_df=daily_df,
             )
@@ -408,14 +414,11 @@ async def monitor_watch_pool_loop(stop_event: asyncio.Event) -> None:
                         fetch_kline_from_market(symbol=item["symbol"], period="1h", limit=max(80, min(kline_limit, 240))),
                         fetch_kline_from_market(symbol=item["symbol"], period="1d", limit=max(80, min(kline_limit, 240))),
                     )
-                    config_overrides = {}
-                    if float(item.get("min_head_to_neck_height", 0)) > 0:
-                        config_overrides["min_head_to_neck_height"] = float(item["min_head_to_neck_height"])
                     signals, chart = scan_dataframe_payload(
                         df,
                         symbol=item["symbol"],
                         timeframe=item["timeframe"],
-                        config_overrides=config_overrides or None,
+                        config_overrides=build_watch_pool_config_overrides(item),
                         hourly_df=hourly_df,
                         daily_df=daily_df,
                     )

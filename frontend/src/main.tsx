@@ -136,6 +136,7 @@ type WatchPoolItem = {
   monitorMinutes: number;
   tradingSessions: string;
   minHeadToNeckHeight: number;
+  minShoulderToNeckHeight: number;
   createdAt: string;
 };
 
@@ -154,9 +155,9 @@ type ContractSymbolOption = {
 };
 
 const watchPoolImportDemo = [
-  ["品种名称", "监控品种", "监控周期", "检测时长", "头部到颈线最小高度", "交易时间段", "监控开关"],
-  ["螺纹钢", "SHFE.rb2605", "1m", "30", "0", "day,night", "开启"],
-  ["热卷", "SHFE.hc2610", "3m", "60", "8", "day", "开启"],
+  ["品种名称", "监控品种", "监控周期", "检测时长", "头部到颈线最小高度", "颈到肩最小价差", "交易时间段", "监控开关"],
+  ["螺纹钢", "SHFE.rb2605", "1m", "30", "0", "0", "day,night", "开启"],
+  ["热卷", "SHFE.hc2610", "3m", "60", "8", "4", "day", "开启"],
 ];
 
 const tradingSessionOptions: Array<{ key: TradingSessionKey; label: string; range: string }> = [
@@ -172,6 +173,7 @@ const emptyWatchDraft: WatchPoolDraft = {
   monitorMinutes: 30,
   tradingSessions: DEFAULT_TRADING_SESSIONS,
   minHeadToNeckHeight: 0,
+  minShoulderToNeckHeight: 0,
 };
 
 function normalizeTradingSessions(value: string) {
@@ -194,6 +196,7 @@ function mapWatchPoolItem(item: ApiWatchPoolItem): WatchPoolItem {
     monitorMinutes: item.monitor_minutes,
     tradingSessions: item.trading_sessions || DEFAULT_TRADING_SESSIONS,
     minHeadToNeckHeight: item.min_head_to_neck_height ?? 0,
+    minShoulderToNeckHeight: item.min_shoulder_to_neck_height ?? 0,
     createdAt: item.created_at ? formatAlertTime(item.created_at) : "--",
   };
 }
@@ -449,6 +452,7 @@ function App() {
       monitorMinutes: item.monitorMinutes,
       tradingSessions: item.tradingSessions,
       minHeadToNeckHeight: item.minHeadToNeckHeight,
+      minShoulderToNeckHeight: item.minShoulderToNeckHeight,
     });
     setWatchEditorOpen(true);
   }
@@ -484,6 +488,7 @@ function App() {
       monitor_minutes: Math.max(1, Number(watchDraft.monitorMinutes) || 1),
       trading_sessions: normalizedTradingSessions,
       min_head_to_neck_height: Math.max(0, Number(watchDraft.minHeadToNeckHeight) || 0),
+      min_shoulder_to_neck_height: Math.max(0, Number(watchDraft.minShoulderToNeckHeight) || 0),
     };
     try {
       const saved = editingWatchId
@@ -554,6 +559,7 @@ function App() {
         monitor_minutes: item.monitorMinutes,
         trading_sessions: normalizeTradingSessions(item.tradingSessions) || DEFAULT_TRADING_SESSIONS,
         min_head_to_neck_height: item.minHeadToNeckHeight,
+        min_shoulder_to_neck_height: item.minShoulderToNeckHeight,
       });
       const nextItem = mapWatchPoolItem(saved);
       setWatchPool((items) => items.map((current) => current.id === item.id ? nextItem : current));
@@ -1389,6 +1395,16 @@ const WatchPool = React.forwardRef<HTMLElement, {
                   step={0.01}
                   value={draft.minHeadToNeckHeight}
                   onChange={(value) => onDraftChange((prev) => ({ ...prev, minHeadToNeckHeight: Number(value) || 0 }))}
+                  placeholder="0 表示使用策略默认值"
+                />
+              </label>
+              <label>
+                左颈到左肩，右颈到右肩最小价差
+                <InputNumber
+                  min={0}
+                  step={0.01}
+                  value={draft.minShoulderToNeckHeight}
+                  onChange={(value) => onDraftChange((prev) => ({ ...prev, minShoulderToNeckHeight: Number(value) || 0 }))}
                   placeholder="0 表示使用策略默认值"
                 />
               </label>

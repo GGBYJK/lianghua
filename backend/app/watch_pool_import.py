@@ -7,7 +7,16 @@ from typing import Any
 from openpyxl import load_workbook
 
 
-EXPECTED_HEADERS = ["品种名称", "监控品种", "监控周期", "检测时长", "头部到颈线最小高度", "交易时间段", "监控开关"]
+EXPECTED_HEADERS = [
+    "品种名称",
+    "监控品种",
+    "监控周期",
+    "检测时长",
+    "头部到颈线最小高度",
+    "颈到肩最小价差",
+    "交易时间段",
+    "监控开关",
+]
 ALLOWED_TIMEFRAMES = {"1m", "3m", "5m", "15m", "30m", "60m", "1h"}
 DEFAULT_TRADING_SESSIONS = "day,night"
 
@@ -77,6 +86,10 @@ def parse_watch_pool_excel(content: bytes, contract_lookup: dict[str, str]) -> t
         if min_height is None or min_height < 0:
             row_errors.append(ImportIssue(index, "头部到颈线最小高度必须是大于等于 0 的数字", symbol or None, timeframe or None, "头部到颈线最小高度"))
 
+        min_shoulder_height = parse_float(raw.get("颈到肩最小价差"), default=0.0)
+        if min_shoulder_height is None or min_shoulder_height < 0:
+            row_errors.append(ImportIssue(index, "颈到肩最小价差必须是大于等于 0 的数字", symbol or None, timeframe or None, "颈到肩最小价差"))
+
         trading_sessions = normalize_trading_sessions(raw.get("交易时间段"))
         if not trading_sessions:
             row_errors.append(ImportIssue(index, "交易时间段必须是 day、night 或 day,night", symbol or None, timeframe or None, "交易时间段"))
@@ -104,6 +117,7 @@ def parse_watch_pool_excel(content: bytes, contract_lookup: dict[str, str]) -> t
                 "monitor_minutes": int(monitor_minutes),
                 "trading_sessions": trading_sessions or DEFAULT_TRADING_SESSIONS,
                 "min_head_to_neck_height": float(min_height),
+                "min_shoulder_to_neck_height": float(min_shoulder_height),
                 "_row": index,
             }
         )

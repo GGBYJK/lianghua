@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
-from app.monitor import build_wechat_workbot_content, is_in_trading_session, should_emit_signal_for_item
+from app.monitor import build_watch_pool_config_overrides, build_wechat_workbot_content, is_in_trading_session, should_emit_signal_for_item
 from app.watch_pool_store import (
     _alert_structure_exists,
     _deduplicate_alert_summaries,
@@ -238,7 +238,21 @@ def test_ensure_watch_pool_item_does_not_reenable_existing_item(monkeypatch) -> 
     })
 
     update_calls = [params for sql, params in calls if "UPDATE watch_pool_items" in sql]
-    assert update_calls == [("热卷2610 5分钟", 3, "day,night", 0.0, 4)]
+    assert update_calls == [("热卷2610 5分钟", 3, "day,night", 0.0, 0.0, 4)]
+
+
+def test_watch_pool_config_overrides_include_optional_price_gap_thresholds() -> None:
+    assert build_watch_pool_config_overrides({
+        "min_head_to_neck_height": 8,
+        "min_shoulder_to_neck_height": 4,
+    }) == {
+        "min_head_to_neck_height": 8.0,
+        "min_shoulder_to_neck_height": 4.0,
+    }
+    assert build_watch_pool_config_overrides({
+        "min_head_to_neck_height": 0,
+        "min_shoulder_to_neck_height": 0,
+    }) is None
 
 
 def test_watch_pool_list_orders_by_created_at(monkeypatch) -> None:

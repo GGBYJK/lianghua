@@ -99,6 +99,7 @@ def init_watch_pool_store() -> None:
                 monitor_minutes INT NOT NULL DEFAULT 30,
                 trading_sessions VARCHAR(40) NOT NULL DEFAULT 'day,night',
                 min_head_to_neck_height DOUBLE NOT NULL DEFAULT 0,
+                min_shoulder_to_neck_height DOUBLE NOT NULL DEFAULT 0,
                 monitor_started_at TIMESTAMP NULL DEFAULT NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -128,6 +129,14 @@ def init_watch_pool_store() -> None:
                 """
                 ALTER TABLE watch_pool_items
                 ADD COLUMN min_head_to_neck_height DOUBLE NOT NULL DEFAULT 0 AFTER trading_sessions
+                """
+            )
+        cursor.execute("SHOW COLUMNS FROM watch_pool_items LIKE 'min_shoulder_to_neck_height'")
+        if cursor.fetchone() is None:
+            cursor.execute(
+                """
+                ALTER TABLE watch_pool_items
+                ADD COLUMN min_shoulder_to_neck_height DOUBLE NOT NULL DEFAULT 0 AFTER min_head_to_neck_height
                 """
             )
         cursor.execute(
@@ -223,6 +232,7 @@ def _row_to_item(row: dict[str, Any]) -> dict[str, Any]:
         "monitor_minutes": int(row["monitor_minutes"]),
         "trading_sessions": row.get("trading_sessions") or "day,night",
         "min_head_to_neck_height": float(row.get("min_head_to_neck_height") or 0),
+        "min_shoulder_to_neck_height": float(row.get("min_shoulder_to_neck_height") or 0),
         "monitor_started_at": _isoformat_utc(row.get("monitor_started_at")),
         "created_at": _isoformat_utc(row.get("created_at")),
         "updated_at": _isoformat_utc(row.get("updated_at")),
@@ -234,7 +244,7 @@ def list_watch_pool_items() -> list[dict[str, Any]]:
         cursor = conn.cursor(dictionary=True)
         cursor.execute(
             """
-            SELECT id, name, symbol, timeframe, enabled, monitor_minutes, trading_sessions, min_head_to_neck_height, monitor_started_at, created_at, updated_at
+            SELECT id, name, symbol, timeframe, enabled, monitor_minutes, trading_sessions, min_head_to_neck_height, min_shoulder_to_neck_height, monitor_started_at, created_at, updated_at
             FROM watch_pool_items
             ORDER BY created_at DESC, id DESC
             """
@@ -254,7 +264,7 @@ def list_enabled_watch_pool_items() -> list[dict[str, Any]]:
         cursor = conn.cursor(dictionary=True)
         cursor.execute(
             """
-            SELECT id, name, symbol, timeframe, enabled, monitor_minutes, trading_sessions, min_head_to_neck_height, monitor_started_at, created_at, updated_at
+            SELECT id, name, symbol, timeframe, enabled, monitor_minutes, trading_sessions, min_head_to_neck_height, min_shoulder_to_neck_height, monitor_started_at, created_at, updated_at
             FROM watch_pool_items
             WHERE enabled = 1
             ORDER BY id ASC
@@ -295,8 +305,8 @@ def create_watch_pool_item(item: dict[str, Any]) -> dict[str, Any]:
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO watch_pool_items (name, symbol, timeframe, enabled, monitor_minutes, trading_sessions, min_head_to_neck_height, monitor_started_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO watch_pool_items (name, symbol, timeframe, enabled, monitor_minutes, trading_sessions, min_head_to_neck_height, min_shoulder_to_neck_height, monitor_started_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 item["name"],
@@ -306,6 +316,7 @@ def create_watch_pool_item(item: dict[str, Any]) -> dict[str, Any]:
                 item["monitor_minutes"],
                 item.get("trading_sessions", "day,night"),
                 float(item.get("min_head_to_neck_height", 0)),
+                float(item.get("min_shoulder_to_neck_height", 0)),
                 _utc_now_without_tz() if item["enabled"] else None,
             ),
         )
@@ -331,8 +342,8 @@ def ensure_watch_pool_item(item: dict[str, Any]) -> dict[str, Any]:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO watch_pool_items (name, symbol, timeframe, enabled, monitor_minutes, trading_sessions, min_head_to_neck_height, monitor_started_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO watch_pool_items (name, symbol, timeframe, enabled, monitor_minutes, trading_sessions, min_head_to_neck_height, min_shoulder_to_neck_height, monitor_started_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     item["name"],
@@ -342,6 +353,7 @@ def ensure_watch_pool_item(item: dict[str, Any]) -> dict[str, Any]:
                     item["monitor_minutes"],
                     item.get("trading_sessions", "day,night"),
                     float(item.get("min_head_to_neck_height", 0)),
+                    float(item.get("min_shoulder_to_neck_height", 0)),
                     _utc_now_without_tz() if item["enabled"] else None,
                 ),
             )
@@ -352,7 +364,7 @@ def ensure_watch_pool_item(item: dict[str, Any]) -> dict[str, Any]:
             cursor.execute(
                 """
                 UPDATE watch_pool_items
-                SET name = %s, monitor_minutes = %s, trading_sessions = %s, min_head_to_neck_height = %s
+                SET name = %s, monitor_minutes = %s, trading_sessions = %s, min_head_to_neck_height = %s, min_shoulder_to_neck_height = %s
                 WHERE id = %s
                 """,
                 (
@@ -360,6 +372,7 @@ def ensure_watch_pool_item(item: dict[str, Any]) -> dict[str, Any]:
                     item["monitor_minutes"],
                     item.get("trading_sessions", "day,night"),
                     float(item.get("min_head_to_neck_height", 0)),
+                    float(item.get("min_shoulder_to_neck_height", 0)),
                     item_id,
                 ),
             )
@@ -371,7 +384,7 @@ def get_watch_pool_item(item_id: str) -> dict[str, Any]:
         cursor = conn.cursor(dictionary=True)
         cursor.execute(
             """
-            SELECT id, name, symbol, timeframe, enabled, monitor_minutes, trading_sessions, min_head_to_neck_height, monitor_started_at, created_at, updated_at
+            SELECT id, name, symbol, timeframe, enabled, monitor_minutes, trading_sessions, min_head_to_neck_height, min_shoulder_to_neck_height, monitor_started_at, created_at, updated_at
             FROM watch_pool_items
             WHERE id = %s
             """,
@@ -407,7 +420,7 @@ def update_watch_pool_item(item_id: str, item: dict[str, Any]) -> dict[str, Any]
         cursor.execute(
             """
             UPDATE watch_pool_items
-            SET name = %s, symbol = %s, timeframe = %s, enabled = %s, monitor_minutes = %s, trading_sessions = %s, min_head_to_neck_height = %s, monitor_started_at = %s
+            SET name = %s, symbol = %s, timeframe = %s, enabled = %s, monitor_minutes = %s, trading_sessions = %s, min_head_to_neck_height = %s, min_shoulder_to_neck_height = %s, monitor_started_at = %s
             WHERE id = %s
             """,
             (
@@ -418,6 +431,7 @@ def update_watch_pool_item(item_id: str, item: dict[str, Any]) -> dict[str, Any]
                 item["monitor_minutes"],
                 item.get("trading_sessions", "day,night"),
                 float(item.get("min_head_to_neck_height", 0)),
+                float(item.get("min_shoulder_to_neck_height", 0)),
                 monitor_started_at,
                 item_id,
             ),
