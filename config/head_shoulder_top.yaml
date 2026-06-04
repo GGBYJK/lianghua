@@ -6,8 +6,6 @@ default:
   max_neck_diff_pct: 0.004
   min_right_leg_to_left_leg_ratio: 0.6
   max_right_leg_to_left_leg_ratio: 2.0
-  min_head_to_right_neck_to_left_neck_to_head_ratio: 0.6
-  max_head_to_right_neck_to_left_neck_to_head_ratio: 2.0
   min_right_shoulder_ratio_to_left: 0.85
   require_head_beyond_shoulders_and_necks: false
   require_shoulders_between_opposite_neck_and_head: false
@@ -39,8 +37,6 @@ timeframes:
     pivot_right: 5
     min_right_leg_to_left_leg_ratio: 0.35
     max_right_leg_to_left_leg_ratio: 3.0
-    min_head_to_right_neck_to_left_neck_to_head_ratio: 0.35
-    max_head_to_right_neck_to_left_neck_to_head_ratio: 3.0
     require_head_beyond_shoulders_and_necks: true
     require_shoulders_between_opposite_neck_and_head: true
     min_shoulder_to_neck_height: 4
@@ -49,6 +45,7 @@ timeframes:
   3m:
     pivot_left: 3
     pivot_right: 3
+    max_shoulder_diff_pct: 0.005
     require_head_beyond_shoulders_and_necks: true
     require_shoulders_between_opposite_neck_and_head: true
     macd_price_new_high_pct: 0.0005
@@ -57,6 +54,7 @@ timeframes:
   5m:
     pivot_left: 3
     pivot_right: 3
+    max_shoulder_diff_pct: 0.005
     require_head_beyond_shoulders_and_necks: true
     require_shoulders_between_opposite_neck_and_head: true
     macd_price_new_high_pct: 0.0005
@@ -81,15 +79,11 @@ timeframes:
 symbols:
   rb:
     5m:
-      max_shoulder_diff_pct: 0.004
       max_neck_diff_pct: 0.004
   ag:
     5m:
-      max_shoulder_diff_pct: 0.004
       max_neck_diff_pct: 0.004
   hc:
     1h:
       min_right_leg_to_left_leg_ratio: 0.2
       max_right_leg_to_left_leg_ratio: 5.0
-      min_head_to_right_neck_to_left_neck_to_head_ratio: 0.2
-      max_head_to_right_neck_to_left_neck_to_head_ratio: 5.0

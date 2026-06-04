@@ -66,6 +66,28 @@ def test_symbol_prefix() -> None:
     assert get_symbol_prefix("SA405") == "sa"
 
 
+def test_three_minute_config_accepts_wide_right_neck_top_setup() -> None:
+    config = load_head_shoulder_config("SA609", "3m")
+    times = pd.to_datetime([
+        "2026-06-03 21:06:00",
+        "2026-06-03 21:15:00",
+        "2026-06-03 21:39:00",
+        "2026-06-04 09:18:00",
+        "2026-06-04 09:27:00",
+    ])
+    points = [
+        PivotPoint(0, times[0], 1206, "high"),
+        PivotPoint(3, times[1], 1197, "low"),
+        PivotPoint(11, times[2], 1210, "high"),
+        PivotPoint(44, times[3], 1196, "low"),
+        PivotPoint(47, times[4], 1201, "high"),
+    ]
+
+    ok, _, _ = validate_head_shoulders_structure(points, config)
+
+    assert ok
+
+
 def test_csv_aliases() -> None:
     raw = pd.DataFrame({
         "trade_time": ["2026-04-24 09:00:00"],
@@ -97,9 +119,11 @@ def test_five_minute_config_also_enables_strict_shape_rules() -> None:
     assert config_3m.require_head_beyond_shoulders_and_necks is True
     assert config_3m.require_shoulders_between_opposite_neck_and_head is True
     assert config_3m.min_shoulder_to_neck_height == 0
+    assert config_3m.max_shoulder_diff_pct == 0.005
     assert config_5m.require_head_beyond_shoulders_and_necks is True
     assert config_5m.require_shoulders_between_opposite_neck_and_head is True
     assert config_5m.min_shoulder_to_neck_height == 0
+    assert config_5m.max_shoulder_diff_pct == 0.005
     assert config_15m.require_head_beyond_shoulders_and_necks is False
     assert config_15m.require_shoulders_between_opposite_neck_and_head is False
 
@@ -435,7 +459,6 @@ def test_sample_scan_finds_confirmed_signal() -> None:
         ma_short=3,
         ma_mid=5,
         ma_long=8,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.5,
         require_ma_bearish_alignment=False,
         require_close_below_ma_long=True,
         min_score_to_alert=70,
@@ -503,7 +526,6 @@ def test_top_scan_emits_right_shoulder_alert_type_only() -> None:
         ma_short=3,
         ma_mid=5,
         ma_long=8,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.5,
         require_ma_bearish_alignment=False,
         require_close_below_ma_long=True,
         min_score_to_alert=70,
@@ -544,7 +566,6 @@ def test_top_scan_keeps_first_right_shoulder_for_same_left_setup() -> None:
         max_neck_diff_pct=0.02,
         min_right_leg_to_left_leg_ratio=0.5,
         max_right_leg_to_left_leg_ratio=2.0,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.5,
         require_ma_bearish_alignment=False,
         require_close_below_ma_long=False,
         enable_score=False,
@@ -771,7 +792,6 @@ def test_mirrored_sample_finds_confirmed_inverse_signal() -> None:
         ma_short=3,
         ma_mid=5,
         ma_long=8,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.5,
         require_ma_bearish_alignment=False,
         require_close_below_ma_long=True,
         min_score_to_alert=70,
@@ -790,7 +810,6 @@ def test_combined_scan_returns_pattern_field() -> None:
         ma_short=3,
         ma_mid=5,
         ma_long=8,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.5,
         require_ma_bearish_alignment=False,
         require_close_below_ma_long=True,
         min_score_to_alert=70,
@@ -815,7 +834,6 @@ def test_combined_scan_includes_inverse_pattern() -> None:
         ma_short=3,
         ma_mid=5,
         ma_long=8,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.5,
         require_ma_bearish_alignment=False,
         require_close_below_ma_long=True,
         min_score_to_alert=70,
@@ -990,8 +1008,6 @@ def test_head_shoulders_requires_shoulders_and_necks_within_0_4_pct() -> None:
         max_neck_diff_pct=0.004,
         min_right_leg_to_left_leg_ratio=0.1,
         max_right_leg_to_left_leg_ratio=10,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
-        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
     )
 
     ok, _, _ = validate_head_shoulders_structure([
@@ -1024,6 +1040,35 @@ def test_head_shoulders_requires_shoulders_and_necks_within_0_4_pct() -> None:
     assert not ok
 
 
+def test_head_neck_bar_ratio_no_longer_filters_top_or_inverse() -> None:
+    times = pd.date_range("2026-03-18 10:00:00", periods=5, freq="h")
+    config = HeadShoulderTopConfig(
+        min_shoulder_to_head_height_ratio=0.01,
+        max_shoulder_diff_pct=0.02,
+        max_neck_diff_pct=0.02,
+        min_right_leg_to_left_leg_ratio=0.1,
+        max_right_leg_to_left_leg_ratio=20,
+    )
+
+    top_ok, _, _ = validate_head_shoulders_structure([
+        PivotPoint(0, times[0], 100, "high"),
+        PivotPoint(10, times[1], 90, "low"),
+        PivotPoint(11, times[2], 110, "high"),
+        PivotPoint(21, times[3], 90, "low"),
+        PivotPoint(31, times[4], 100, "high"),
+    ], config)
+    inverse_ok, _, _ = validate_inverse_head_shoulders_structure([
+        PivotPoint(0, times[0], 100, "low"),
+        PivotPoint(10, times[1], 110, "high"),
+        PivotPoint(11, times[2], 90, "low"),
+        PivotPoint(21, times[3], 110, "high"),
+        PivotPoint(31, times[4], 100, "low"),
+    ], config)
+
+    assert top_ok
+    assert inverse_ok
+
+
 def test_head_shoulders_requires_price_tier_head_to_neck_height() -> None:
     times = pd.date_range("2026-03-18 10:00:00", periods=5, freq="h")
     config = HeadShoulderTopConfig(
@@ -1032,8 +1077,6 @@ def test_head_shoulders_requires_price_tier_head_to_neck_height() -> None:
         max_neck_diff_pct=0.5,
         min_right_leg_to_left_leg_ratio=0.1,
         max_right_leg_to_left_leg_ratio=10,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
-        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
     )
 
     cases = [
@@ -1072,8 +1115,6 @@ def test_inverse_head_shoulders_requires_price_tier_head_to_neck_height() -> Non
         max_neck_diff_pct=0.5,
         min_right_leg_to_left_leg_ratio=0.1,
         max_right_leg_to_left_leg_ratio=10,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
-        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
     )
 
     ok, reasons, _ = validate_inverse_head_shoulders_structure([
@@ -1096,8 +1137,6 @@ def test_inverse_head_shoulders_price_tier_height_boundaries() -> None:
         max_neck_diff_pct=0.5,
         min_right_leg_to_left_leg_ratio=0.1,
         max_right_leg_to_left_leg_ratio=10,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
-        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
     )
 
     cases = [
@@ -1135,8 +1174,6 @@ def test_head_shoulders_requires_at_least_one_shoulder_height_ratio() -> None:
         max_neck_diff_pct=0.5,
         min_right_leg_to_left_leg_ratio=0.1,
         max_right_leg_to_left_leg_ratio=10,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
-        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
     )
 
     ok, _, _ = validate_head_shoulders_structure([
@@ -1187,8 +1224,6 @@ def test_inverse_head_shoulders_requires_at_least_one_shoulder_height_ratio() ->
         max_neck_diff_pct=0.5,
         min_right_leg_to_left_leg_ratio=0.1,
         max_right_leg_to_left_leg_ratio=10,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
-        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
     )
 
     ok, _, _ = validate_inverse_head_shoulders_structure([
@@ -1209,8 +1244,6 @@ def test_head_shoulders_strict_one_minute_price_rules() -> None:
         max_neck_diff_pct=0.5,
         min_right_leg_to_left_leg_ratio=0.1,
         max_right_leg_to_left_leg_ratio=10,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
-        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
         require_head_beyond_shoulders_and_necks=True,
         require_shoulders_between_opposite_neck_and_head=True,
         min_shoulder_to_neck_height=4,
@@ -1274,8 +1307,6 @@ def test_inverse_head_shoulders_strict_one_minute_price_rules() -> None:
         max_neck_diff_pct=0.5,
         min_right_leg_to_left_leg_ratio=0.1,
         max_right_leg_to_left_leg_ratio=10,
-        min_head_to_right_neck_to_left_neck_to_head_ratio=0.1,
-        max_head_to_right_neck_to_left_neck_to_head_ratio=10,
         require_head_beyond_shoulders_and_necks=True,
         require_shoulders_between_opposite_neck_and_head=True,
         min_shoulder_to_neck_height=4,
@@ -1537,7 +1568,6 @@ def test_api_scan() -> None:
                     "max_shoulder_diff_pct": 0.06,
                     "max_neck_diff_pct": 0.04,
                     "min_score_to_alert": 70,
-                    "min_head_to_right_neck_to_left_neck_to_head_ratio": 0.5,
                     "require_ma_bearish_alignment": False,
                 }),
             },

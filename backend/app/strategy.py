@@ -22,8 +22,6 @@ class HeadShoulderTopConfig:
     max_neck_diff_pct: float = 0.004
     min_right_leg_to_left_leg_ratio: float = 0.6
     max_right_leg_to_left_leg_ratio: float = 2.0
-    min_head_to_right_neck_to_left_neck_to_head_ratio: float = 0.6
-    max_head_to_right_neck_to_left_neck_to_head_ratio: float = 2.0
     min_right_shoulder_ratio_to_left: float = 0.85
     min_head_to_neck_height: float = 0.0
     require_head_beyond_shoulders_and_necks: bool = False
@@ -584,16 +582,6 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
     left_neck_to_head_bars = max(1, p3.index - p2.index)
     head_to_right_neck_bars = max(1, p4.index - p3.index)
 
-    neck_head_ratio = head_to_right_neck_bars / left_neck_to_head_bars
-    if (
-        neck_head_ratio < config.min_head_to_right_neck_to_left_neck_to_head_ratio
-        or neck_head_ratio > config.max_head_to_right_neck_to_left_neck_to_head_ratio
-    ):
-        return False, [
-            f"头部到右颈K线数量不匹配，当前为左颈到头部的 {neck_head_ratio:.2f} 倍，"
-            f"要求 {config.min_head_to_right_neck_to_left_neck_to_head_ratio:.2f}-"
-            f"{config.max_head_to_right_neck_to_left_neck_to_head_ratio:.2f} 倍"
-        ], 0
 
     return True, [
         "头部高于左右肩",
@@ -603,7 +591,6 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
         f"右肩高度占右颈到头部高度 {right_shoulder_height_ratio * 100:.2f}%",
         f"右颈到右肩K线数量为左肩到左颈的 {leg_ratio:.2f} 倍",
         f"左颈到头部 {left_neck_to_head_bars} 根K线，头部到右颈 {head_to_right_neck_bars} 根K线",
-        f"头部到右颈K线数量为左颈到头部的 {neck_head_ratio:.2f} 倍",
         "右肩没有过度走弱",
         "右肩低于头部",
     ], 0
@@ -691,16 +678,6 @@ def validate_inverse_head_shoulders_structure(
     left_neck_to_head_bars = max(1, p3.index - p2.index)
     head_to_right_neck_bars = max(1, p4.index - p3.index)
 
-    neck_head_ratio = head_to_right_neck_bars / left_neck_to_head_bars
-    if (
-        neck_head_ratio < config.min_head_to_right_neck_to_left_neck_to_head_ratio
-        or neck_head_ratio > config.max_head_to_right_neck_to_left_neck_to_head_ratio
-    ):
-        return False, [
-            f"头部到右颈K线数量不匹配，当前为左颈到头部的 {neck_head_ratio:.2f} 倍，"
-            f"要求 {config.min_head_to_right_neck_to_left_neck_to_head_ratio:.2f}-"
-            f"{config.max_head_to_right_neck_to_left_neck_to_head_ratio:.2f} 倍"
-        ], 0
 
     return True, [
         "头部低于左右肩",
@@ -710,7 +687,6 @@ def validate_inverse_head_shoulders_structure(
         f"右肩高度占右颈到头部高度 {right_shoulder_height_ratio * 100:.2f}%",
         f"右颈到右肩K线数量为左肩到左颈的 {leg_ratio:.2f} 倍",
         f"左颈到头部 {left_neck_to_head_bars} 根K线，头部到右颈 {head_to_right_neck_bars} 根K线",
-        f"头部到右颈K线数量为左颈到头部的 {neck_head_ratio:.2f} 倍",
         "右肩没有反弹过高",
         "右肩高于头部",
     ], 0
