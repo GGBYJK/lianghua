@@ -25,6 +25,8 @@ from app.market_client import (
     normalize_tushare_symbol,
     normalize_tushare_symbol_row,
     tqsdk_dataframe_to_kline,
+    aggregate_exchange_hourly_bars,
+    aggregate_exchange_daily_bars,
     tqsdk_symbol_hints,
     TqSdkMarketService,
     tushare_dataframe_to_kline,
@@ -205,6 +207,78 @@ def test_tqsdk_contract_query_filters_target_exchanges() -> None:
         "SHFE.rb2610",
     ]
     assert _contract_name_from_symbol("DCE.c2607") == "c2607"
+
+
+def test_exchange_hourly_bars_use_futures_session_boundaries() -> None:
+    times = [
+        "2026-06-02 21:00",
+        "2026-06-02 21:55",
+        "2026-06-02 22:00",
+        "2026-06-02 22:55",
+        "2026-06-03 09:00",
+        "2026-06-03 09:55",
+        "2026-06-03 10:00",
+        "2026-06-03 10:55",
+        "2026-06-03 11:10",
+        "2026-06-03 11:15",
+        "2026-06-03 13:55",
+        "2026-06-03 14:10",
+        "2026-06-03 14:15",
+        "2026-06-03 14:55",
+    ]
+    close = list(range(101, 101 + len(times)))
+    df = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(times),
+            "open": close,
+            "high": [value + 10 for value in close],
+            "low": [value - 10 for value in close],
+            "close": close,
+            "volume": [1] * len(times),
+        }
+    )
+
+    hourly = aggregate_exchange_hourly_bars(df)
+
+    assert [item.isoformat() for item in hourly["datetime"]] == [
+        "2026-06-02T21:00:00",
+        "2026-06-02T22:00:00",
+        "2026-06-03T09:00:00",
+        "2026-06-03T10:00:00",
+        "2026-06-03T11:15:00",
+        "2026-06-03T14:15:00",
+    ]
+    assert list(hourly["open"]) == [101, 103, 105, 107, 110, 113]
+    assert list(hourly["close"]) == [102, 104, 106, 109, 112, 114]
+    assert list(hourly["volume"]) == [2, 2, 2, 3, 3, 2]
+
+
+def test_exchange_daily_bars_treat_night_session_as_next_trading_day() -> None:
+    df = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(
+                [
+                    "2026-06-02 21:00",
+                    "2026-06-02 22:55",
+                    "2026-06-03 09:00",
+                    "2026-06-03 14:55",
+                ]
+            ),
+            "open": [10, 11, 12, 13],
+            "high": [12, 13, 14, 15],
+            "low": [9, 10, 11, 12],
+            "close": [11, 12, 13, 14],
+            "volume": [1, 2, 3, 4],
+        }
+    )
+
+    daily = aggregate_exchange_daily_bars(df)
+
+    assert len(daily) == 1
+    assert daily["datetime"].iloc[0].isoformat() == "2026-06-03T00:00:00"
+    assert daily["open"].iloc[0] == 10
+    assert daily["close"].iloc[0] == 14
+    assert daily["volume"].iloc[0] == 10
 
 
 def test_tqsdk_main_and_sub_contract_query_uses_open_interest() -> None:

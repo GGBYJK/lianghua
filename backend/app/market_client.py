@@ -124,6 +124,15 @@ async def fetch_kline_from_tqsdk_market(symbol: str, period: str, limit: int = 1
 
 def _fetch_kline_from_tqsdk_market_sync(symbol: str, period: str, limit: int = 120) -> pd.DataFrame:
     tq_symbol = normalize_tqsdk_symbol(symbol)
+    normalized_period = period.strip().lower()
+    if should_use_exchange_session_bars() and normalized_period in {"60m", "1h"}:
+        base_limit = max(limit * 16, int(os.getenv("TQ_EXCHANGE_HOURLY_BASE_LIMIT", "420")))
+        base_df = get_tqsdk_service().get_kline(tq_symbol=tq_symbol, duration_seconds=300, limit=base_limit)
+        return aggregate_exchange_hourly_bars(base_df).tail(limit).reset_index(drop=True)
+    if should_aggregate_daily_from_intraday() and normalized_period in {"1d", "day"}:
+        base_limit = max(limit * 90, int(os.getenv("TQ_EXCHANGE_DAILY_BASE_LIMIT", "420")))
+        base_df = get_tqsdk_service().get_kline(tq_symbol=tq_symbol, duration_seconds=300, limit=base_limit)
+        return aggregate_exchange_daily_bars(base_df).tail(limit).reset_index(drop=True)
     duration_seconds = normalize_tqsdk_period(period)
     return get_tqsdk_service().get_kline(tq_symbol=tq_symbol, duration_seconds=duration_seconds, limit=limit)
 
@@ -374,6 +383,94 @@ def shutdown_market_clients() -> None:
 
 def fetch_tqsdk_contracts(exchanges: list[str] | None = None) -> list[str]:
     return get_tqsdk_service().query_contracts(exchanges=exchanges)
+
+
+def should_use_exchange_session_bars() -> bool:
+    return os.getenv("TQ_USE_EXCHANGE_SESSION_BARS", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def should_aggregate_daily_from_intraday() -> bool:
+    return os.getenv("TQ_AGGREGATE_DAILY_FROM_INTRADAY", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def aggregate_exchange_hourly_bars(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = normalize_aggregation_source_dataframe(df)
+    normalized["_bucket"] = normalized["datetime"].apply(exchange_hour_bucket_start)
+    grouped = normalized.dropna(subset=["_bucket"]).groupby("_bucket", sort=True)
+    return ohlcv_from_groups(grouped)
+
+
+def aggregate_exchange_daily_bars(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = normalize_aggregation_source_dataframe(df)
+    normalized["_bucket"] = normalized["datetime"].apply(exchange_trading_day_start)
+    grouped = normalized.dropna(subset=["_bucket"]).groupby("_bucket", sort=True)
+    return ohlcv_from_groups(grouped)
+
+
+def normalize_aggregation_source_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = df.copy()
+    normalized["datetime"] = pd.to_datetime(normalized["datetime"], errors="coerce")
+    for column in ["open", "high", "low", "close", "volume"]:
+        normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
+    return (
+        normalized.dropna(subset=["datetime", "open", "high", "low", "close", "volume"])
+        .sort_values("datetime")
+        .reset_index(drop=True)
+    )
+
+
+def exchange_hour_bucket_start(value: Any) -> pd.Timestamp | None:
+    ts = pd.Timestamp(value).tz_localize(None)
+    minutes = ts.hour * 60 + ts.minute
+    trading_date = ts.normalize()
+    if minutes >= 21 * 60:
+        return trading_date + pd.Timedelta(hours=21 if minutes < 22 * 60 else 22)
+    if minutes < 2 * 60 + 30:
+        previous_trading_date = (ts - pd.Timedelta(days=1)).normalize()
+        if minutes < 60:
+            return previous_trading_date + pd.Timedelta(hours=23)
+        if minutes < 2 * 60:
+            return trading_date + pd.Timedelta(hours=1)
+        return trading_date + pd.Timedelta(hours=2)
+    if 9 * 60 <= minutes < 10 * 60:
+        return trading_date + pd.Timedelta(hours=9)
+    if 10 * 60 <= minutes < 11 * 60 + 15:
+        return trading_date + pd.Timedelta(hours=10)
+    if 11 * 60 + 15 <= minutes < 14 * 60 + 15:
+        return trading_date + pd.Timedelta(hours=11, minutes=15)
+    if 14 * 60 + 15 <= minutes < 15 * 60:
+        return trading_date + pd.Timedelta(hours=14, minutes=15)
+    return None
+
+
+def exchange_trading_day_start(value: Any) -> pd.Timestamp | None:
+    ts = pd.Timestamp(value).tz_localize(None)
+    minutes = ts.hour * 60 + ts.minute
+    if minutes >= 21 * 60:
+        return (ts + pd.Timedelta(days=1)).normalize()
+    if minutes < 2 * 60 + 30:
+        return ts.normalize()
+    if 9 * 60 <= minutes < 15 * 60:
+        return ts.normalize()
+    return None
+
+
+def ohlcv_from_groups(grouped: Any) -> pd.DataFrame:
+    rows = []
+    for bucket, group in grouped:
+        if group.empty:
+            continue
+        rows.append(
+            {
+                "datetime": pd.Timestamp(bucket).to_pydatetime(),
+                "open": float(group["open"].iloc[0]),
+                "high": float(group["high"].max()),
+                "low": float(group["low"].min()),
+                "close": float(group["close"].iloc[-1]),
+                "volume": float(group["volume"].sum()),
+            }
+        )
+    return pd.DataFrame(rows, columns=["datetime", "open", "high", "low", "close", "volume"])
 
 
 def query_main_and_sub_contracts_from_api(api: Any, exchanges: list[str]) -> list[str]:
