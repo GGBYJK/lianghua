@@ -961,7 +961,7 @@ function App() {
             </div>
             <div className="feedback-target">
               <strong>{feedbackTarget.symbol} / {feedbackTarget.timeframe}</strong>
-              <span>{patternLabel(feedbackTarget.pattern)} &middot; {alertTypeLabel(feedbackTarget.alert_type)} &middot; &#35780;&#20998; {feedbackTarget.score}</span>
+              <span>{patternLabel(feedbackTarget.pattern)} &middot; 评分中 &middot; {trendLabel(feedbackTarget.signal_payload)} &middot; &#35780;&#20998; {feedbackTarget.score}</span>
             </div>
             <label className="feedback-note-field">
               &#21453;&#39304;&#20449;&#24687;
@@ -1664,7 +1664,8 @@ function MonitorAlertFeed({
                       <div className="monitor-alert-tags">
                         <span className={`monitor-tag timeframe-tag timeframe-${alert.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{alert.timeframe}</span>
                         <span className={`monitor-tag pattern-tag ${alert.pattern}`}>{patternLabel(alert.pattern)}</span>
-                        <span className={`monitor-tag alert-tag ${alert.alert_type}`}>{alertTypeLabel(alert.alert_type)}</span>
+                        <span className="monitor-tag scoring-tag">评分中</span>
+                        <span className={`monitor-tag trend-tag ${trendTagClass(alert.signal_payload)}`}>{trendLabel(alert.signal_payload)}</span>
                         <button type="button" className="monitor-tag score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>{alert.score}</button>
                       </div>
                       <div className="monitor-message-footer">
@@ -1710,7 +1711,7 @@ function FeedbackFeed({
         >
           <div className="message-main">
             <strong>{feedback.symbol} / {feedback.timeframe}</strong>
-            <span>{patternLabel(feedback.pattern)} &middot; {alertTypeLabel(feedback.alert_type)}</span>
+            <span>{patternLabel(feedback.pattern)} &middot; 评分中 &middot; {trendLabel(feedback.signal_payload)}</span>
             <small>{feedback.created_at ? formatAlertTime(feedback.created_at) : "--"}</small>
             {feedback.feedback_note && <p className="feedback-note-preview">{feedback.feedback_note}</p>}
           </div>
@@ -1887,7 +1888,8 @@ function CurrentSignalFeed({
                 <div className="monitor-alert-tags">
                   <span className={`monitor-tag timeframe-tag timeframe-${signal.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{signal.timeframe}</span>
                   <span className={`monitor-tag pattern-tag ${signal.pattern}`}>{patternLabel(signal.pattern)}</span>
-                  <span className={`monitor-tag alert-tag ${signal.alert_type}`}>{alertTypeLabel(signal.alert_type)}</span>
+                  <span className="monitor-tag scoring-tag">评分中</span>
+                  <span className={`monitor-tag trend-tag ${trendTagClass(signal)}`}>{trendLabel(signal)}</span>
                   <button type="button" className="monitor-tag score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(signal); }}>{signal.score}</button>
                 </div>
                 <div className="monitor-message-footer">
@@ -1955,7 +1957,7 @@ function SignalDetail({
           <h2 id={titleId}>检测详情</h2>
         </div>
         <div className="detail-head-actions">
-          <span className="badge">{sourceLabel || alertTypeLabel(signal.alert_type)}</span>
+          <span className="badge">{sourceLabel || "评分中"}</span>
           {onClose && <button type="button" className="icon-button" onClick={onClose}>关闭</button>}
         </div>
       </div>
@@ -2015,7 +2017,8 @@ function ScoreDetailModal({ signal, onClose }: { signal: Signal; onClose: () => 
         </div>
         <div className="score-detail-summary">
           <span>{patternLabel(signal.pattern)}</span>
-          <span>{alertTypeLabel(signal.alert_type)}</span>
+          <span>评分中</span>
+          <span>{trendLabel(signal)}</span>
           <span>{signal.timeframe}</span>
         </div>
         <div className="score-section-grid">
@@ -2879,6 +2882,46 @@ function alertTypeLabel(alertType: Signal["alert_type"]) {
     return "右肩确认";
   }
   return "跌破颈线";
+}
+
+function trendLabel(signal: Pick<Signal, "trend_label" | "score" | "pattern"> | null | undefined) {
+  if (!signal) {
+    return "震荡趋势";
+  }
+  return signal.trend_label || trendLabelFromScore(signal.score, signal.pattern === "inverse_head_shoulders");
+}
+
+function trendLabelFromScore(score: number, bullish: boolean) {
+  const labels: Array<[number, string]> = bullish
+    ? [
+        [80, "强多头趋势"],
+        [65, "多头趋势"],
+        [55, "多头趋势下震荡"],
+        [40, "震荡趋势"],
+        [25, "空头趋势下震荡"],
+        [0, "空头趋势"],
+      ]
+    : [
+        [80, "强空头趋势"],
+        [65, "空头趋势"],
+        [55, "空头趋势下震荡"],
+        [40, "震荡趋势"],
+        [25, "多头趋势下震荡"],
+        [0, "多头趋势"],
+      ];
+  const matched = labels.find(([threshold]) => score >= threshold);
+  return matched?.[1] ?? "震荡趋势";
+}
+
+function trendTagClass(signal: Pick<Signal, "trend_label" | "score" | "pattern"> | null | undefined) {
+  const label = trendLabel(signal);
+  if (label.includes("空头")) {
+    return "bearish";
+  }
+  if (label.includes("多头")) {
+    return "bullish";
+  }
+  return "neutral";
 }
 
 function patternLabel(pattern: Signal["pattern"]) {

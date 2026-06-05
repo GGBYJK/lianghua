@@ -5357,12 +5357,22 @@ button:disabled {
   color: #067647;
 }
 
-.alert-tag.right_shoulder_confirmed {
+.scoring-tag {
   background: #f5f5f7;
   color: #515154;
 }
 
-.alert-tag.neckline_break {
+.trend-tag.bearish {
+  background: #fff0f0;
+  color: #b42318;
+}
+
+.trend-tag.bullish {
+  background: #ecfdf5;
+  color: #067647;
+}
+
+.trend-tag.neutral {
   background: #fff7ed;
   color: #b45309;
 }

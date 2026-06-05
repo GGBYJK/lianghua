@@ -125,6 +125,41 @@ def alert_type_label(alert_type: str | None) -> str:
     return alert_type or ZH["shape_alert"]
 
 
+def trend_label_from_signal(signal: dict[str, Any]) -> str:
+    trend_label = signal.get("trend_label")
+    if isinstance(trend_label, str) and trend_label.strip():
+        return trend_label.strip()
+
+    try:
+        score = int(signal.get("score") or 0)
+    except (TypeError, ValueError):
+        score = 0
+    bullish = signal.get("pattern") == "inverse_head_shoulders"
+    labels = (
+        (
+            (80, "强多头趋势"),
+            (65, "多头趋势"),
+            (55, "多头趋势下震荡"),
+            (40, "震荡趋势"),
+            (25, "空头趋势下震荡"),
+            (0, "空头趋势"),
+        )
+        if bullish
+        else (
+            (80, "强空头趋势"),
+            (65, "空头趋势"),
+            (55, "空头趋势下震荡"),
+            (40, "震荡趋势"),
+            (25, "多头趋势下震荡"),
+            (0, "多头趋势"),
+        )
+    )
+    for threshold, label in labels:
+        if score >= threshold:
+            return label
+    return "震荡趋势"
+
+
 def format_signal_time(value: str | None) -> str:
     parsed = parse_signal_time(value)
     if parsed is None:
@@ -150,12 +185,15 @@ def signal_notification_time(signal: dict[str, Any]) -> str | None:
 def build_wechat_workbot_content(signal: dict[str, Any], item: dict[str, Any]) -> str:
     colon = ZH["colon"]
     comma = "\uff0c"
+    score = signal.get("score")
     return (
         f"{ZH['new_pattern']}{colon}"
         f"{signal.get('symbol')}{comma}"
         f"{signal.get('timeframe')}{comma}"
         f"{compact_pattern_label(signal.get('pattern'))}{comma}"
-        f"{format_compact_signal_time(signal_notification_time(signal))}"
+        f"{format_compact_signal_time(signal_notification_time(signal))}{comma}"
+        f"{score}\u5206{comma}"
+        f"{trend_label_from_signal(signal)}"
     )
 
 

@@ -205,7 +205,7 @@ def test_tqsdk_utc_timestamp_displays_as_beijing_time_in_wechat_message() -> Non
 
     content = build_wechat_workbot_content(signal, {"name": "c0"})
 
-    assert content == "新形态：c0，1m，头肩顶，20260428 11:40"
+    assert content == "新形态：c0，1m，头肩顶，20260428 11:40，80分，强空头趋势"
 
 
 def test_tqsdk_contract_query_filters_target_exchanges() -> None:

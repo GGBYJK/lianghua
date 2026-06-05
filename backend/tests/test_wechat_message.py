@@ -15,5 +15,5 @@ def test_wechat_workbot_content_uses_inverse_head_shoulders_example_format() -> 
 
     assert (
         build_wechat_workbot_content(signal, {"name": "a2607"})
-        == "\u65b0\u5f62\u6001\uff1aa2607\uff0c1m\uff0c\u53cd\u5411\u5934\u80a9\uff0c20260525 14:54"
+        == "新形态：a2607，1m，反向头肩，20260525 14:54，88分，强多头趋势"
     )

@@ -456,11 +456,14 @@ def test_night_session_signal_is_emitted_during_night_session() -> None:
 
 def test_wechat_workbot_content_includes_core_signal_fields() -> None:
     signal = {
-        "symbol": "c0",
-        "timeframe": "5m",
-        "pattern": "head_shoulders_top",
+        "symbol": "SHFE.hc2610",
+        "timeframe": "3m",
+        "pattern": "inverse_head_shoulders",
         "alert_type": "right_shoulder_confirmed",
-        "score": 88,
-        "right_shoulder": {"time": "2026-05-20T09:01:00", "price": 3329},
+        "score": 29,
+        "right_shoulder": {"time": "2026-06-05T09:06:00", "price": 3329},
     }
-    assert build_wechat_workbot_content(signal, {"name": "c0"}) == "新形态：c0，5m，头肩顶，20260520 09:01"
+    assert (
+        build_wechat_workbot_content(signal, {"name": "SHFE.hc2610"})
+        == "新形态：SHFE.hc2610，3m，反向头肩，20260605 09:06，29分，空头趋势下震荡"
+    )
