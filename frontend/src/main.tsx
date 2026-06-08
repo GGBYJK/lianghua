@@ -961,7 +961,7 @@ function App() {
             </div>
             <div className="feedback-target">
               <strong>{feedbackTarget.symbol} / {feedbackTarget.timeframe}</strong>
-              <span>{patternLabel(feedbackTarget.pattern)} &middot; 评分中 &middot; {trendLabel(feedbackTarget.signal_payload)} &middot; &#35780;&#20998; {feedbackTarget.score}</span>
+              <span>{patternLabel(feedbackTarget.pattern)} &middot; {trendLabel(feedbackTarget.signal_payload)} &middot; &#35780;&#20998; {feedbackTarget.score}</span>
             </div>
             <label className="feedback-note-field">
               &#21453;&#39304;&#20449;&#24687;
@@ -1664,7 +1664,6 @@ function MonitorAlertFeed({
                       <div className="monitor-alert-tags">
                         <span className={`monitor-tag timeframe-tag timeframe-${alert.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{alert.timeframe}</span>
                         <span className={`monitor-tag pattern-tag ${alert.pattern}`}>{patternLabel(alert.pattern)}</span>
-                        <span className="monitor-tag scoring-tag">评分中</span>
                         <span className={`monitor-tag trend-tag ${trendTagClass(alert.signal_payload)}`}>{trendLabel(alert.signal_payload)}</span>
                         <button type="button" className="monitor-tag score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>{alert.score}</button>
                       </div>
@@ -1711,7 +1710,7 @@ function FeedbackFeed({
         >
           <div className="message-main">
             <strong>{feedback.symbol} / {feedback.timeframe}</strong>
-            <span>{patternLabel(feedback.pattern)} &middot; 评分中 &middot; {trendLabel(feedback.signal_payload)}</span>
+            <span>{patternLabel(feedback.pattern)} &middot; {trendLabel(feedback.signal_payload)}</span>
             <small>{feedback.created_at ? formatAlertTime(feedback.created_at) : "--"}</small>
             {feedback.feedback_note && <p className="feedback-note-preview">{feedback.feedback_note}</p>}
           </div>
@@ -1888,7 +1887,6 @@ function CurrentSignalFeed({
                 <div className="monitor-alert-tags">
                   <span className={`monitor-tag timeframe-tag timeframe-${signal.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{signal.timeframe}</span>
                   <span className={`monitor-tag pattern-tag ${signal.pattern}`}>{patternLabel(signal.pattern)}</span>
-                  <span className="monitor-tag scoring-tag">评分中</span>
                   <span className={`monitor-tag trend-tag ${trendTagClass(signal)}`}>{trendLabel(signal)}</span>
                   <button type="button" className="monitor-tag score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(signal); }}>{signal.score}</button>
                 </div>
@@ -1957,7 +1955,7 @@ function SignalDetail({
           <h2 id={titleId}>检测详情</h2>
         </div>
         <div className="detail-head-actions">
-          <span className="badge">{sourceLabel || "评分中"}</span>
+          {sourceLabel && <span className="badge">{sourceLabel}</span>}
           {onClose && <button type="button" className="icon-button" onClick={onClose}>关闭</button>}
         </div>
       </div>
@@ -2017,7 +2015,6 @@ function ScoreDetailModal({ signal, onClose }: { signal: Signal; onClose: () => 
         </div>
         <div className="score-detail-summary">
           <span>{patternLabel(signal.pattern)}</span>
-          <span>评分中</span>
           <span>{trendLabel(signal)}</span>
           <span>{signal.timeframe}</span>
         </div>

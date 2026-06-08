@@ -5357,11 +5357,6 @@ button:disabled {
   color: #067647;
 }
 
-.scoring-tag {
-  background: #f5f5f7;
-  color: #515154;
-}
-
 .trend-tag.bearish {
   background: #fff0f0;
   color: #b42318;
