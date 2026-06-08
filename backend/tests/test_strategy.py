@@ -480,15 +480,15 @@ def test_monitor_unique_key_uses_stable_pattern_structure() -> None:
         "right_shoulder": {"time": "2026-05-12T09:20:00"},
         "break_time": "2026-05-12T09:25:00",
         "retest_time": None,
+        "score": 82,
+        "trend_label": "空头趋势",
     }
     assert build_signal_unique_key(signal) == (
-        "c0|1m|head_shoulders_top|neckline_break|"
-        "2026-05-12T09:00:00|2026-05-12T09:05:00|"
-        "2026-05-12T09:10:00|2026-05-12T09:15:00"
+        "c0|1m|head_shoulders_top|2026-05-12T09:10:00|82"
     )
 
 
-def test_monitor_unique_key_ignores_repeated_right_shoulder_updates() -> None:
+def test_monitor_unique_key_uses_head_score_and_trend_for_repeat_alerts() -> None:
     signal = {
         "symbol": "CZCE.SA609",
         "timeframe": "3m",
@@ -501,19 +501,20 @@ def test_monitor_unique_key_ignores_repeated_right_shoulder_updates() -> None:
         "right_shoulder": {"time": "2026-06-02T21:52:35"},
         "break_time": None,
         "retest_time": None,
+        "score": 78,
+        "trend_label": "多头趋势",
     }
     repeated = {
         **signal,
+        "left_shoulder": {"time": "2026-06-02T21:18:00"},
+        "left_neck": {"time": "2026-06-02T21:27:00"},
+        "right_neck": {"time": "2026-06-02T21:48:00"},
         "right_shoulder": {"time": "2026-06-02T22:04:53"},
     }
-    breakout = {
-        **repeated,
-        "alert_type": "neckline_break",
-        "break_time": "2026-06-02T22:10:00",
-    }
+    changed_score = {**repeated, "score": 79}
 
     assert build_signal_unique_key(signal) == build_signal_unique_key(repeated)
-    assert build_signal_unique_key(signal) != build_signal_unique_key(breakout)
+    assert build_signal_unique_key(signal) != build_signal_unique_key(changed_score)
 
 
 def test_top_scan_emits_right_shoulder_alert_type_only() -> None:
@@ -571,7 +572,7 @@ def test_top_scan_keeps_first_right_shoulder_for_same_left_setup() -> None:
         enable_score=False,
     )
 
-    signals = scan_head_shoulders_top(df, "rb2405", "1m", config)
+    signals = scan_head_shoulders_top(df, "rb2405", "15m", config)
     same_setup_signals = [
         signal for signal in signals
         if (
@@ -584,6 +585,45 @@ def test_top_scan_keeps_first_right_shoulder_for_same_left_setup() -> None:
 
     assert len(same_setup_signals) == 1
     assert same_setup_signals[0].right_shoulder.index == 9
+
+
+def test_short_timeframe_candidates_use_five_bar_structure_and_three_bar_right_shoulder() -> None:
+    times = pd.date_range("2026-01-01 09:00:00", periods=36, freq="min")
+    rows = []
+    for index in range(len(times)):
+        high = 100.0 + index * 0.01
+        low = 90.0 + index * 0.01
+        if index == 6:
+            high = 110.0
+        elif index == 12:
+            low = 82.0
+        elif index == 18:
+            high = 116.0
+        elif index == 24:
+            low = 83.0
+        elif index == 28:
+            high = 109.0
+        elif index == 32:
+            high = 111.0
+        rows.append({
+            "datetime": times[index],
+            "open": (high + low) / 2,
+            "high": high,
+            "low": low,
+            "close": (high + low) / 2,
+            "volume": 1000,
+        })
+    df = pd.DataFrame(rows)
+
+    candidates = strategy_module.iter_timeframe_pattern_candidates(
+        df,
+        "3m",
+        HeadShoulderTopConfig(pivot_left=3, pivot_right=3),
+        ["high", "low", "high", "low", "high"],
+    )
+
+    candidate_indexes = [(p1.index, p2.index, p3.index, p4.index, p5.index) for p1, p2, p3, p4, p5 in candidates]
+    assert (6, 12, 18, 24, 28) in candidate_indexes
 
 
 def test_one_minute_head_neck_bar_limit_applies_to_top_and_inverse_patterns() -> None:

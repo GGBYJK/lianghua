@@ -13,7 +13,7 @@ import httpx
 from .alert_keys import build_signal_unique_key
 from .config import load_head_shoulder_config
 from .market_client import MarketApiError, fetch_kline_from_market
-from .strategy import add_macd_columns, add_ma_columns, find_pivots, prepare_chart_payload, scan_head_shoulders
+from .strategy import add_macd_columns, add_ma_columns, find_structure_pivots_for_timeframe, prepare_chart_payload, scan_head_shoulders
 from .watch_pool_store import (
     WatchPoolStoreError,
     insert_head_shoulders_alert_if_new,
@@ -331,7 +331,7 @@ def scan_dataframe_payload(
     config = load_head_shoulder_config(symbol=symbol, timeframe=timeframe, overrides=config_overrides)
     signals = scan_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config, hourly_df=hourly_df, daily_df=daily_df)
     enriched_df = add_macd_columns(add_ma_columns(df, config), config)
-    pivots = find_pivots(enriched_df, left=config.pivot_left, right=config.pivot_right)
+    pivots = find_structure_pivots_for_timeframe(enriched_df, timeframe, config)
     chart = prepare_chart_payload(enriched_df, pivots, signals, config)
     return [signal.to_dict() for signal in signals], chart
 

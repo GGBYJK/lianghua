@@ -524,7 +524,6 @@ def _matching_alert_structure(cursor: Any, alert: dict[str, Any]) -> dict[str, A
           AND symbol = %s
           AND timeframe = %s
           AND pattern = %s
-          AND alert_type = %s
         ORDER BY created_at DESC, id DESC
         LIMIT 100
         """,
@@ -532,7 +531,6 @@ def _matching_alert_structure(cursor: Any, alert: dict[str, Any]) -> dict[str, A
             alert["symbol"],
             alert["timeframe"],
             alert["pattern"],
-            alert["alert_type"],
         ),
     )
     for row in cursor.fetchall():

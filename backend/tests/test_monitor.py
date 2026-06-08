@@ -58,6 +58,8 @@ def test_alert_summary_list_collapses_repeated_structure_updates() -> None:
         "head": {"time": "2026-06-02T21:33:00"},
         "right_neck": {"time": "2026-06-02T21:45:00"},
         "right_shoulder": {"time": "2026-06-02T21:52:35"},
+        "score": 78,
+        "trend_label": "多头趋势",
     }
     newer_alert = {
         "id": "2",
@@ -75,7 +77,7 @@ def test_alert_summary_list_collapses_repeated_structure_updates() -> None:
         "signal_payload": {**base_signal, "alert_type": "neckline_break", "break_time": "2026-06-02T22:10:00"},
     }
 
-    assert _deduplicate_alert_summaries([newer_alert, older_alert, breakout_alert]) == [newer_alert, breakout_alert]
+    assert _deduplicate_alert_summaries([newer_alert, older_alert, breakout_alert]) == [newer_alert]
 
 
 def test_alert_structure_exists_matches_legacy_unique_key_rows() -> None:
@@ -89,6 +91,8 @@ def test_alert_structure_exists_matches_legacy_unique_key_rows() -> None:
         "head": {"time": "2026-06-02T21:33:00"},
         "right_neck": {"time": "2026-06-02T21:45:00"},
         "right_shoulder": {"time": "2026-06-02T21:52:35"},
+        "score": 78,
+        "trend_label": "多头趋势",
     }
     inserted_signal = {
         **base_signal,
@@ -124,7 +128,7 @@ def test_alert_structure_exists_matches_legacy_unique_key_rows() -> None:
     cursor = Cursor()
 
     assert _alert_structure_exists(cursor, inserted_alert)
-    assert cursor.params == ("CZCE.SA609", "3m", "inverse_head_shoulders", "right_shoulder_confirmed")
+    assert cursor.params == ("CZCE.SA609", "3m", "inverse_head_shoulders")
 
 
 def test_score_detail_detection_handles_new_and_legacy_payloads() -> None:

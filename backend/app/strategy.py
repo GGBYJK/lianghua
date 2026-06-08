@@ -11,6 +11,9 @@ MAX_HEAD_NECK_BARS_BY_TIMEFRAME = {
     "3m": 60,
     "5m": 60,
 }
+MIXED_PIVOT_CONFIRMATION_TIMEFRAMES = {"1m", "3m", "5m"}
+STRUCTURE_PIVOT_WINDOW = 5
+RIGHT_SHOULDER_PIVOT_WINDOW = 3
 
 
 @dataclass
@@ -504,6 +507,96 @@ def iter_pattern_candidates(
     return candidates
 
 
+def iter_pattern_candidates_with_right_shoulder_pivots(
+    structure_pivots: list[PivotPoint],
+    right_shoulder_pivots: list[PivotPoint],
+    kinds: list[str],
+) -> list[tuple[PivotPoint, PivotPoint, PivotPoint, PivotPoint, PivotPoint]]:
+    candidates: list[tuple[PivotPoint, PivotPoint, PivotPoint, PivotPoint, PivotPoint]] = []
+    seen: set[tuple[int, int, int, int, int]] = set()
+
+    def structure_span_preserves_swing(start_pos: int, end_pos: int, start: PivotPoint, end: PivotPoint) -> bool:
+        skipped = structure_pivots[start_pos + 1 : end_pos]
+        if not skipped:
+            return True
+        if start.kind == "high" and end.kind == "low":
+            return all(point.price <= start.price if point.kind == "high" else point.price >= end.price for point in skipped)
+        if start.kind == "low" and end.kind == "high":
+            return all(point.price >= start.price if point.kind == "low" else point.price <= end.price for point in skipped)
+        return False
+
+    right_shoulder_candidates = [point for point in right_shoulder_pivots if point.kind == kinds[4]]
+    for left_shoulder_index in range(len(structure_pivots) - 3):
+        left_shoulder = structure_pivots[left_shoulder_index]
+        if left_shoulder.kind != kinds[0]:
+            continue
+
+        for left_neck_index in range(left_shoulder_index + 1, len(structure_pivots) - 2):
+            left_neck = structure_pivots[left_neck_index]
+            if (
+                left_neck.kind != kinds[1]
+                or not structure_span_preserves_swing(left_shoulder_index, left_neck_index, left_shoulder, left_neck)
+            ):
+                continue
+
+            for head_index in range(left_neck_index + 1, len(structure_pivots) - 1):
+                head = structure_pivots[head_index]
+                if (
+                    head.kind != kinds[2]
+                    or not structure_span_preserves_swing(left_neck_index, head_index, left_neck, head)
+                ):
+                    continue
+
+                for right_neck_index in range(head_index + 1, len(structure_pivots)):
+                    right_neck = structure_pivots[right_neck_index]
+                    if (
+                        right_neck.kind != kinds[3]
+                        or not structure_span_preserves_swing(head_index, right_neck_index, head, right_neck)
+                    ):
+                        continue
+
+                    for right_shoulder in right_shoulder_candidates:
+                        if right_shoulder.index <= right_neck.index:
+                            continue
+                        if right_neck.kind == right_shoulder.kind:
+                            continue
+                        key = (left_shoulder.index, left_neck.index, head.index, right_neck.index, right_shoulder.index)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        candidates.append((left_shoulder, left_neck, head, right_neck, right_shoulder))
+
+    return candidates
+
+
+def find_structure_pivots_for_timeframe(
+    df: pd.DataFrame,
+    timeframe: str,
+    config: HeadShoulderTopConfig,
+) -> list[PivotPoint]:
+    if timeframe in MIXED_PIVOT_CONFIRMATION_TIMEFRAMES:
+        return compress_pivots(find_pivots(df, left=STRUCTURE_PIVOT_WINDOW, right=STRUCTURE_PIVOT_WINDOW))
+    return compress_pivots(find_pivots(df, left=config.pivot_left, right=config.pivot_right))
+
+
+def iter_timeframe_pattern_candidates(
+    df: pd.DataFrame,
+    timeframe: str,
+    config: HeadShoulderTopConfig,
+    kinds: list[str],
+    structure_pivots: list[PivotPoint] | None = None,
+) -> list[tuple[PivotPoint, PivotPoint, PivotPoint, PivotPoint, PivotPoint]]:
+    structure_pivots = structure_pivots if structure_pivots is not None else find_structure_pivots_for_timeframe(df, timeframe, config)
+    if timeframe not in MIXED_PIVOT_CONFIRMATION_TIMEFRAMES:
+        return iter_pattern_candidates(structure_pivots, kinds)
+    right_shoulder_pivots = find_pivots(
+        df,
+        left=RIGHT_SHOULDER_PIVOT_WINDOW,
+        right=RIGHT_SHOULDER_PIVOT_WINDOW,
+    )
+    return iter_pattern_candidates_with_right_shoulder_pivots(structure_pivots, right_shoulder_pivots, kinds)
+
+
 def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShoulderTopConfig) -> tuple[bool, list[str], int]:
     if len(points) != 5:
         return False, ["关键点数量不是5个"], 0
@@ -857,11 +950,17 @@ def scan_head_shoulders_top(
     df = df.copy().reset_index(drop=True)
     df["datetime"] = pd.to_datetime(df["datetime"])
     df = add_macd_columns(add_ma_columns(df, config), config)
-    pivots = compress_pivots(find_pivots(df, left=config.pivot_left, right=config.pivot_right))
+    pivots = find_structure_pivots_for_timeframe(df, timeframe, config)
     signals: list[HeadShoulderTopSignal] = []
     used_right_shoulder_setups: set[tuple[int, int, int, int]] = set()
 
-    for p1, p2, p3, p4, p5 in iter_pattern_candidates(pivots, ["high", "low", "high", "low", "high"]):
+    for p1, p2, p3, p4, p5 in iter_timeframe_pattern_candidates(
+        df,
+        timeframe,
+        config,
+        ["high", "low", "high", "low", "high"],
+        structure_pivots=pivots,
+    ):
         setup_key = (p1.index, p2.index, p3.index, p4.index)
         if setup_key in used_right_shoulder_setups:
             continue
@@ -953,10 +1052,16 @@ def scan_inverse_head_shoulders(
     df = df.copy().reset_index(drop=True)
     df["datetime"] = pd.to_datetime(df["datetime"])
     df = add_macd_columns(add_ma_columns(df, config), config)
-    pivots = compress_pivots(find_pivots(df, left=config.pivot_left, right=config.pivot_right))
+    pivots = find_structure_pivots_for_timeframe(df, timeframe, config)
     signals: list[HeadShoulderTopSignal] = []
 
-    for p1, p2, p3, p4, p5 in iter_pattern_candidates(pivots, ["low", "high", "low", "high", "low"]):
+    for p1, p2, p3, p4, p5 in iter_timeframe_pattern_candidates(
+        df,
+        timeframe,
+        config,
+        ["low", "high", "low", "high", "low"],
+        structure_pivots=pivots,
+    ):
         if not passes_head_neck_bar_limit(timeframe, p2, p3, p4):
             continue
         ok, reasons, total_score = validate_inverse_head_shoulders_structure([p1, p2, p3, p4, p5], config)
