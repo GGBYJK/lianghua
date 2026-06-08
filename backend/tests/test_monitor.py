@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
+from app.alert_keys import build_signal_unique_key
 from app.monitor import build_watch_pool_config_overrides, build_wechat_workbot_content, is_in_trading_session, should_emit_signal_for_item
 from app.watch_pool_store import (
     _alert_structure_exists,
@@ -78,6 +79,18 @@ def test_alert_summary_list_collapses_repeated_structure_updates() -> None:
     }
 
     assert _deduplicate_alert_summaries([newer_alert, older_alert, breakout_alert]) == [newer_alert]
+
+
+def test_signal_unique_key_uses_head_position_not_score() -> None:
+    signal = {
+        "symbol": "CZCE.SA609",
+        "timeframe": "3m",
+        "pattern": "inverse_head_shoulders",
+        "head": {"time": "2026-06-02T21:33:00"},
+        "score": 78,
+    }
+
+    assert build_signal_unique_key(signal) == build_signal_unique_key({**signal, "score": 88})
 
 
 def test_alert_structure_exists_matches_legacy_unique_key_rows() -> None:

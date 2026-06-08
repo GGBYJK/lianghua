@@ -11,17 +11,12 @@ def _point_time(signal: dict[str, Any], name: str) -> Any:
     return point.get("time", "")
 
 
-def _trend_score(signal: dict[str, Any]) -> Any:
-    return signal.get("score", "")
-
-
 def build_signal_unique_key(signal: dict[str, Any]) -> str:
     parts = [
         signal["symbol"],
         signal["timeframe"],
         signal["pattern"],
         _point_time(signal, "head"),
-        _trend_score(signal),
     ]
     return "|".join(str(part) for part in parts)
 

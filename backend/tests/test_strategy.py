@@ -484,11 +484,11 @@ def test_monitor_unique_key_uses_stable_pattern_structure() -> None:
         "trend_label": "空头趋势",
     }
     assert build_signal_unique_key(signal) == (
-        "c0|1m|head_shoulders_top|2026-05-12T09:10:00|82"
+        "c0|1m|head_shoulders_top|2026-05-12T09:10:00"
     )
 
 
-def test_monitor_unique_key_uses_head_score_and_trend_for_repeat_alerts() -> None:
+def test_monitor_unique_key_uses_head_position_for_repeat_alerts() -> None:
     signal = {
         "symbol": "CZCE.SA609",
         "timeframe": "3m",
@@ -514,7 +514,7 @@ def test_monitor_unique_key_uses_head_score_and_trend_for_repeat_alerts() -> Non
     changed_score = {**repeated, "score": 79}
 
     assert build_signal_unique_key(signal) == build_signal_unique_key(repeated)
-    assert build_signal_unique_key(signal) != build_signal_unique_key(changed_score)
+    assert build_signal_unique_key(signal) == build_signal_unique_key(changed_score)
 
 
 def test_top_scan_emits_right_shoulder_alert_type_only() -> None:
