@@ -42,6 +42,7 @@ from app.strategy import (
     deduplicate_overlapping_signals,
     find_pivots,
     iter_pattern_candidates,
+    validate_candle_close_constraints,
     validate_head_shoulders_structure,
     passes_head_neck_bar_limit,
     passes_one_minute_head_neck_bar_limit,
@@ -1039,6 +1040,79 @@ def test_pattern_candidates_can_skip_minor_swings_between_left_shoulder_and_neck
         [point.index for point in candidate] == [8, 24, 54, 92, 105]
         for candidate in candidates
     )
+
+
+def _close_constraint_case(inverse: bool = False) -> tuple[pd.DataFrame, list[PivotPoint]]:
+    times = pd.date_range("2026-06-10 09:00:00", periods=13, freq="min")
+    if inverse:
+        closes = [105, 104, 103, 104, 108, 104, 97, 104, 107, 104, 102, 104, 105]
+        prices = [103, 108, 96, 107, 102]
+        kinds = ["low", "high", "low", "high", "low"]
+    else:
+        closes = [95, 96, 97, 96, 92, 96, 103, 96, 93, 96, 98, 96, 95]
+        prices = [97, 92, 104, 93, 98]
+        kinds = ["high", "low", "high", "low", "high"]
+    closes = [float(close) for close in closes]
+    df = pd.DataFrame({
+        "datetime": times,
+        "open": closes,
+        "high": [close + 1 for close in closes],
+        "low": [close - 1 for close in closes],
+        "close": closes,
+        "volume": [1000] * len(times),
+    })
+    indexes = [2, 4, 6, 8, 10]
+    points = [
+        PivotPoint(index, times[index], price, kind)
+        for index, price, kind in zip(indexes, prices, kinds)
+    ]
+    return df, points
+
+
+def test_top_candle_close_constraints_cover_head_and_all_three_regions() -> None:
+    df, points = _close_constraint_case()
+    assert validate_candle_close_constraints(df, points, inverse=False)[0]
+
+    violations = [
+        (6, 98),
+        (3, 97.01),
+        (5, 104.01),
+        (9, 98.01),
+    ]
+    for index, close in violations:
+        invalid = df.copy()
+        invalid.loc[index, "close"] = close
+        assert not validate_candle_close_constraints(invalid, points, inverse=False)[0]
+
+
+def test_inverse_candle_close_constraints_cover_head_and_all_three_regions() -> None:
+    df, points = _close_constraint_case(inverse=True)
+    assert validate_candle_close_constraints(df, points, inverse=True)[0]
+
+    violations = [
+        (6, 102),
+        (3, 102.99),
+        (5, 95.99),
+        (9, 101.99),
+    ]
+    for index, close in violations:
+        invalid = df.copy()
+        invalid.loc[index, "close"] = close
+        assert not validate_candle_close_constraints(invalid, points, inverse=True)[0]
+
+
+def test_candle_close_region_thresholds_allow_equal_prices() -> None:
+    top_df, top_points = _close_constraint_case()
+    top_df.loc[3, "close"] = top_points[0].price
+    top_df.loc[5, "close"] = top_points[2].price
+    top_df.loc[9, "close"] = top_points[4].price
+    assert validate_candle_close_constraints(top_df, top_points, inverse=False)[0]
+
+    inverse_df, inverse_points = _close_constraint_case(inverse=True)
+    inverse_df.loc[3, "close"] = inverse_points[0].price
+    inverse_df.loc[5, "close"] = inverse_points[2].price
+    inverse_df.loc[9, "close"] = inverse_points[4].price
+    assert validate_candle_close_constraints(inverse_df, inverse_points, inverse=True)[0]
 
 
 def test_head_shoulders_requires_shoulders_and_necks_within_0_4_pct() -> None:

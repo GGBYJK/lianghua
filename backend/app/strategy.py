@@ -597,6 +597,43 @@ def iter_timeframe_pattern_candidates(
     return iter_pattern_candidates_with_right_shoulder_pivots(structure_pivots, right_shoulder_pivots, kinds)
 
 
+def validate_candle_close_constraints(
+    df: pd.DataFrame,
+    points: list[PivotPoint],
+    *,
+    inverse: bool,
+) -> tuple[bool, str]:
+    if len(points) != 5:
+        return False, "Expected five pattern points"
+
+    left_shoulder, left_neck, head, right_neck, right_shoulder = points
+    head_close = float(df.iloc[head.index]["close"])
+    left_leg_closes = df.iloc[left_shoulder.index : left_neck.index + 1]["close"]
+    head_region_closes = df.iloc[left_neck.index : right_neck.index + 1]["close"]
+    right_leg_closes = df.iloc[right_neck.index : right_shoulder.index + 1]["close"]
+
+    if inverse:
+        if head_close >= min(left_shoulder.price, right_shoulder.price):
+            return False, "Head close must be below both shoulder lows"
+        if float(left_leg_closes.min()) < left_shoulder.price:
+            return False, "Close below left shoulder price between left shoulder and left neck"
+        if float(head_region_closes.min()) < head.price:
+            return False, "Close below head price between the two neck points"
+        if float(right_leg_closes.min()) < right_shoulder.price:
+            return False, "Close below right shoulder price between right neck and right shoulder"
+        return True, ""
+
+    if head_close <= max(left_shoulder.price, right_shoulder.price):
+        return False, "Head close must be above both shoulder highs"
+    if float(left_leg_closes.max()) > left_shoulder.price:
+        return False, "Close above left shoulder price between left shoulder and left neck"
+    if float(head_region_closes.max()) > head.price:
+        return False, "Close above head price between the two neck points"
+    if float(right_leg_closes.max()) > right_shoulder.price:
+        return False, "Close above right shoulder price between right neck and right shoulder"
+    return True, ""
+
+
 def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShoulderTopConfig) -> tuple[bool, list[str], int]:
     if len(points) != 5:
         return False, ["关键点数量不是5个"], 0
@@ -969,6 +1006,13 @@ def scan_head_shoulders_top(
         ok, reasons, total_score = validate_head_shoulders_structure([p1, p2, p3, p4, p5], config)
         if not ok:
             continue
+        closes_ok, _ = validate_candle_close_constraints(
+            df,
+            [p1, p2, p3, p4, p5],
+            inverse=False,
+        )
+        if not closes_ok:
+            continue
         trend_score, trend_reasons = calculate_combined_trend_score(
             hourly_df,
             bullish=False,
@@ -1066,6 +1110,13 @@ def scan_inverse_head_shoulders(
             continue
         ok, reasons, total_score = validate_inverse_head_shoulders_structure([p1, p2, p3, p4, p5], config)
         if not ok:
+            continue
+        closes_ok, _ = validate_candle_close_constraints(
+            df,
+            [p1, p2, p3, p4, p5],
+            inverse=True,
+        )
+        if not closes_ok:
             continue
         trend_score, trend_reasons = calculate_combined_trend_score(
             hourly_df,
