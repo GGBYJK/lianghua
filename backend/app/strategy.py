@@ -25,6 +25,7 @@ class HeadShoulderTopConfig:
     max_neck_diff_pct: float = 0.004
     min_right_leg_to_left_leg_ratio: float = 0.6
     max_right_leg_to_left_leg_ratio: float = 2.0
+    enable_right_leg_ratio_filter: bool = True
     min_right_shoulder_ratio_to_left: float = 0.85
     min_head_to_neck_height: float = 0.0
     require_head_beyond_shoulders_and_necks: bool = False
@@ -726,7 +727,10 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
     left_leg_bars = max(1, p2.index - p1.index)
     right_leg_bars = max(1, p5.index - p4.index)
     leg_ratio = right_leg_bars / left_leg_bars
-    if leg_ratio < config.min_right_leg_to_left_leg_ratio or leg_ratio > config.max_right_leg_to_left_leg_ratio:
+    if config.enable_right_leg_ratio_filter and (
+        leg_ratio < config.min_right_leg_to_left_leg_ratio
+        or leg_ratio > config.max_right_leg_to_left_leg_ratio
+    ):
         return False, [
             f"右颈到右肩K线数量不匹配，当前为左肩到左颈的 {leg_ratio:.2f} 倍，"
             f"要求 {config.min_right_leg_to_left_leg_ratio:.2f}-{config.max_right_leg_to_left_leg_ratio:.2f} 倍"
@@ -822,7 +826,10 @@ def validate_inverse_head_shoulders_structure(
     left_leg_bars = max(1, p2.index - p1.index)
     right_leg_bars = max(1, p5.index - p4.index)
     leg_ratio = right_leg_bars / left_leg_bars
-    if leg_ratio < config.min_right_leg_to_left_leg_ratio or leg_ratio > config.max_right_leg_to_left_leg_ratio:
+    if config.enable_right_leg_ratio_filter and (
+        leg_ratio < config.min_right_leg_to_left_leg_ratio
+        or leg_ratio > config.max_right_leg_to_left_leg_ratio
+    ):
         return False, [
             f"右颈到右肩K线数量不匹配，当前为左肩到左颈的 {leg_ratio:.2f} 倍，"
             f"要求 {config.min_right_leg_to_left_leg_ratio:.2f}-{config.max_right_leg_to_left_leg_ratio:.2f} 倍"

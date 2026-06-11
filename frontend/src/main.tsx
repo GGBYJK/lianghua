@@ -40,6 +40,7 @@ const numericFields = [
 ];
 
 const booleanFields = [
+  "enable_right_leg_ratio_filter",
   "require_head_beyond_shoulders_and_necks",
   "require_shoulders_between_opposite_neck_and_head",
 ];
@@ -3146,6 +3147,7 @@ function fieldLabel(field: string) {
     max_neck_diff_pct: "颈线低点最大差异",
     min_right_leg_to_left_leg_ratio: "右颈到右肩/左肩到左颈下限",
     max_right_leg_to_left_leg_ratio: "右颈到右肩/左肩到左颈上限",
+    enable_right_leg_ratio_filter: "启用右颈到右肩K线比例",
     min_shoulder_to_neck_height: "肩部到颈部最小价差",
     require_head_beyond_shoulders_and_necks: "头部必须突破肩颈",
     require_shoulders_between_opposite_neck_and_head: "肩部必须在对侧颈头之间",

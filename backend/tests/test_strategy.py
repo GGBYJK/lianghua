@@ -1220,6 +1220,36 @@ def test_head_neck_bar_ratio_no_longer_filters_top_or_inverse() -> None:
     assert inverse_ok
 
 
+def test_right_leg_ratio_filter_can_be_disabled() -> None:
+    times = pd.date_range("2026-06-09 14:57:00", periods=5, freq="h")
+    points = [
+        PivotPoint(0, times[0], 4336, "high"),
+        PivotPoint(2, times[1], 4291, "low"),
+        PivotPoint(14, times[2], 4369, "high"),
+        PivotPoint(34, times[3], 4275, "low"),
+        PivotPoint(55, times[4], 4336, "high"),
+    ]
+    strict_config = HeadShoulderTopConfig(
+        max_shoulder_diff_pct=0.005,
+        max_neck_diff_pct=0.004,
+        require_head_beyond_shoulders_and_necks=True,
+        require_shoulders_between_opposite_neck_and_head=True,
+    )
+    ok, reasons, _ = validate_head_shoulders_structure(points, strict_config)
+    assert not ok
+    assert "右颈到右肩K线数量不匹配" in reasons[0]
+
+    disabled_config = HeadShoulderTopConfig(
+        max_shoulder_diff_pct=0.005,
+        max_neck_diff_pct=0.004,
+        require_head_beyond_shoulders_and_necks=True,
+        require_shoulders_between_opposite_neck_and_head=True,
+        enable_right_leg_ratio_filter=False,
+    )
+    ok, _, _ = validate_head_shoulders_structure(points, disabled_config)
+    assert ok
+
+
 def test_head_shoulders_requires_price_tier_head_to_neck_height() -> None:
     times = pd.date_range("2026-03-18 10:00:00", periods=5, freq="h")
     config = HeadShoulderTopConfig(
