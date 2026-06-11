@@ -437,10 +437,12 @@ def passes_head_neck_bar_limit(
     right_neck: "PivotPoint",
 ) -> bool:
     max_bars = MAX_HEAD_NECK_BARS_BY_TIMEFRAME.get(timeframe)
-    if max_bars is None:
-        return True
     left_neck_to_head_bars = head.index - left_neck.index
     head_to_right_neck_bars = right_neck.index - head.index
+    if left_neck_to_head_bars <= 1 or head_to_right_neck_bars <= 1:
+        return False
+    if max_bars is None:
+        return True
     return (
         left_neck_to_head_bars < max_bars
         and head_to_right_neck_bars < max_bars
@@ -609,7 +611,8 @@ def validate_candle_close_constraints(
     left_shoulder, left_neck, head, right_neck, right_shoulder = points
     head_close = float(df.iloc[head.index]["close"])
     left_leg_closes = df.iloc[left_shoulder.index : left_neck.index + 1]["close"]
-    head_region_closes = df.iloc[left_neck.index : right_neck.index + 1]["close"]
+    left_head_closes = df.iloc[left_neck.index : head.index + 1]["close"]
+    right_head_closes = df.iloc[head.index : right_neck.index + 1]["close"]
     right_leg_closes = df.iloc[right_neck.index : right_shoulder.index + 1]["close"]
 
     if inverse:
@@ -617,20 +620,40 @@ def validate_candle_close_constraints(
             return False, "Head close must be below both shoulder lows"
         if float(left_leg_closes.min()) < left_shoulder.price:
             return False, "Close below left shoulder price between left shoulder and left neck"
-        if float(head_region_closes.min()) < head.price:
-            return False, "Close below head price between the two neck points"
+        if float(left_leg_closes.max()) > left_neck.price:
+            return False, "Close above left neck price between left shoulder and left neck"
+        if float(left_head_closes.min()) < head.price:
+            return False, "Close below head price between left neck and head"
+        if float(left_head_closes.max()) > left_neck.price:
+            return False, "Close above left neck price between left neck and head"
+        if float(right_head_closes.min()) < head.price:
+            return False, "Close below head price between head and right neck"
+        if float(right_head_closes.max()) > right_neck.price:
+            return False, "Close above right neck price between head and right neck"
         if float(right_leg_closes.min()) < right_shoulder.price:
             return False, "Close below right shoulder price between right neck and right shoulder"
+        if float(right_leg_closes.max()) > right_neck.price:
+            return False, "Close above right neck price between right neck and right shoulder"
         return True, ""
 
     if head_close <= max(left_shoulder.price, right_shoulder.price):
         return False, "Head close must be above both shoulder highs"
     if float(left_leg_closes.max()) > left_shoulder.price:
         return False, "Close above left shoulder price between left shoulder and left neck"
-    if float(head_region_closes.max()) > head.price:
-        return False, "Close above head price between the two neck points"
+    if float(left_leg_closes.min()) < left_neck.price:
+        return False, "Close below left neck price between left shoulder and left neck"
+    if float(left_head_closes.max()) > head.price:
+        return False, "Close above head price between left neck and head"
+    if float(left_head_closes.min()) < left_neck.price:
+        return False, "Close below left neck price between left neck and head"
+    if float(right_head_closes.max()) > head.price:
+        return False, "Close above head price between head and right neck"
+    if float(right_head_closes.min()) < right_neck.price:
+        return False, "Close below right neck price between head and right neck"
     if float(right_leg_closes.max()) > right_shoulder.price:
         return False, "Close above right shoulder price between right neck and right shoulder"
+    if float(right_leg_closes.min()) < right_neck.price:
+        return False, "Close below right neck price between right neck and right shoulder"
     return True, ""
 
 

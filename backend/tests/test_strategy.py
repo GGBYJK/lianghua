@@ -641,6 +641,19 @@ def test_one_minute_head_neck_bar_limit_applies_to_top_and_inverse_patterns() ->
     assert passes_head_neck_bar_limit("15m", left_neck, head_left_too_far, right_neck_too_far)
 
 
+def test_head_and_neck_cannot_be_adjacent_candles_on_any_timeframe() -> None:
+    times = pd.date_range("2026-05-25 09:00:00", periods=20, freq="15min")
+    left_neck = PivotPoint(10, times[10], 100, "low")
+    head_adjacent_to_left_neck = PivotPoint(11, times[11], 110, "high")
+    head = PivotPoint(12, times[12], 110, "high")
+    right_neck_adjacent_to_head = PivotPoint(13, times[13], 100, "low")
+    right_neck = PivotPoint(14, times[14], 100, "low")
+
+    assert not passes_head_neck_bar_limit("15m", left_neck, head_adjacent_to_left_neck, right_neck)
+    assert not passes_head_neck_bar_limit("15m", left_neck, head, right_neck_adjacent_to_head)
+    assert passes_head_neck_bar_limit("15m", left_neck, head, right_neck)
+
+
 def test_five_minute_head_neck_bar_limit_applies_to_top_and_inverse_patterns() -> None:
     times = pd.date_range("2026-05-25 09:00:00", periods=130, freq="5min")
     left_neck = PivotPoint(10, times[10], 100, "low")
@@ -1076,8 +1089,12 @@ def test_top_candle_close_constraints_cover_head_and_all_three_regions() -> None
     violations = [
         (6, 98),
         (3, 97.01),
+        (3, 91.99),
         (5, 104.01),
+        (5, 91.99),
+        (7, 92.99),
         (9, 98.01),
+        (9, 92.99),
     ]
     for index, close in violations:
         invalid = df.copy()
@@ -1092,8 +1109,12 @@ def test_inverse_candle_close_constraints_cover_head_and_all_three_regions() -> 
     violations = [
         (6, 102),
         (3, 102.99),
+        (3, 108.01),
         (5, 95.99),
+        (5, 108.01),
+        (7, 107.01),
         (9, 101.99),
+        (9, 107.01),
     ]
     for index, close in violations:
         invalid = df.copy()
@@ -1103,16 +1124,32 @@ def test_inverse_candle_close_constraints_cover_head_and_all_three_regions() -> 
 
 def test_candle_close_region_thresholds_allow_equal_prices() -> None:
     top_df, top_points = _close_constraint_case()
-    top_df.loc[3, "close"] = top_points[0].price
-    top_df.loc[5, "close"] = top_points[2].price
-    top_df.loc[9, "close"] = top_points[4].price
-    assert validate_candle_close_constraints(top_df, top_points, inverse=False)[0]
+    for index, close in [
+        (3, top_points[0].price),
+        (3, top_points[1].price),
+        (5, top_points[2].price),
+        (5, top_points[1].price),
+        (7, top_points[3].price),
+        (9, top_points[4].price),
+        (9, top_points[3].price),
+    ]:
+        allowed = top_df.copy()
+        allowed.loc[index, "close"] = close
+        assert validate_candle_close_constraints(allowed, top_points, inverse=False)[0]
 
     inverse_df, inverse_points = _close_constraint_case(inverse=True)
-    inverse_df.loc[3, "close"] = inverse_points[0].price
-    inverse_df.loc[5, "close"] = inverse_points[2].price
-    inverse_df.loc[9, "close"] = inverse_points[4].price
-    assert validate_candle_close_constraints(inverse_df, inverse_points, inverse=True)[0]
+    for index, close in [
+        (3, inverse_points[0].price),
+        (3, inverse_points[1].price),
+        (5, inverse_points[2].price),
+        (5, inverse_points[1].price),
+        (7, inverse_points[3].price),
+        (9, inverse_points[4].price),
+        (9, inverse_points[3].price),
+    ]:
+        allowed = inverse_df.copy()
+        allowed.loc[index, "close"] = close
+        assert validate_candle_close_constraints(allowed, inverse_points, inverse=True)[0]
 
 
 def test_head_shoulders_requires_shoulders_and_necks_within_0_4_pct() -> None:
