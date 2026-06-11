@@ -55,6 +55,7 @@ timeframes:
     pivot_left: 3
     pivot_right: 3
     max_shoulder_diff_pct: 0.005
+    max_right_leg_to_left_leg_ratio: 4.0
     require_head_beyond_shoulders_and_necks: true
     require_shoulders_between_opposite_neck_and_head: true
     macd_price_new_high_pct: 0.0005
