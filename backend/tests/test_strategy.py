@@ -1659,7 +1659,7 @@ def test_deduplicate_prefers_later_right_setup_when_left_and_head_match() -> Non
     assert deduplicate_overlapping_signals([early_right, later_right]) == [later_right]
 
 
-def test_deduplicate_prefers_broader_inverse_setup() -> None:
+def test_deduplicate_inverse_prefers_lower_head_before_setup_width() -> None:
     times = pd.date_range("2026-04-08 09:00:00", periods=10, freq="h")
     broad = HeadShoulderTopSignal(
         symbol="hc2610",
@@ -1694,6 +1694,43 @@ def test_deduplicate_prefers_broader_inverse_setup() -> None:
         break_price=3309,
     )
     assert deduplicate_overlapping_signals([narrow, broad]) == [broad]
+
+
+def test_deduplicate_inverse_prefers_nearest_left_setup_when_head_matches() -> None:
+    times = pd.date_range("2026-06-11 09:00:00", periods=8, freq="h")
+    shared_left_neck = PivotPoint(56, times[1], 4712, "high")
+    shared_head = PivotPoint(76, times[2], 4644, "low")
+    shared_right_neck = PivotPoint(84, times[3], 4718, "high")
+    shared_right_shoulder = PivotPoint(94, times[4], 4694, "low")
+    broad = HeadShoulderTopSignal(
+        symbol="v2609",
+        timeframe="3m",
+        pattern="inverse_head_shoulders",
+        left_shoulder=PivotPoint(20, times[0], 4682, "low"),
+        left_neck=shared_left_neck,
+        head=shared_head,
+        right_neck=shared_right_neck,
+        right_shoulder=shared_right_shoulder,
+        neckline_price=4720,
+        confirmed=False,
+        score=90,
+        reasons=[],
+    )
+    near = HeadShoulderTopSignal(
+        symbol="v2609",
+        timeframe="3m",
+        pattern="inverse_head_shoulders",
+        left_shoulder=PivotPoint(50, times[0], 4683, "low"),
+        left_neck=shared_left_neck,
+        head=shared_head,
+        right_neck=shared_right_neck,
+        right_shoulder=shared_right_shoulder,
+        neckline_price=4720,
+        confirmed=False,
+        score=80,
+        reasons=[],
+    )
+    assert deduplicate_overlapping_signals([broad, near]) == [near]
 
 
 def test_deduplicate_inverse_prefers_higher_right_neck_near_left_neck() -> None:

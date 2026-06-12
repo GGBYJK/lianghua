@@ -1297,7 +1297,7 @@ def deduplicate_overlapping_signals(signals: list[HeadShoulderTopSignal]) -> lis
             signal.head.price if signal.pattern == "head_shoulders_top" else -signal.head.price,
             *inverse_neck_priority(signal),
             -left_neck_distance(signal) if signal.pattern == "head_shoulders_top" else left_neck_distance(signal),
-            -left_setup_distance(signal) if signal.pattern == "head_shoulders_top" else left_setup_distance(signal),
+            -left_setup_distance(signal),
             signal.right_neck.index,
             signal.right_shoulder.index,
             -shoulder_diff(signal),
