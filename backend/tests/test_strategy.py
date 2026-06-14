@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import get_symbol_prefix, load_head_shoulder_config
@@ -39,6 +41,9 @@ from app.strategy import (
     HeadShoulderTopSignal,
     PivotPoint,
     calculate_neckline_price,
+    calculate_qtr,
+    calculate_true_range,
+    check_right_shoulder_midpoint_trigger,
     deduplicate_overlapping_signals,
     find_pivots,
     iter_pattern_candidates,
@@ -65,6 +70,35 @@ SAMPLE = ROOT / "sample_data" / "head_shoulders_sample.csv"
 def test_symbol_prefix() -> None:
     assert get_symbol_prefix("rb2405") == "rb"
     assert get_symbol_prefix("SA405") == "sa"
+
+
+def test_true_range_uses_previous_close() -> None:
+    df = pd.DataFrame({
+        "high": [100.0, 108.0, 104.0],
+        "low": [95.0, 102.0, 96.0],
+        "close": [97.0, 103.0, 100.0],
+    })
+
+    assert calculate_true_range(df, 0) == 5.0
+    assert calculate_true_range(df, 1) == 11.0
+    assert calculate_true_range(df, 2) == 8.0
+
+
+def test_qtr_averages_true_range_including_both_necks() -> None:
+    times = pd.date_range("2026-06-14 09:00:00", periods=5, freq="min")
+    df = pd.DataFrame({
+        "high": [100.0, 108.0, 104.0, 110.0, 106.0],
+        "low": [95.0, 102.0, 96.0, 101.0, 100.0],
+        "close": [97.0, 103.0, 100.0, 105.0, 102.0],
+    })
+
+    qtr = calculate_qtr(
+        df,
+        PivotPoint(1, times[1], 102.0, "low"),
+        PivotPoint(3, times[3], 101.0, "low"),
+    )
+
+    assert qtr == (11.0 + 8.0 + 10.0) / 3
 
 
 def test_three_minute_config_accepts_wide_right_neck_top_setup() -> None:
@@ -465,7 +499,12 @@ def test_sample_scan_finds_confirmed_signal() -> None:
         min_score_to_alert=70,
     )
     signals = scan_head_shoulders_top(df, "rb2405", "5m", config)
-    assert any(signal.alert_type == "right_shoulder_confirmed" for signal in signals)
+    signal = next(signal for signal in signals if signal.alert_type == "right_shoulder_confirmed")
+    midpoint_price = (signal.right_neck.price + signal.right_shoulder.price) / 2
+    assert signal.qtr is not None and signal.qtr > 0
+    assert signal.retest_time is not None
+    assert signal.retest_time > signal.right_shoulder.time
+    assert signal.retest_price is not None and signal.retest_price <= midpoint_price
 
 
 def test_monitor_unique_key_uses_stable_pattern_structure() -> None:
@@ -538,7 +577,253 @@ def test_top_scan_emits_right_shoulder_alert_type_only() -> None:
     assert "neckline_break" not in alert_types
 
 
-def test_top_scan_keeps_first_right_shoulder_for_same_left_setup() -> None:
+def test_top_midpoint_trigger_waits_for_price_to_reach_halfway() -> None:
+    times = pd.date_range("2026-06-14 09:00:00", periods=4, freq="min")
+    df = pd.DataFrame({
+        "datetime": times,
+        "low": [101.0, 95.01, 95.0, 94.5],
+        "high": [102.0] * len(times),
+        "close": [101.0, 95.01, 95.0, 94.5],
+    })
+    right_neck = PivotPoint(0, times[0], 90.0, "low")
+    right_shoulder = PivotPoint(1, times[1], 100.0, "high")
+    config = HeadShoulderTopConfig()
+
+    before = check_right_shoulder_midpoint_trigger(
+        df.iloc[:2].reset_index(drop=True),
+        right_neck,
+        right_shoulder,
+        config,
+        inverse=False,
+    )
+    triggered = check_right_shoulder_midpoint_trigger(
+        df,
+        right_neck,
+        right_shoulder,
+        config,
+        inverse=False,
+    )
+
+    assert not before[0]
+    assert triggered == (True, 2, times[2], 95.0, 95.0)
+
+
+def test_inverse_midpoint_trigger_waits_for_price_to_reach_halfway() -> None:
+    times = pd.date_range("2026-06-14 10:00:00", periods=4, freq="min")
+    df = pd.DataFrame({
+        "datetime": times,
+        "low": [98.0] * len(times),
+        "high": [99.0, 104.99, 105.0, 105.5],
+        "close": [99.0, 104.99, 105.0, 105.5],
+    })
+    right_neck = PivotPoint(0, times[0], 110.0, "high")
+    right_shoulder = PivotPoint(1, times[1], 100.0, "low")
+    config = HeadShoulderTopConfig()
+
+    before = check_right_shoulder_midpoint_trigger(
+        df.iloc[:2].reset_index(drop=True),
+        right_neck,
+        right_shoulder,
+        config,
+        inverse=True,
+    )
+    triggered = check_right_shoulder_midpoint_trigger(
+        df,
+        right_neck,
+        right_shoulder,
+        config,
+        inverse=True,
+    )
+
+    assert not before[0]
+    assert triggered == (True, 2, times[2], 105.0, 105.0)
+
+
+def test_top_midpoint_trigger_stops_when_right_shoulder_is_broken_upward() -> None:
+    times = pd.date_range("2026-06-14 11:00:00", periods=4, freq="min")
+    df = pd.DataFrame({
+        "datetime": times,
+        "low": [99.0, 99.0, 97.0, 94.0],
+        "high": [100.0, 100.0, 100.1, 99.0],
+        "close": [99.0, 99.0, 100.1, 94.0],
+    })
+    result = check_right_shoulder_midpoint_trigger(
+        df,
+        PivotPoint(0, times[0], 90.0, "low"),
+        PivotPoint(1, times[1], 100.0, "high"),
+        HeadShoulderTopConfig(),
+        inverse=False,
+    )
+
+    assert not result[0]
+
+
+def test_inverse_midpoint_trigger_stops_when_price_falls_below_right_shoulder() -> None:
+    times = pd.date_range("2026-06-14 12:00:00", periods=4, freq="min")
+    df = pd.DataFrame({
+        "datetime": times,
+        "low": [100.0, 100.0, 99.9, 101.0],
+        "high": [101.0, 101.0, 103.0, 106.0],
+        "close": [101.0, 101.0, 99.9, 106.0],
+    })
+    result = check_right_shoulder_midpoint_trigger(
+        df,
+        PivotPoint(0, times[0], 110.0, "high"),
+        PivotPoint(1, times[1], 100.0, "low"),
+        HeadShoulderTopConfig(),
+        inverse=True,
+    )
+
+    assert not result[0]
+
+
+def test_top_midpoint_trigger_ignores_intrabar_wicks() -> None:
+    times = pd.date_range("2026-06-14 12:30:00", periods=4, freq="min")
+    df = pd.DataFrame({
+        "datetime": times,
+        "low": [99.0, 99.0, 94.0, 94.0],
+        "high": [100.0, 100.0, 101.0, 99.0],
+        "close": [99.0, 99.0, 97.0, 95.0],
+    })
+    result = check_right_shoulder_midpoint_trigger(
+        df,
+        PivotPoint(0, times[0], 90.0, "low"),
+        PivotPoint(1, times[1], 100.0, "high"),
+        HeadShoulderTopConfig(),
+        inverse=False,
+    )
+
+    assert result == (True, 3, times[3], 95.0, 95.0)
+
+
+def test_inverse_midpoint_trigger_ignores_intrabar_wicks() -> None:
+    times = pd.date_range("2026-06-14 12:45:00", periods=4, freq="min")
+    df = pd.DataFrame({
+        "datetime": times,
+        "low": [100.0, 100.0, 99.0, 101.0],
+        "high": [101.0, 101.0, 106.0, 106.0],
+        "close": [101.0, 101.0, 103.0, 105.0],
+    })
+    result = check_right_shoulder_midpoint_trigger(
+        df,
+        PivotPoint(0, times[0], 110.0, "high"),
+        PivotPoint(1, times[1], 100.0, "low"),
+        HeadShoulderTopConfig(),
+        inverse=True,
+    )
+
+    assert result == (True, 3, times[3], 105.0, 105.0)
+
+
+def test_top_scan_uses_later_right_shoulder_after_first_is_invalidated(monkeypatch) -> None:
+    times = pd.date_range("2026-06-14 13:00:00", periods=15, freq="min")
+    first_candidate = (
+        PivotPoint(0, times[0], 100.0, "high"),
+        PivotPoint(2, times[2], 90.0, "low"),
+        PivotPoint(4, times[4], 110.0, "high"),
+        PivotPoint(6, times[6], 90.0, "low"),
+        PivotPoint(8, times[8], 100.0, "high"),
+    )
+    later_candidate = (
+        *first_candidate[:4],
+        PivotPoint(12, times[12], 100.2, "high"),
+    )
+    df = pd.DataFrame({
+        "datetime": times,
+        "open": [96.0] * len(times),
+        "high": [99.0] * len(times),
+        "low": [96.0] * len(times),
+        "close": [96.0] * len(times),
+        "volume": [1000] * len(times),
+    })
+    df.loc[9, "close"] = 100.1
+    df.loc[13, "close"] = 95.0
+
+    monkeypatch.setattr(strategy_module, "find_structure_pivots_for_timeframe", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        strategy_module,
+        "iter_timeframe_pattern_candidates",
+        lambda *_args, **_kwargs: [first_candidate, later_candidate],
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "validate_head_shoulders_structure",
+        lambda *_args, **_kwargs: (True, [], 0),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "validate_candle_close_constraints",
+        lambda *_args, **_kwargs: (True, ""),
+    )
+
+    signals = scan_head_shoulders_top(
+        df,
+        "rb2610",
+        "15m",
+        HeadShoulderTopConfig(enable_score=False),
+    )
+
+    assert len(signals) == 1
+    assert signals[0].right_shoulder.index == 12
+    assert signals[0].retest_time == times[13]
+
+
+def test_inverse_scan_uses_later_right_shoulder_after_first_is_invalidated(monkeypatch) -> None:
+    times = pd.date_range("2026-06-14 14:00:00", periods=15, freq="min")
+    first_candidate = (
+        PivotPoint(0, times[0], 100.0, "low"),
+        PivotPoint(2, times[2], 110.0, "high"),
+        PivotPoint(4, times[4], 90.0, "low"),
+        PivotPoint(6, times[6], 110.0, "high"),
+        PivotPoint(8, times[8], 100.0, "low"),
+    )
+    later_candidate = (
+        *first_candidate[:4],
+        PivotPoint(12, times[12], 99.8, "low"),
+    )
+    df = pd.DataFrame({
+        "datetime": times,
+        "open": [104.0] * len(times),
+        "high": [104.0] * len(times),
+        "low": [101.0] * len(times),
+        "close": [104.0] * len(times),
+        "volume": [1000] * len(times),
+    })
+    df.loc[1, "high"] = 111.0
+    df.loc[9, "close"] = 99.9
+    df.loc[13, "close"] = 105.0
+
+    monkeypatch.setattr(strategy_module, "find_structure_pivots_for_timeframe", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        strategy_module,
+        "iter_timeframe_pattern_candidates",
+        lambda *_args, **_kwargs: [first_candidate, later_candidate],
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "validate_inverse_head_shoulders_structure",
+        lambda *_args, **_kwargs: (True, [], 0),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "validate_candle_close_constraints",
+        lambda *_args, **_kwargs: (True, ""),
+    )
+    monkeypatch.setattr(strategy_module, "inverse_prior_high_exceeds_left_neck", lambda *_args, **_kwargs: True)
+
+    signals = scan_inverse_head_shoulders(
+        df,
+        "rb2610",
+        "15m",
+        HeadShoulderTopConfig(enable_score=False),
+    )
+
+    assert len(signals) == 1
+    assert signals[0].right_shoulder.index == 12
+    assert signals[0].retest_time == times[13]
+
+
+def test_top_scan_accepts_two_bar_shoulder_neck_spans() -> None:
     times = pd.date_range("2026-01-01 09:00:00", periods=20, freq="min")
     rows = []
     closes = [
@@ -851,7 +1136,80 @@ def test_mirrored_sample_finds_confirmed_inverse_signal() -> None:
         min_score_to_alert=70,
     )
     signals = scan_inverse_head_shoulders(mirrored, "rb2405", "5m", config)
-    assert any(signal.alert_type == "right_shoulder_confirmed" for signal in signals)
+    signal = next(signal for signal in signals if signal.alert_type == "right_shoulder_confirmed")
+    midpoint_price = (signal.right_neck.price + signal.right_shoulder.price) / 2
+    assert signal.qtr is not None and signal.qtr > 0
+    assert signal.retest_time is not None
+    assert signal.retest_time > signal.right_shoulder.time
+    assert signal.retest_price is not None and signal.retest_price >= midpoint_price
+
+
+@pytest.mark.parametrize("timeframe", ["3m", "5m"])
+def test_inverse_prior_high_rule_applies_to_three_and_five_minute_timeframes(
+    monkeypatch,
+    timeframe: str,
+) -> None:
+    times = pd.date_range("2026-06-14 09:00:00", periods=45, freq="min")
+    candidate = (
+        PivotPoint(25, times[25], 100, "low"),
+        PivotPoint(28, times[28], 110, "high"),
+        PivotPoint(31, times[31], 90, "low"),
+        PivotPoint(34, times[34], 110, "high"),
+        PivotPoint(37, times[37], 100, "low"),
+    )
+    df = pd.DataFrame({
+        "datetime": times,
+        "open": [100.0] * len(times),
+        "high": [110.0] * len(times),
+        "low": [99.0] * len(times),
+        "close": [100.0] * len(times),
+        "volume": [1000] * len(times),
+    })
+
+    monkeypatch.setattr(strategy_module, "find_structure_pivots_for_timeframe", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(strategy_module, "iter_timeframe_pattern_candidates", lambda *_args, **_kwargs: [candidate])
+    config = HeadShoulderTopConfig(enable_score=False)
+
+    df.loc[38, "close"] = 105.0
+    df.loc[4, "high"] = 111.0
+    assert scan_inverse_head_shoulders(df, "a2607", timeframe, config) == []
+
+    df.loc[5, "high"] = 111.0
+    assert scan_inverse_head_shoulders(df, "a2607", timeframe, config)
+
+
+@pytest.mark.parametrize("timeframe", ["1m", "15m", "30m", "1h"])
+def test_inverse_prior_high_rule_does_not_apply_to_other_timeframes(
+    monkeypatch,
+    timeframe: str,
+) -> None:
+    times = pd.date_range("2026-06-14 09:00:00", periods=45, freq="min")
+    candidate = (
+        PivotPoint(25, times[25], 100, "low"),
+        PivotPoint(28, times[28], 110, "high"),
+        PivotPoint(31, times[31], 90, "low"),
+        PivotPoint(34, times[34], 110, "high"),
+        PivotPoint(37, times[37], 100, "low"),
+    )
+    df = pd.DataFrame({
+        "datetime": times,
+        "open": [100.0] * len(times),
+        "high": [110.0] * len(times),
+        "low": [99.0] * len(times),
+        "close": [100.0] * len(times),
+        "volume": [1000] * len(times),
+    })
+    df.loc[38, "close"] = 105.0
+
+    monkeypatch.setattr(strategy_module, "find_structure_pivots_for_timeframe", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(strategy_module, "iter_timeframe_pattern_candidates", lambda *_args, **_kwargs: [candidate])
+
+    assert scan_inverse_head_shoulders(
+        df,
+        "a2607",
+        timeframe,
+        HeadShoulderTopConfig(enable_score=False),
+    )
 
 
 def test_combined_scan_returns_pattern_field() -> None:
@@ -1087,7 +1445,6 @@ def test_top_candle_close_constraints_cover_head_and_all_three_regions() -> None
     assert validate_candle_close_constraints(df, points, inverse=False)[0]
 
     violations = [
-        (6, 98),
         (3, 97.01),
         (3, 91.99),
         (5, 104.01),
@@ -1107,7 +1464,6 @@ def test_inverse_candle_close_constraints_cover_head_and_all_three_regions() -> 
     assert validate_candle_close_constraints(df, points, inverse=True)[0]
 
     violations = [
-        (6, 102),
         (3, 102.99),
         (3, 108.01),
         (5, 95.99),
@@ -1120,6 +1476,16 @@ def test_inverse_candle_close_constraints_cover_head_and_all_three_regions() -> 
         invalid = df.copy()
         invalid.loc[index, "close"] = close
         assert not validate_candle_close_constraints(invalid, points, inverse=True)[0]
+
+
+def test_head_close_does_not_need_to_exceed_shoulder_extremes() -> None:
+    top_df, top_points = _close_constraint_case()
+    top_df.loc[top_points[2].index, "close"] = max(top_points[0].price, top_points[4].price)
+    assert validate_candle_close_constraints(top_df, top_points, inverse=False)[0]
+
+    inverse_df, inverse_points = _close_constraint_case(inverse=True)
+    inverse_df.loc[inverse_points[2].index, "close"] = min(inverse_points[0].price, inverse_points[4].price)
+    assert validate_candle_close_constraints(inverse_df, inverse_points, inverse=True)[0]
 
 
 def test_candle_close_region_thresholds_allow_equal_prices() -> None:
@@ -1163,32 +1529,79 @@ def test_head_shoulders_requires_shoulders_and_necks_within_0_4_pct() -> None:
 
     ok, _, _ = validate_head_shoulders_structure([
         PivotPoint(0, times[0], 100.00, "high"),
-        PivotPoint(1, times[1], 95.00, "low"),
-        PivotPoint(2, times[2], 101.20, "high"),
-        PivotPoint(3, times[3], 95.30, "low"),
-        PivotPoint(4, times[4], 100.35, "high"),
+        PivotPoint(3, times[1], 95.00, "low"),
+        PivotPoint(6, times[2], 101.20, "high"),
+        PivotPoint(9, times[3], 95.30, "low"),
+        PivotPoint(12, times[4], 100.35, "high"),
     ], config)
     assert ok
 
     shoulder_too_far = [
         PivotPoint(0, times[0], 100.00, "high"),
-        PivotPoint(1, times[1], 95.00, "low"),
-        PivotPoint(2, times[2], 101.20, "high"),
-        PivotPoint(3, times[3], 95.30, "low"),
-        PivotPoint(4, times[4], 100.45, "high"),
+        PivotPoint(3, times[1], 95.00, "low"),
+        PivotPoint(6, times[2], 101.20, "high"),
+        PivotPoint(9, times[3], 95.30, "low"),
+        PivotPoint(12, times[4], 100.45, "high"),
     ]
     ok, _, _ = validate_head_shoulders_structure(shoulder_too_far, config)
     assert not ok
 
     neck_too_far = [
         PivotPoint(0, times[0], 100.00, "high"),
-        PivotPoint(1, times[1], 95.00, "low"),
-        PivotPoint(2, times[2], 101.20, "high"),
-        PivotPoint(3, times[3], 95.40, "low"),
-        PivotPoint(4, times[4], 100.35, "high"),
+        PivotPoint(3, times[1], 95.00, "low"),
+        PivotPoint(6, times[2], 101.20, "high"),
+        PivotPoint(9, times[3], 95.40, "low"),
+        PivotPoint(12, times[4], 100.35, "high"),
     ]
     ok, _, _ = validate_head_shoulders_structure(neck_too_far, config)
     assert not ok
+
+
+def test_top_and_inverse_require_both_shoulder_neck_spans_above_one_bar() -> None:
+    times = pd.date_range("2026-03-18 10:00:00", periods=5, freq="h")
+    config = HeadShoulderTopConfig(
+        min_shoulder_to_head_height_ratio=0.01,
+        max_shoulder_diff_pct=0.02,
+        max_neck_diff_pct=0.02,
+        min_right_leg_to_left_leg_ratio=0.1,
+        max_right_leg_to_left_leg_ratio=10,
+    )
+
+    top_prices = [100, 90, 110, 90, 100]
+    inverse_prices = [100, 110, 90, 110, 100]
+    top_kinds = ["high", "low", "high", "low", "high"]
+    inverse_kinds = ["low", "high", "low", "high", "low"]
+
+    for indexes in ([0, 1, 4, 7, 9], [0, 2, 5, 8, 9]):
+        top_points = [
+            PivotPoint(index, times[position], price, kind)
+            for position, (index, price, kind) in enumerate(zip(indexes, top_prices, top_kinds))
+        ]
+        inverse_points = [
+            PivotPoint(index, times[position], price, kind)
+            for position, (index, price, kind) in enumerate(zip(indexes, inverse_prices, inverse_kinds))
+        ]
+
+        top_ok, top_reasons, _ = validate_head_shoulders_structure(top_points, config)
+        inverse_ok, inverse_reasons, _ = validate_inverse_head_shoulders_structure(inverse_points, config)
+
+        assert not top_ok
+        assert not inverse_ok
+        assert "K线数量都必须大于1" in top_reasons[0]
+        assert "K线数量都必须大于1" in inverse_reasons[0]
+
+    valid_indexes = [0, 2, 5, 8, 10]
+    valid_top = [
+        PivotPoint(index, times[position], price, kind)
+        for position, (index, price, kind) in enumerate(zip(valid_indexes, top_prices, top_kinds))
+    ]
+    valid_inverse = [
+        PivotPoint(index, times[position], price, kind)
+        for position, (index, price, kind) in enumerate(zip(valid_indexes, inverse_prices, inverse_kinds))
+    ]
+
+    assert validate_head_shoulders_structure(valid_top, config)[0]
+    assert validate_inverse_head_shoulders_structure(valid_inverse, config)[0]
 
 
 def test_head_neck_bar_ratio_no_longer_filters_top_or_inverse() -> None:
@@ -1224,7 +1637,7 @@ def test_right_leg_ratio_filter_can_be_disabled() -> None:
     times = pd.date_range("2026-06-09 14:57:00", periods=5, freq="h")
     points = [
         PivotPoint(0, times[0], 4336, "high"),
-        PivotPoint(2, times[1], 4291, "low"),
+        PivotPoint(3, times[1], 4291, "low"),
         PivotPoint(14, times[2], 4369, "high"),
         PivotPoint(34, times[3], 4275, "low"),
         PivotPoint(55, times[4], 4336, "high"),
@@ -1269,20 +1682,20 @@ def test_head_shoulders_requires_price_tier_head_to_neck_height() -> None:
     for head_price, required_height in cases:
         exact_threshold = [
             PivotPoint(0, times[0], head_price - 1, "high"),
-            PivotPoint(1, times[1], head_price - required_height, "low"),
-            PivotPoint(2, times[2], head_price, "high"),
-            PivotPoint(3, times[3], head_price - required_height, "low"),
-            PivotPoint(4, times[4], head_price - 1, "high"),
+            PivotPoint(3, times[1], head_price - required_height, "low"),
+            PivotPoint(6, times[2], head_price, "high"),
+            PivotPoint(9, times[3], head_price - required_height, "low"),
+            PivotPoint(12, times[4], head_price - 1, "high"),
         ]
         ok, _, _ = validate_head_shoulders_structure(exact_threshold, config)
         assert not ok
 
         one_side_above_threshold = [
             PivotPoint(0, times[0], head_price - 1, "high"),
-            PivotPoint(1, times[1], head_price - required_height - 0.01, "low"),
-            PivotPoint(2, times[2], head_price, "high"),
-            PivotPoint(3, times[3], head_price - required_height, "low"),
-            PivotPoint(4, times[4], head_price - 1, "high"),
+            PivotPoint(3, times[1], head_price - required_height - 0.01, "low"),
+            PivotPoint(6, times[2], head_price, "high"),
+            PivotPoint(9, times[3], head_price - required_height, "low"),
+            PivotPoint(12, times[4], head_price - 1, "high"),
         ]
         ok, _, _ = validate_head_shoulders_structure(one_side_above_threshold, config)
         assert ok
@@ -1300,10 +1713,10 @@ def test_inverse_head_shoulders_requires_price_tier_head_to_neck_height() -> Non
 
     ok, reasons, _ = validate_inverse_head_shoulders_structure([
         PivotPoint(0, times[0], 3449, "low"),
-        PivotPoint(1, times[1], 3455, "high"),
-        PivotPoint(2, times[2], 3448, "low"),
-        PivotPoint(3, times[3], 3454, "high"),
-        PivotPoint(4, times[4], 3450, "low"),
+        PivotPoint(3, times[1], 3455, "high"),
+        PivotPoint(6, times[2], 3448, "low"),
+        PivotPoint(9, times[3], 3454, "high"),
+        PivotPoint(12, times[4], 3450, "low"),
     ], config)
 
     assert not ok
@@ -1328,20 +1741,20 @@ def test_inverse_head_shoulders_price_tier_height_boundaries() -> None:
     for head_price, required_height in cases:
         exact_threshold = [
             PivotPoint(0, times[0], head_price + 1, "low"),
-            PivotPoint(1, times[1], head_price + required_height, "high"),
-            PivotPoint(2, times[2], head_price, "low"),
-            PivotPoint(3, times[3], head_price + required_height, "high"),
-            PivotPoint(4, times[4], head_price + 1, "low"),
+            PivotPoint(3, times[1], head_price + required_height, "high"),
+            PivotPoint(6, times[2], head_price, "low"),
+            PivotPoint(9, times[3], head_price + required_height, "high"),
+            PivotPoint(12, times[4], head_price + 1, "low"),
         ]
         ok, _, _ = validate_inverse_head_shoulders_structure(exact_threshold, config)
         assert not ok
 
         one_side_above_threshold = [
             PivotPoint(0, times[0], head_price + 1, "low"),
-            PivotPoint(1, times[1], head_price + required_height + 0.01, "high"),
-            PivotPoint(2, times[2], head_price, "low"),
-            PivotPoint(3, times[3], head_price + required_height, "high"),
-            PivotPoint(4, times[4], head_price + 1, "low"),
+            PivotPoint(3, times[1], head_price + required_height + 0.01, "high"),
+            PivotPoint(6, times[2], head_price, "low"),
+            PivotPoint(9, times[3], head_price + required_height, "high"),
+            PivotPoint(12, times[4], head_price + 1, "low"),
         ]
         ok, _, _ = validate_inverse_head_shoulders_structure(one_side_above_threshold, config)
         assert ok
@@ -1359,39 +1772,39 @@ def test_head_shoulders_requires_at_least_one_shoulder_height_ratio() -> None:
 
     ok, _, _ = validate_head_shoulders_structure([
         PivotPoint(0, times[0], 96.5, "high"),
-        PivotPoint(1, times[1], 94.0, "low"),
-        PivotPoint(2, times[2], 100.0, "high"),
-        PivotPoint(3, times[3], 94.0, "low"),
-        PivotPoint(4, times[4], 96.5, "high"),
+        PivotPoint(3, times[1], 94.0, "low"),
+        PivotPoint(6, times[2], 100.0, "high"),
+        PivotPoint(9, times[3], 94.0, "low"),
+        PivotPoint(12, times[4], 96.5, "high"),
     ], config)
     assert ok
 
     left_side_too_small = [
         PivotPoint(0, times[0], 95.7, "high"),
-        PivotPoint(1, times[1], 94.0, "low"),
-        PivotPoint(2, times[2], 100.0, "high"),
-        PivotPoint(3, times[3], 94.0, "low"),
-        PivotPoint(4, times[4], 96.5, "high"),
+        PivotPoint(3, times[1], 94.0, "low"),
+        PivotPoint(6, times[2], 100.0, "high"),
+        PivotPoint(9, times[3], 94.0, "low"),
+        PivotPoint(12, times[4], 96.5, "high"),
     ]
     ok, _, _ = validate_head_shoulders_structure(left_side_too_small, config)
     assert ok
 
     right_side_too_small = [
         PivotPoint(0, times[0], 96.5, "high"),
-        PivotPoint(1, times[1], 94.0, "low"),
-        PivotPoint(2, times[2], 100.0, "high"),
-        PivotPoint(3, times[3], 94.0, "low"),
-        PivotPoint(4, times[4], 95.7, "high"),
+        PivotPoint(3, times[1], 94.0, "low"),
+        PivotPoint(6, times[2], 100.0, "high"),
+        PivotPoint(9, times[3], 94.0, "low"),
+        PivotPoint(12, times[4], 95.7, "high"),
     ]
     ok, _, _ = validate_head_shoulders_structure(right_side_too_small, config)
     assert ok
 
     both_sides_too_small = [
         PivotPoint(0, times[0], 95.7, "high"),
-        PivotPoint(1, times[1], 94.0, "low"),
-        PivotPoint(2, times[2], 100.0, "high"),
-        PivotPoint(3, times[3], 94.0, "low"),
-        PivotPoint(4, times[4], 95.7, "high"),
+        PivotPoint(3, times[1], 94.0, "low"),
+        PivotPoint(6, times[2], 100.0, "high"),
+        PivotPoint(9, times[3], 94.0, "low"),
+        PivotPoint(12, times[4], 95.7, "high"),
     ]
     ok, _, _ = validate_head_shoulders_structure(both_sides_too_small, config)
     assert not ok
@@ -1409,10 +1822,10 @@ def test_inverse_head_shoulders_requires_at_least_one_shoulder_height_ratio() ->
 
     ok, _, _ = validate_inverse_head_shoulders_structure([
         PivotPoint(0, times[0], 5019, "low"),
-        PivotPoint(1, times[1], 5030, "high"),
-        PivotPoint(2, times[2], 5006, "low"),
-        PivotPoint(3, times[3], 5030, "high"),
-        PivotPoint(4, times[4], 5023, "low"),
+        PivotPoint(3, times[1], 5030, "high"),
+        PivotPoint(6, times[2], 5006, "low"),
+        PivotPoint(9, times[3], 5030, "high"),
+        PivotPoint(12, times[4], 5023, "low"),
     ], config)
     assert ok
 
@@ -1432,49 +1845,49 @@ def test_head_shoulders_strict_one_minute_price_rules() -> None:
 
     ok, _, _ = validate_head_shoulders_structure([
         PivotPoint(0, times[0], 96, "high"),
-        PivotPoint(1, times[1], 92, "low"),
-        PivotPoint(2, times[2], 100, "high"),
-        PivotPoint(3, times[3], 93, "low"),
-        PivotPoint(4, times[4], 97, "high"),
+        PivotPoint(3, times[1], 92, "low"),
+        PivotPoint(6, times[2], 100, "high"),
+        PivotPoint(9, times[3], 93, "low"),
+        PivotPoint(12, times[4], 97, "high"),
     ], config)
     assert ok
 
     head_not_above_neck = [
         PivotPoint(0, times[0], 96, "high"),
-        PivotPoint(1, times[1], 92, "low"),
-        PivotPoint(2, times[2], 100, "high"),
-        PivotPoint(3, times[3], 101, "low"),
-        PivotPoint(4, times[4], 97, "high"),
+        PivotPoint(3, times[1], 92, "low"),
+        PivotPoint(6, times[2], 100, "high"),
+        PivotPoint(9, times[3], 101, "low"),
+        PivotPoint(12, times[4], 97, "high"),
     ]
     ok, _, _ = validate_head_shoulders_structure(head_not_above_neck, config)
     assert not ok
 
     right_shoulder_outside_left_neck_to_head = [
         PivotPoint(0, times[0], 96, "high"),
-        PivotPoint(1, times[1], 92, "low"),
-        PivotPoint(2, times[2], 100, "high"),
-        PivotPoint(3, times[3], 93, "low"),
-        PivotPoint(4, times[4], 91, "high"),
+        PivotPoint(3, times[1], 92, "low"),
+        PivotPoint(6, times[2], 100, "high"),
+        PivotPoint(9, times[3], 93, "low"),
+        PivotPoint(12, times[4], 91, "high"),
     ]
     ok, _, _ = validate_head_shoulders_structure(right_shoulder_outside_left_neck_to_head, config)
     assert not ok
 
     left_shoulder_outside_head_to_right_neck = [
         PivotPoint(0, times[0], 92, "high"),
-        PivotPoint(1, times[1], 88, "low"),
-        PivotPoint(2, times[2], 100, "high"),
-        PivotPoint(3, times[3], 93, "low"),
-        PivotPoint(4, times[4], 97, "high"),
+        PivotPoint(3, times[1], 88, "low"),
+        PivotPoint(6, times[2], 100, "high"),
+        PivotPoint(9, times[3], 93, "low"),
+        PivotPoint(12, times[4], 97, "high"),
     ]
     ok, _, _ = validate_head_shoulders_structure(left_shoulder_outside_head_to_right_neck, config)
     assert not ok
 
     shoulder_neck_diff_too_small = [
         PivotPoint(0, times[0], 95.9, "high"),
-        PivotPoint(1, times[1], 92, "low"),
-        PivotPoint(2, times[2], 100, "high"),
-        PivotPoint(3, times[3], 93, "low"),
-        PivotPoint(4, times[4], 97, "high"),
+        PivotPoint(3, times[1], 92, "low"),
+        PivotPoint(6, times[2], 100, "high"),
+        PivotPoint(9, times[3], 93, "low"),
+        PivotPoint(12, times[4], 97, "high"),
     ]
     ok, _, _ = validate_head_shoulders_structure(shoulder_neck_diff_too_small, config)
     assert not ok
@@ -1495,49 +1908,49 @@ def test_inverse_head_shoulders_strict_one_minute_price_rules() -> None:
 
     ok, _, _ = validate_inverse_head_shoulders_structure([
         PivotPoint(0, times[0], 104, "low"),
-        PivotPoint(1, times[1], 108, "high"),
-        PivotPoint(2, times[2], 100, "low"),
-        PivotPoint(3, times[3], 107, "high"),
-        PivotPoint(4, times[4], 103, "low"),
+        PivotPoint(3, times[1], 108, "high"),
+        PivotPoint(6, times[2], 100, "low"),
+        PivotPoint(9, times[3], 107, "high"),
+        PivotPoint(12, times[4], 103, "low"),
     ], config)
     assert ok
 
     head_not_below_neck = [
         PivotPoint(0, times[0], 104, "low"),
-        PivotPoint(1, times[1], 108, "high"),
-        PivotPoint(2, times[2], 100, "low"),
-        PivotPoint(3, times[3], 99, "high"),
-        PivotPoint(4, times[4], 103, "low"),
+        PivotPoint(3, times[1], 108, "high"),
+        PivotPoint(6, times[2], 100, "low"),
+        PivotPoint(9, times[3], 99, "high"),
+        PivotPoint(12, times[4], 103, "low"),
     ]
     ok, _, _ = validate_inverse_head_shoulders_structure(head_not_below_neck, config)
     assert not ok
 
     right_shoulder_outside_left_neck_to_head = [
         PivotPoint(0, times[0], 104, "low"),
-        PivotPoint(1, times[1], 108, "high"),
-        PivotPoint(2, times[2], 100, "low"),
-        PivotPoint(3, times[3], 107, "high"),
-        PivotPoint(4, times[4], 109, "low"),
+        PivotPoint(3, times[1], 108, "high"),
+        PivotPoint(6, times[2], 100, "low"),
+        PivotPoint(9, times[3], 107, "high"),
+        PivotPoint(12, times[4], 109, "low"),
     ]
     ok, _, _ = validate_inverse_head_shoulders_structure(right_shoulder_outside_left_neck_to_head, config)
     assert not ok
 
     left_shoulder_outside_head_to_right_neck = [
         PivotPoint(0, times[0], 108, "low"),
-        PivotPoint(1, times[1], 112, "high"),
-        PivotPoint(2, times[2], 100, "low"),
-        PivotPoint(3, times[3], 107, "high"),
-        PivotPoint(4, times[4], 103, "low"),
+        PivotPoint(3, times[1], 112, "high"),
+        PivotPoint(6, times[2], 100, "low"),
+        PivotPoint(9, times[3], 107, "high"),
+        PivotPoint(12, times[4], 103, "low"),
     ]
     ok, _, _ = validate_inverse_head_shoulders_structure(left_shoulder_outside_head_to_right_neck, config)
     assert not ok
 
     shoulder_neck_diff_too_small = [
         PivotPoint(0, times[0], 104.1, "low"),
-        PivotPoint(1, times[1], 108, "high"),
-        PivotPoint(2, times[2], 100, "low"),
-        PivotPoint(3, times[3], 107, "high"),
-        PivotPoint(4, times[4], 103, "low"),
+        PivotPoint(3, times[1], 108, "high"),
+        PivotPoint(6, times[2], 100, "low"),
+        PivotPoint(9, times[3], 107, "high"),
+        PivotPoint(12, times[4], 103, "low"),
     ]
     ok, _, _ = validate_inverse_head_shoulders_structure(shoulder_neck_diff_too_small, config)
     assert not ok
@@ -1585,7 +1998,7 @@ def test_deduplicate_overlapping_signals_keeps_highest_ranked() -> None:
     assert deduplicate_overlapping_signals([weaker, stronger]) == [stronger]
 
 
-def test_deduplicate_prefers_nearest_left_setup_when_head_matches() -> None:
+def test_deduplicate_prefers_more_symmetric_time_structure() -> None:
     times = pd.date_range("2026-02-25 10:00:00", periods=10, freq="h")
     shared_head = PivotPoint(623, times[4], 3342, "high")
     asymmetric = HeadShoulderTopSignal(
@@ -1620,10 +2033,123 @@ def test_deduplicate_prefers_nearest_left_setup_when_head_matches() -> None:
         break_time=times[9],
         break_price=3296,
     )
-    assert deduplicate_overlapping_signals([asymmetric, symmetric]) == [asymmetric]
+    assert deduplicate_overlapping_signals([asymmetric, symmetric]) == [symmetric]
 
 
-def test_deduplicate_prefers_later_right_setup_when_left_and_head_match() -> None:
+def test_deduplicate_same_head_prefers_more_winning_conditions() -> None:
+    times = pd.date_range("2026-02-26 10:00:00", periods=9, freq="h")
+    price_quality = HeadShoulderTopSignal(
+        symbol="hc2610",
+        timeframe="1h",
+        pattern="head_shoulders_top",
+        left_shoulder=PivotPoint(10, times[0], 100, "high"),
+        left_neck=PivotPoint(20, times[1], 90, "low"),
+        head=PivotPoint(50, times[4], 110, "high"),
+        right_neck=PivotPoint(60, times[5], 90.1, "low"),
+        right_shoulder=PivotPoint(70, times[6], 100.1, "high"),
+        neckline_price=90,
+        confirmed=False,
+        score=80,
+        reasons=[],
+    )
+    time_quality = HeadShoulderTopSignal(
+        symbol="hc2610",
+        timeframe="1h",
+        pattern="head_shoulders_top",
+        left_shoulder=PivotPoint(20, times[1], 100, "high"),
+        left_neck=PivotPoint(35, times[2], 90, "low"),
+        head=PivotPoint(50, times[4], 110, "high"),
+        right_neck=PivotPoint(65, times[5], 92, "low"),
+        right_shoulder=PivotPoint(80, times[7], 103, "high"),
+        neckline_price=91,
+        confirmed=False,
+        score=105,
+        reasons=[],
+    )
+
+    assert deduplicate_overlapping_signals([time_quality, price_quality]) == [price_quality]
+
+
+def test_deduplicate_same_head_prefers_combined_price_alignment_before_time_symmetry() -> None:
+    times = pd.date_range("2026-02-27 10:00:00", periods=9, freq="h")
+    shoulder_quality = HeadShoulderTopSignal(
+        symbol="hc2610",
+        timeframe="1h",
+        pattern="head_shoulders_top",
+        left_shoulder=PivotPoint(10, times[0], 100, "high"),
+        left_neck=PivotPoint(20, times[1], 90, "low"),
+        head=PivotPoint(50, times[4], 110, "high"),
+        right_neck=PivotPoint(60, times[5], 90, "low"),
+        right_shoulder=PivotPoint(70, times[6], 100.1, "high"),
+        neckline_price=90,
+        confirmed=False,
+        score=105,
+        reasons=[],
+    )
+    time_quality = HeadShoulderTopSignal(
+        symbol="hc2610",
+        timeframe="1h",
+        pattern="head_shoulders_top",
+        left_shoulder=PivotPoint(20, times[1], 100, "high"),
+        left_neck=PivotPoint(35, times[2], 90, "low"),
+        head=PivotPoint(50, times[4], 110, "high"),
+        right_neck=PivotPoint(65, times[5], 90, "low"),
+        right_shoulder=PivotPoint(80, times[7], 103, "high"),
+        neckline_price=90,
+        confirmed=False,
+        score=80,
+        reasons=[],
+    )
+
+    assert deduplicate_overlapping_signals([shoulder_quality, time_quality]) == [shoulder_quality]
+
+
+def test_deduplicate_m2609_head_uses_three_condition_count() -> None:
+    times = pd.to_datetime([
+        "2026-06-08 13:42:00",
+        "2026-06-08 14:42:00",
+        "2026-06-08 21:24:00",
+        "2026-06-08 21:48:00",
+        "2026-06-08 22:09:00",
+        "2026-06-09 09:15:00",
+        "2026-06-09 09:30:00",
+        "2026-06-09 11:03:00",
+        "2026-06-09 11:21:00",
+    ])
+    head = PivotPoint(723, times[4], 2918, "high")
+    expected = HeadShoulderTopSignal(
+        symbol="m2609",
+        timeframe="3m",
+        pattern="head_shoulders_top",
+        left_shoulder=PivotPoint(708, times[2], 2913, "high"),
+        left_neck=PivotPoint(716, times[3], 2899, "low"),
+        head=head,
+        right_neck=PivotPoint(745, times[5], 2903, "low"),
+        right_shoulder=PivotPoint(750, times[6], 2912, "high"),
+        neckline_price=2901,
+        confirmed=False,
+        score=90,
+        reasons=[],
+    )
+    wider = HeadShoulderTopSignal(
+        symbol="m2609",
+        timeframe="3m",
+        pattern="head_shoulders_top",
+        left_shoulder=PivotPoint(674, times[0], 2910, "high"),
+        left_neck=PivotPoint(694, times[1], 2896, "low"),
+        head=head,
+        right_neck=PivotPoint(776, times[7], 2897, "low"),
+        right_shoulder=PivotPoint(782, times[8], 2901, "high"),
+        neckline_price=2897,
+        confirmed=False,
+        score=95,
+        reasons=[],
+    )
+
+    assert deduplicate_overlapping_signals([wider, expected]) == [wider]
+
+
+def test_deduplicate_prefers_more_winning_conditions_over_total_price_difference() -> None:
     times = pd.date_range("2026-05-07 22:00:00", periods=10, freq="h")
     left_shoulder = PivotPoint(10, times[0], 5466, "high")
     left_neck = PivotPoint(18, times[1], 5450, "low")
@@ -1656,10 +2182,84 @@ def test_deduplicate_prefers_later_right_setup_when_left_and_head_match() -> Non
         score=80,
         reasons=[],
     )
-    assert deduplicate_overlapping_signals([early_right, later_right]) == [later_right]
+    assert deduplicate_overlapping_signals([early_right, later_right]) == [early_right]
 
 
-def test_deduplicate_inverse_prefers_lower_head_before_setup_width() -> None:
+def test_deduplicate_qtr_close_prices_choose_more_symmetric_pattern() -> None:
+    times = pd.date_range("2026-06-14 10:00:00", periods=9, freq="min")
+    head = PivotPoint(50, times[4], 110.0, "high")
+    less_symmetric = HeadShoulderTopSignal(
+        symbol="a2607",
+        timeframe="3m",
+        pattern="head_shoulders_top",
+        left_shoulder=PivotPoint(10, times[0], 100.0, "high"),
+        left_neck=PivotPoint(20, times[1], 90.0, "low"),
+        head=head,
+        right_neck=PivotPoint(60, times[5], 91.0, "low"),
+        right_shoulder=PivotPoint(70, times[6], 101.0, "high"),
+        neckline_price=90.5,
+        confirmed=False,
+        score=90,
+        reasons=[],
+        qtr=2.0,
+    )
+    more_symmetric = HeadShoulderTopSignal(
+        symbol="a2607",
+        timeframe="3m",
+        pattern="head_shoulders_top",
+        left_shoulder=PivotPoint(20, times[1], 100.0, "high"),
+        left_neck=PivotPoint(35, times[2], 90.0, "low"),
+        head=head,
+        right_neck=PivotPoint(65, times[5], 92.0, "low"),
+        right_shoulder=PivotPoint(80, times[7], 102.0, "high"),
+        neckline_price=91.0,
+        confirmed=False,
+        score=80,
+        reasons=[],
+        qtr=2.0,
+    )
+
+    assert deduplicate_overlapping_signals([less_symmetric, more_symmetric]) == [more_symmetric]
+
+
+def test_deduplicate_qtr_outside_limit_compares_specific_price_differences() -> None:
+    times = pd.date_range("2026-06-14 11:00:00", periods=9, freq="min")
+    head = PivotPoint(50, times[4], 110.0, "high")
+    better_prices = HeadShoulderTopSignal(
+        symbol="a2607",
+        timeframe="3m",
+        pattern="head_shoulders_top",
+        left_shoulder=PivotPoint(10, times[0], 100.0, "high"),
+        left_neck=PivotPoint(20, times[1], 90.0, "low"),
+        head=head,
+        right_neck=PivotPoint(60, times[5], 91.0, "low"),
+        right_shoulder=PivotPoint(70, times[6], 103.0, "high"),
+        neckline_price=90.5,
+        confirmed=False,
+        score=80,
+        reasons=[],
+        qtr=1.0,
+    )
+    more_symmetric = HeadShoulderTopSignal(
+        symbol="a2607",
+        timeframe="3m",
+        pattern="head_shoulders_top",
+        left_shoulder=PivotPoint(20, times[1], 100.0, "high"),
+        left_neck=PivotPoint(35, times[2], 90.0, "low"),
+        head=head,
+        right_neck=PivotPoint(65, times[5], 92.0, "low"),
+        right_shoulder=PivotPoint(80, times[7], 104.0, "high"),
+        neckline_price=91.0,
+        confirmed=False,
+        score=105,
+        reasons=[],
+        qtr=1.0,
+    )
+
+    assert deduplicate_overlapping_signals([more_symmetric, better_prices]) == [better_prices]
+
+
+def test_deduplicate_inverse_prefers_time_symmetry_before_head_depth() -> None:
     times = pd.date_range("2026-04-08 09:00:00", periods=10, freq="h")
     broad = HeadShoulderTopSignal(
         symbol="hc2610",
@@ -1683,7 +2283,7 @@ def test_deduplicate_inverse_prefers_lower_head_before_setup_width() -> None:
         pattern="inverse_head_shoulders",
         left_shoulder=PivotPoint(95, times[3], 3280, "low"),
         left_neck=PivotPoint(100, times[4], 3287, "high"),
-        head=PivotPoint(105, times[5], 3272, "low"),
+        head=PivotPoint(105, times[5], 3250, "low"),
         right_neck=PivotPoint(115, times[6], 3287, "high"),
         right_shoulder=PivotPoint(124, times[7], 3280, "low"),
         neckline_price=3287,
@@ -1694,6 +2294,68 @@ def test_deduplicate_inverse_prefers_lower_head_before_setup_width() -> None:
         break_price=3309,
     )
     assert deduplicate_overlapping_signals([narrow, broad]) == [broad]
+
+
+def test_deduplicate_uses_head_depth_after_time_symmetry() -> None:
+    times = pd.date_range("2026-04-09 09:00:00", periods=7, freq="h")
+    shallow = HeadShoulderTopSignal(
+        symbol="hc2610",
+        timeframe="15m",
+        pattern="inverse_head_shoulders",
+        left_shoulder=PivotPoint(10, times[0], 98, "low"),
+        left_neck=PivotPoint(20, times[1], 100, "high"),
+        head=PivotPoint(30, times[2], 94, "low"),
+        right_neck=PivotPoint(40, times[3], 100, "high"),
+        right_shoulder=PivotPoint(50, times[4], 98, "low"),
+        neckline_price=100,
+        confirmed=True,
+        score=105,
+        reasons=[],
+        break_time=times[5],
+        break_price=101,
+    )
+    deep = replace(
+        shallow,
+        head=PivotPoint(30, times[2], 90, "low"),
+        score=80,
+        break_time=times[6],
+    )
+
+    assert deduplicate_overlapping_signals([shallow, deep]) == [deep]
+
+
+def test_deduplicate_uses_neckline_height_after_equal_depth() -> None:
+    times = pd.date_range("2026-04-10 09:00:00", periods=7, freq="h")
+    lower_neckline = HeadShoulderTopSignal(
+        symbol="hc2610",
+        timeframe="15m",
+        pattern="inverse_head_shoulders",
+        left_shoulder=PivotPoint(10, times[0], 95, "low"),
+        left_neck=PivotPoint(20, times[1], 100, "high"),
+        head=PivotPoint(30, times[2], 90, "low"),
+        right_neck=PivotPoint(40, times[3], 100, "high"),
+        right_shoulder=PivotPoint(50, times[4], 95, "low"),
+        neckline_price=100,
+        confirmed=True,
+        score=105,
+        reasons=[],
+        break_time=times[5],
+        break_price=101,
+    )
+    higher_neckline = replace(
+        lower_neckline,
+        left_shoulder=PivotPoint(10, times[0], 104.5, "low"),
+        left_neck=PivotPoint(20, times[1], 110, "high"),
+        head=PivotPoint(30, times[2], 99, "low"),
+        right_neck=PivotPoint(40, times[3], 110, "high"),
+        right_shoulder=PivotPoint(50, times[4], 104.5, "low"),
+        neckline_price=110,
+        score=80,
+        break_time=times[6],
+        break_price=111,
+    )
+
+    assert deduplicate_overlapping_signals([lower_neckline, higher_neckline]) == [higher_neckline]
 
 
 def test_deduplicate_inverse_prefers_nearest_left_setup_when_head_matches() -> None:

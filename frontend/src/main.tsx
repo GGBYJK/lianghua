@@ -2877,7 +2877,7 @@ function signalKey(signal: Signal) {
 
 function alertTypeLabel(alertType: Signal["alert_type"]) {
   if (alertType === "right_shoulder_confirmed") {
-    return "右肩确认";
+    return "右肩半程触发";
   }
   return "跌破颈线";
 }

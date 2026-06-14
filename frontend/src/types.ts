@@ -37,6 +37,7 @@ export type Signal = {
   neckline_price: number;
   confirmed: boolean;
   score: number;
+  qtr?: number | null;
   trend_label: string;
   reasons: string[];
   break_time: string | null;

@@ -81,7 +81,7 @@ ZH = {
     "inverse_pattern": "\u53cd\u5411\u5934\u80a9\u5f62\u6001",
     "top_pattern": "\u5934\u80a9\u9876",
     "inverse_pattern_short": "\u53cd\u5411\u5934\u80a9",
-    "right_shoulder_confirmed": "\u53f3\u80a9\u786e\u8ba4",
+    "right_shoulder_confirmed": "\u53f3\u80a9\u534a\u7a0b\u89e6\u53d1",
     "neckline_break": "\u8dcc\u7834\u9888\u7ebf\u786e\u8ba4",
     "shape_alert": "\u5f62\u6001\u63d0\u9192",
     "new_alert": "\u76d1\u63a7\u5230\u65b0\u7684\u5f62\u6001\u63d0\u9192",

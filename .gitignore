@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+.python/
 
 node_modules/
 dist/
@@ -16,3 +17,4 @@ k/
 
 *.log
 *.png
+.run/

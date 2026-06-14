@@ -12,6 +12,7 @@ MAX_HEAD_NECK_BARS_BY_TIMEFRAME = {
     "5m": 60,
 }
 MIXED_PIVOT_CONFIRMATION_TIMEFRAMES = {"1m", "3m", "5m"}
+INVERSE_PRIOR_HIGH_TIMEFRAMES = {"3m", "5m"}
 STRUCTURE_PIVOT_WINDOW = 5
 RIGHT_SHOULDER_PIVOT_WINDOW = 3
 
@@ -86,6 +87,7 @@ class HeadShoulderTopSignal:
     confirmed: bool
     score: int
     reasons: list[str]
+    qtr: float | None = None
     trend_label: str = ""
     break_time: pd.Timestamp | None = None
     break_price: float | None = None
@@ -110,6 +112,7 @@ class HeadShoulderTopSignal:
             "score": self.score,
             "trend_label": self.trend_label,
             "reasons": self.reasons,
+            "qtr": self.qtr,
             "break_time": self.break_time.isoformat() if self.break_time is not None else None,
             "break_price": self.break_price,
             "retest_time": self.retest_time.isoformat() if self.retest_time is not None else None,
@@ -181,6 +184,33 @@ def calculate_neckline_price(left_neck: PivotPoint, right_neck: PivotPoint, curr
         return right_neck.price
     slope = (right_neck.price - left_neck.price) / (right_neck.index - left_neck.index)
     return left_neck.price + slope * (current_index - left_neck.index)
+
+
+def calculate_true_range(df: pd.DataFrame, index: int) -> float:
+    high = float(df.loc[index, "high"])
+    low = float(df.loc[index, "low"])
+    if index <= 0:
+        return high - low
+    previous_close = float(df.loc[index - 1, "close"])
+    return max(
+        high - low,
+        abs(high - previous_close),
+        abs(low - previous_close),
+    )
+
+
+def calculate_qtr(
+    df: pd.DataFrame,
+    left_neck: PivotPoint,
+    right_neck: PivotPoint,
+) -> float:
+    start_index = min(left_neck.index, right_neck.index)
+    end_index = max(left_neck.index, right_neck.index)
+    true_ranges = [
+        calculate_true_range(df, index)
+        for index in range(start_index, end_index + 1)
+    ]
+    return sum(true_ranges) / len(true_ranges)
 
 
 def min_head_to_neck_height_by_price(head_price: float) -> float:
@@ -610,15 +640,12 @@ def validate_candle_close_constraints(
         return False, "Expected five pattern points"
 
     left_shoulder, left_neck, head, right_neck, right_shoulder = points
-    head_close = float(df.iloc[head.index]["close"])
     left_leg_closes = df.iloc[left_shoulder.index : left_neck.index + 1]["close"]
     left_head_closes = df.iloc[left_neck.index : head.index + 1]["close"]
     right_head_closes = df.iloc[head.index : right_neck.index + 1]["close"]
     right_leg_closes = df.iloc[right_neck.index : right_shoulder.index + 1]["close"]
 
     if inverse:
-        if head_close >= min(left_shoulder.price, right_shoulder.price):
-            return False, "Head close must be below both shoulder lows"
         if float(left_leg_closes.min()) < left_shoulder.price:
             return False, "Close below left shoulder price between left shoulder and left neck"
         if float(left_leg_closes.max()) > left_neck.price:
@@ -637,8 +664,6 @@ def validate_candle_close_constraints(
             return False, "Close above right neck price between right neck and right shoulder"
         return True, ""
 
-    if head_close <= max(left_shoulder.price, right_shoulder.price):
-        return False, "Head close must be above both shoulder highs"
     if float(left_leg_closes.max()) > left_shoulder.price:
         return False, "Close above left shoulder price between left shoulder and left neck"
     if float(left_leg_closes.min()) < left_neck.price:
@@ -658,12 +683,39 @@ def validate_candle_close_constraints(
     return True, ""
 
 
+def validate_shoulder_neck_bar_distances(points: list[PivotPoint]) -> tuple[bool, str]:
+    left_shoulder, left_neck, _, right_neck, right_shoulder = points
+    left_bars = left_neck.index - left_shoulder.index
+    right_bars = right_shoulder.index - right_neck.index
+    if left_bars <= 1 or right_bars <= 1:
+        return False, (
+            f"左肩到左颈、右颈到右肩的K线数量都必须大于1，"
+            f"当前左侧 {left_bars} 根，右侧 {right_bars} 根"
+        )
+    return True, ""
+
+
+def inverse_prior_high_exceeds_left_neck(
+    df: pd.DataFrame,
+    left_shoulder: PivotPoint,
+    left_neck: PivotPoint,
+    lookback: int = 20,
+) -> bool:
+    start_index = max(0, left_shoulder.index - lookback)
+    prior_highs = df.iloc[start_index:left_shoulder.index]["high"]
+    return not prior_highs.empty and float(prior_highs.max()) > left_neck.price
+
+
 def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShoulderTopConfig) -> tuple[bool, list[str], int]:
     if len(points) != 5:
         return False, ["关键点数量不是5个"], 0
     p1, p2, p3, p4, p5 = points
     if [p.kind for p in points] != ["high", "low", "high", "low", "high"]:
         return False, ["结构不是高-低-高-低-高"], 0
+
+    bars_ok, bars_reason = validate_shoulder_neck_bar_distances(points)
+    if not bars_ok:
+        return False, [bars_reason], 0
 
     if p3.price < max(p1.price, p5.price):
         return False, ["头部低于左肩或右肩，头肩顶结构不成立"], 0
@@ -724,8 +776,8 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
             f"{config.min_shoulder_to_head_height_ratio * 100:.2f}%"
         ], 0
 
-    left_leg_bars = max(1, p2.index - p1.index)
-    right_leg_bars = max(1, p5.index - p4.index)
+    left_leg_bars = p2.index - p1.index
+    right_leg_bars = p5.index - p4.index
     leg_ratio = right_leg_bars / left_leg_bars
     if config.enable_right_leg_ratio_filter and (
         leg_ratio < config.min_right_leg_to_left_leg_ratio
@@ -762,6 +814,10 @@ def validate_inverse_head_shoulders_structure(
     p1, p2, p3, p4, p5 = points
     if [p.kind for p in points] != ["low", "high", "low", "high", "low"]:
         return False, ["结构不是低-高-低-高-低"], 0
+
+    bars_ok, bars_reason = validate_shoulder_neck_bar_distances(points)
+    if not bars_ok:
+        return False, [bars_reason], 0
 
     if p3.price > min(p1.price, p5.price):
         return False, ["头部高于左肩或右肩，反向头肩底结构不成立"], 0
@@ -823,8 +879,8 @@ def validate_inverse_head_shoulders_structure(
             f"{config.min_shoulder_to_head_height_ratio * 100:.2f}%"
         ], 0
 
-    left_leg_bars = max(1, p2.index - p1.index)
-    right_leg_bars = max(1, p5.index - p4.index)
+    left_leg_bars = p2.index - p1.index
+    right_leg_bars = p5.index - p4.index
     leg_ratio = right_leg_bars / left_leg_bars
     if config.enable_right_leg_ratio_filter and (
         leg_ratio < config.min_right_leg_to_left_leg_ratio
@@ -1006,6 +1062,36 @@ def check_neckline_break_up(
     return False, None, None, None, "尚未有效突破颈线", 0
 
 
+def check_right_shoulder_midpoint_trigger(
+    df: pd.DataFrame,
+    right_neck: PivotPoint,
+    right_shoulder: PivotPoint,
+    config: HeadShoulderTopConfig,
+    *,
+    inverse: bool,
+) -> tuple[bool, int | None, pd.Timestamp | None, float | None, float]:
+    start_index = right_shoulder.index + 1
+    end_index = min(len(df) - 1, right_shoulder.index + config.max_bars_after_right_shoulder)
+    midpoint_price = (right_neck.price + right_shoulder.price) / 2
+    if start_index >= len(df):
+        return False, None, None, None, midpoint_price
+
+    for i in range(start_index, end_index + 1):
+        close_price = float(df.loc[i, "close"])
+        reached = close_price >= midpoint_price if inverse else close_price <= midpoint_price
+        if reached:
+            return True, i, df.loc[i, "datetime"], close_price, midpoint_price
+
+        invalidated = (
+            close_price < right_shoulder.price
+            if inverse
+            else close_price > right_shoulder.price
+        )
+        if invalidated:
+            return False, None, None, None, midpoint_price
+    return False, None, None, None, midpoint_price
+
+
 def scan_head_shoulders_top(
     df: pd.DataFrame,
     symbol: str,
@@ -1051,9 +1137,20 @@ def scan_head_shoulders_top(
         )
         total_score += trend_score
         reasons.extend(trend_reasons)
-        used_right_shoulder_setups.add(setup_key)
 
+        triggered, _, trigger_time, trigger_price, midpoint_price = check_right_shoulder_midpoint_trigger(
+            df,
+            p4,
+            p5,
+            config,
+            inverse=False,
+        )
+        if not triggered:
+            continue
+
+        used_right_shoulder_setups.add(setup_key)
         neckline_price = calculate_neckline_price(p2, p4, p5.index)
+        qtr = calculate_qtr(df, p2, p4)
         signals.append(HeadShoulderTopSignal(
             symbol=symbol,
             timeframe=timeframe,
@@ -1067,11 +1164,16 @@ def scan_head_shoulders_top(
             neckline_price=neckline_price,
             confirmed=False,
             score=total_score,
+            qtr=qtr,
             trend_label=trend_label_from_score(total_score, bullish=False),
-            reasons=reasons + ["右肩已确认，等待跌破颈线确认"],
+            reasons=reasons + [
+                f"右肩形成后价格回落至右颈与右肩半程价 {midpoint_price:.2f}"
+            ],
+            retest_time=trigger_time,
+            retest_price=trigger_price,
             message=(
-                f"{symbol} {timeframe} 头肩顶右肩确认，当前评分 {total_score}。"
-                f"右肩价 {p5.price:.2f}，颈线价 {neckline_price:.2f}。"
+                f"{symbol} {timeframe} 头肩顶右肩半程触发，当前评分 {total_score}。"
+                f"触发价 {trigger_price:.2f}，半程价 {midpoint_price:.2f}。"
             ),
         ))
 
@@ -1141,6 +1243,11 @@ def scan_inverse_head_shoulders(
         ok, reasons, total_score = validate_inverse_head_shoulders_structure([p1, p2, p3, p4, p5], config)
         if not ok:
             continue
+        if (
+            timeframe in INVERSE_PRIOR_HIGH_TIMEFRAMES
+            and not inverse_prior_high_exceeds_left_neck(df, p1, p2)
+        ):
+            continue
         closes_ok, _ = validate_candle_close_constraints(
             df,
             [p1, p2, p3, p4, p5],
@@ -1157,7 +1264,18 @@ def scan_inverse_head_shoulders(
         total_score += trend_score
         reasons.extend(trend_reasons)
 
+        triggered, _, trigger_time, trigger_price, midpoint_price = check_right_shoulder_midpoint_trigger(
+            df,
+            p4,
+            p5,
+            config,
+            inverse=True,
+        )
+        if not triggered:
+            continue
+
         neckline_price = calculate_neckline_price(p2, p4, p5.index)
+        qtr = calculate_qtr(df, p2, p4)
         signals.append(HeadShoulderTopSignal(
             symbol=symbol,
             timeframe=timeframe,
@@ -1171,9 +1289,17 @@ def scan_inverse_head_shoulders(
             neckline_price=neckline_price,
             confirmed=False,
             score=total_score,
+            qtr=qtr,
             trend_label=trend_label_from_score(total_score, bullish=True),
-            reasons=reasons,
-            message=f"{symbol} {timeframe} 反向头肩底右肩确认，评分 {total_score}",
+            reasons=reasons + [
+                f"右肩形成后价格上升至右颈与右肩半程价 {midpoint_price:.2f}"
+            ],
+            retest_time=trigger_time,
+            retest_price=trigger_price,
+            message=(
+                f"{symbol} {timeframe} 反向头肩右肩半程触发，评分 {total_score}。"
+                f"触发价 {trigger_price:.2f}，半程价 {midpoint_price:.2f}。"
+            ),
         ))
         continue
 
@@ -1270,36 +1396,128 @@ def signals_conflict(first: HeadShoulderTopSignal, second: HeadShoulderTopSignal
 
 
 def deduplicate_overlapping_signals(signals: list[HeadShoulderTopSignal]) -> list[HeadShoulderTopSignal]:
+    def shoulder_absolute_diff(signal: HeadShoulderTopSignal) -> float:
+        return abs(signal.left_shoulder.price - signal.right_shoulder.price)
+
+    def neck_absolute_diff(signal: HeadShoulderTopSignal) -> float:
+        return abs(signal.left_neck.price - signal.right_neck.price)
+
     def shoulder_diff(signal: HeadShoulderTopSignal) -> float:
         return abs(signal.left_shoulder.price - signal.right_shoulder.price) / max(signal.left_shoulder.price, signal.right_shoulder.price)
 
     def neck_diff(signal: HeadShoulderTopSignal) -> float:
         return abs(signal.left_neck.price - signal.right_neck.price) / max(signal.left_neck.price, signal.right_neck.price)
 
-    def left_setup_distance(signal: HeadShoulderTopSignal) -> int:
-        return signal.head.index - signal.left_shoulder.index
+    def qtr_closeness_limit(signal: HeadShoulderTopSignal) -> float | None:
+        if signal.qtr is None:
+            return None
+        return max(0.0, signal.qtr) * 1.5
 
-    def left_neck_distance(signal: HeadShoulderTopSignal) -> int:
-        return signal.head.index - signal.left_neck.index
+    def relative_span_diff(left_span: int, right_span: int) -> float:
+        return abs(left_span - right_span) / max(1, left_span, right_span)
 
-    def inverse_neck_priority(signal: HeadShoulderTopSignal) -> tuple[float, float]:
-        if signal.pattern != "inverse_head_shoulders":
-            return (0.0, 0.0)
+    def time_symmetry(signal: HeadShoulderTopSignal) -> tuple[float, float, float]:
+        shoulder_span_diff = relative_span_diff(
+            signal.head.index - signal.left_shoulder.index,
+            signal.right_shoulder.index - signal.head.index,
+        )
+        neck_span_diff = relative_span_diff(
+            signal.head.index - signal.left_neck.index,
+            signal.right_neck.index - signal.head.index,
+        )
         return (
-            signal.right_neck.price,
-            -abs(signal.left_neck.price - signal.right_neck.price),
+            shoulder_span_diff + neck_span_diff,
+            max(shoulder_span_diff, neck_span_diff),
+            shoulder_span_diff,
         )
 
+    def head_depth(signal: HeadShoulderTopSignal) -> float:
+        neckline_at_head = calculate_neckline_price(
+            signal.left_neck,
+            signal.right_neck,
+            signal.head.index,
+        )
+        depth = (
+            signal.head.price - neckline_at_head
+            if signal.pattern == "head_shoulders_top"
+            else neckline_at_head - signal.head.price
+        )
+        return depth / max(abs(neckline_at_head), 1.0)
+
+    def neckline_height(signal: HeadShoulderTopSignal) -> float:
+        average_neckline = (signal.left_neck.price + signal.right_neck.price) / 2
+        return average_neckline if signal.pattern == "inverse_head_shoulders" else -average_neckline
+
+    def same_head_key(signal: HeadShoulderTopSignal) -> tuple[str, str, str, str, int]:
+        return (
+            signal.symbol,
+            signal.timeframe,
+            signal.pattern,
+            signal.alert_type,
+            signal.head.index,
+        )
+
+    same_head_groups: dict[tuple[str, str, str, str, int], list[HeadShoulderTopSignal]] = {}
+    for signal in signals:
+        same_head_groups.setdefault(same_head_key(signal), []).append(signal)
+
+    same_head_condition_counts: dict[int, int] = {}
+    same_head_both_prices_close: dict[int, bool] = {}
+    for group in same_head_groups.values():
+        best_neck_absolute_diff = min(neck_absolute_diff(signal) for signal in group)
+        best_shoulder_absolute_diff = min(shoulder_absolute_diff(signal) for signal in group)
+        best_time_symmetry = min(time_symmetry(signal) for signal in group)
+        for signal in group:
+            closeness_limit = qtr_closeness_limit(signal)
+            neck_close = (
+                neck_absolute_diff(signal) <= closeness_limit
+                if closeness_limit is not None
+                else neck_absolute_diff(signal) == best_neck_absolute_diff
+            )
+            shoulder_close = (
+                shoulder_absolute_diff(signal) <= closeness_limit
+                if closeness_limit is not None
+                else shoulder_absolute_diff(signal) == best_shoulder_absolute_diff
+            )
+            symmetry_best = time_symmetry(signal) == best_time_symmetry
+            same_head_condition_counts[id(signal)] = sum((
+                neck_close,
+                shoulder_close,
+                symmetry_best,
+            ))
+            same_head_both_prices_close[id(signal)] = neck_close and shoulder_close
+
+    def same_head_rank(signal: HeadShoulderTopSignal) -> tuple[Any, ...]:
+        both_prices_close = same_head_both_prices_close[id(signal)]
+        symmetry_rank = tuple(-value for value in time_symmetry(signal))
+        price_difference_total = neck_absolute_diff(signal) + shoulder_absolute_diff(signal)
+        return (
+            signal.confirmed,
+            same_head_condition_counts[id(signal)],
+            both_prices_close,
+            *(symmetry_rank if both_prices_close else (float("-inf"),) * 3),
+            -price_difference_total,
+            *symmetry_rank,
+            head_depth(signal),
+            neckline_height(signal),
+            -shoulder_diff(signal),
+            -neck_diff(signal),
+            signal.score,
+            signal.break_time or signal.right_shoulder.time,
+        )
+
+    same_head_selected = [
+        max(group, key=same_head_rank)
+        for group in same_head_groups.values()
+    ]
+
     ranked = sorted(
-        signals,
+        same_head_selected,
         key=lambda signal: (
             signal.confirmed,
-            signal.head.price if signal.pattern == "head_shoulders_top" else -signal.head.price,
-            *inverse_neck_priority(signal),
-            -left_neck_distance(signal) if signal.pattern == "head_shoulders_top" else left_neck_distance(signal),
-            -left_setup_distance(signal),
-            signal.right_neck.index,
-            signal.right_shoulder.index,
+            *(-value for value in time_symmetry(signal)),
+            head_depth(signal),
+            neckline_height(signal),
             -shoulder_diff(signal),
             -neck_diff(signal),
             signal.score,
