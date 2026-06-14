@@ -19,7 +19,7 @@ RIGHT_SHOULDER_PIVOT_WINDOW = 3
 
 @dataclass
 class HeadShoulderTopConfig:
-    pivot_left: int = 3
+    pivot_left: int = 3 
     pivot_right: int = 3
     min_shoulder_to_head_height_ratio: float = 0.3
     max_shoulder_diff_pct: float = 0.004
