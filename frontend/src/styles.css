@@ -3174,6 +3174,7 @@ button:hover:not(:disabled) {
   border-color: #e8e8ed;
   border-radius: 0;
   background: #fafafc;
+  min-height: 196px;
 }
 
 .pool-card-top strong {
@@ -3500,6 +3501,48 @@ button:hover:not(:disabled) {
   line-height: 1.5;
 }
 
+.detail-price-strip {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  margin: 12px;
+  overflow: hidden;
+}
+
+.detail-price-item {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) minmax(112px, auto);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+}
+
+.detail-price-item + .detail-price-item {
+  border-top: 1px solid var(--line-soft);
+}
+
+.detail-price-item span,
+.detail-price-item small {
+  display: block;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.detail-price-item strong {
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.detail-price-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3529,6 +3572,7 @@ button:hover:not(:disabled) {
   border-top: 1px solid var(--line-soft);
   color: var(--ink);
   line-height: 1.55;
+  padding: 12px 24px 24px 36px;
 }
 
 .detail-reasons li + li {
@@ -4431,6 +4475,7 @@ button:disabled {
 .signal-card,
 .pool-card,
 .detail-grid div,
+.detail-price-item,
 .detail-score,
 .empty,
 .contract-message,
@@ -4475,6 +4520,8 @@ button:disabled {
 .pool-card small,
 .pool-card-meta,
 .detail-grid div span,
+.detail-price-item span,
+.detail-price-item small,
 .detail-reasons,
 .empty {
   color: var(--muted);

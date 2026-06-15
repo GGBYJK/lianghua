@@ -1948,6 +1948,17 @@ function SignalDetail({
     );
   }
 
+  const detailPrices = [
+    { label: "左肩", value: formatPrice(signal.left_shoulder.price), meta: formatTime(signal.left_shoulder.time) },
+    { label: "左颈", value: formatPrice(signal.left_neck.price), meta: formatTime(signal.left_neck.time) },
+    { label: "头部", value: formatPrice(signal.head.price), meta: formatTime(signal.head.time) },
+    { label: "右颈", value: formatPrice(signal.right_neck.price), meta: formatTime(signal.right_neck.time) },
+    { label: "右肩", value: formatPrice(signal.right_shoulder.price), meta: formatTime(signal.right_shoulder.time) },
+    { label: "颈线价", value: formatPrice(signal.neckline_price), meta: signal.confirmed ? "已触发" : "观察中" },
+    { label: "QTR", value: formatOptionalMetric(signal.qtr), meta: "真实波幅均值" },
+  ];
+  const visibleReasons = signal.reasons.filter(shouldShowDetailReason).slice(0, 10);
+
   return (
     <section className="detail-panel inline-detail-panel">
       <div className="feedback-head">
@@ -1964,17 +1975,20 @@ function SignalDetail({
         <button type="button" className="detail-score-button" onClick={() => onOpenScoreDetail?.(signal)}>{signal.score}</button>
         <p>{signal.trend_label ? `${signal.trend_label} · ` : ""}{translateResultText(signal.message)}</p>
       </div>
-      <div className="detail-grid">
-        <div><span>左肩</span><strong>{formatPrice(signal.left_shoulder.price)}</strong><small>{formatTime(signal.left_shoulder.time)}</small></div>
-        <div><span>左颈</span><strong>{formatPrice(signal.left_neck.price)}</strong><small>{formatTime(signal.left_neck.time)}</small></div>
-        <div><span>头部</span><strong>{formatPrice(signal.head.price)}</strong><small>{formatTime(signal.head.time)}</small></div>
-        <div><span>右颈</span><strong>{formatPrice(signal.right_neck.price)}</strong><small>{formatTime(signal.right_neck.time)}</small></div>
-        <div><span>右肩</span><strong>{formatPrice(signal.right_shoulder.price)}</strong><small>{formatTime(signal.right_shoulder.time)}</small></div>
-        <div><span>颈线价</span><strong>{formatPrice(signal.neckline_price)}</strong><small>{signal.confirmed ? "已触发" : "观察中"}</small></div>
+      <div className="detail-price-strip" aria-label="形态价格">
+        {detailPrices.map((item) => (
+          <div className="detail-price-item" key={item.label}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+            <small>{item.meta}</small>
+          </div>
+        ))}
       </div>
-      <ul className="detail-reasons">
-        {signal.reasons.slice(0, 10).map((reason) => <li key={reason}>{translateResultText(reason)}</li>)}
-      </ul>
+      {visibleReasons.length > 0 && (
+        <ul className="detail-reasons">
+          {visibleReasons.map((reason) => <li key={reason}>{translateResultText(reason)}</li>)}
+        </ul>
+      )}
     </section>
   );
 }
@@ -2113,6 +2127,17 @@ function scoreReasonToLine(reason: string): ScoreLine {
 
 function parseScoreValue(reason: string) {
   return reason.match(/(\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?)/)?.[1].replace(/\s+/g, "") ?? null;
+}
+
+function shouldShowDetailReason(reason: string) {
+  const normalized = translateResultText(reason);
+  return !(
+    normalized === "头部高于左右肩" ||
+    normalized === "头部明显高于左右肩" ||
+    normalized === "右肩没有过度走弱" ||
+    /^(小时线|日线)评分[:： ]/.test(normalized) ||
+    /^(Hourly|Daily) timeframe score:/.test(reason)
+  );
 }
 
 function scoreReasonLabel(reason: string) {
@@ -3026,6 +3051,10 @@ function labelForPoint(index: number) {
 
 function formatPrice(value: number) {
   return value.toFixed(2);
+}
+
+function formatOptionalMetric(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "-";
 }
 
 function formatTime(value: string) {
