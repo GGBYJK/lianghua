@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import math
 from typing import Any
 
 import pandas as pd
@@ -95,6 +96,12 @@ class HeadShoulderTopSignal:
     retest_price: float | None = None
     alert_type: str = "right_shoulder_confirmed"
     message: str = ""
+    pattern_score: int | None = None
+    pattern_raw_score: int | None = None
+    pattern_grade: str = ""
+    pattern_caps: list[int] = field(default_factory=list)
+    pattern_sections: list[dict[str, Any]] = field(default_factory=list)
+    pattern_metrics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -118,6 +125,12 @@ class HeadShoulderTopSignal:
             "retest_time": self.retest_time.isoformat() if self.retest_time is not None else None,
             "retest_price": self.retest_price,
             "message": self.message,
+            "pattern_score": self.pattern_score,
+            "pattern_raw_score": self.pattern_raw_score,
+            "pattern_grade": self.pattern_grade,
+            "pattern_caps": self.pattern_caps,
+            "pattern_sections": self.pattern_sections,
+            "pattern_metrics": self.pattern_metrics,
         }
 
 
@@ -459,6 +472,545 @@ def trend_label_from_score(score: int, bullish: bool) -> str:
         if score >= threshold:
             return label
     return "震荡趋势"
+
+
+def _pattern_item(label: str, score: int, max_score: int, detail: str) -> dict[str, Any]:
+    return {
+        "label": label,
+        "score": int(score),
+        "max": int(max_score),
+        "detail": detail,
+    }
+
+
+def _pattern_section(key: str, title: str, max_score: int, items: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "key": key,
+        "title": title,
+        "max": int(max_score),
+        "score": int(sum(item["score"] for item in items)),
+        "items": items,
+    }
+
+
+def _score_by_thresholds(value: float | None, thresholds: list[tuple[float, int]], default: int = 0) -> int:
+    if value is None or not math.isfinite(value):
+        return default
+    for limit, score in thresholds:
+        if value <= limit:
+            return score
+    return default
+
+
+def _score_by_min_thresholds(value: float | None, thresholds: list[tuple[float, int]], default: int = 0) -> int:
+    if value is None or not math.isfinite(value):
+        return default
+    for limit, score in thresholds:
+        if value >= limit:
+            return score
+    return default
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float | None:
+    if denominator <= 0:
+        return None
+    return numerator / denominator
+
+
+def _pattern_grade(score: int) -> str:
+    if score >= 85:
+        return "A"
+    if score >= 70:
+        return "B"
+    if score >= 55:
+        return "C"
+    if score >= 40:
+        return "D"
+    return "忽略"
+
+
+def _pattern_movement(start: float, end: float, inverse: bool) -> float:
+    return end - start if inverse else start - end
+
+
+def _local_trend_score(
+    df: pd.DataFrame,
+    left_shoulder: PivotPoint,
+    head: PivotPoint,
+    inverse: bool,
+) -> tuple[list[dict[str, Any]], bool]:
+    lookback = min(20, left_shoulder.index)
+    if lookback <= 1:
+        clear_score = 0
+        clear_detail = "LS 前数据不足，无法确认前置趋势"
+        trend_clear = False
+    else:
+        start_index = left_shoulder.index - lookback
+        prior_close = float(df.loc[start_index, "close"])
+        head_close = float(df.loc[head.index, "close"])
+        move = prior_close - head_close if inverse else head_close - prior_close
+        prior_range = max(
+            float(df.loc[start_index:left_shoulder.index, "high"].max())
+            - float(df.loc[start_index:left_shoulder.index, "low"].min()),
+            1e-9,
+        )
+        directional_bars = 0
+        closes = df.loc[start_index:head.index, "close"].astype(float).tolist()
+        for prev, current in zip(closes, closes[1:]):
+            if (current < prev if inverse else current > prev):
+                directional_bars += 1
+        ratio = directional_bars / max(1, len(closes) - 1)
+        trend_clear = move > 0 and (abs(move) >= prior_range * 0.25 or ratio >= 0.55)
+        clear_score = 5 if trend_clear else 0
+        direction = "下跌" if inverse else "上涨"
+        clear_detail = (
+            f"启发式：LS 前 {lookback} 根到头部的局部{direction}推进为 {move:.4f}，"
+            f"方向K线占比 {ratio:.2f}"
+        )
+
+    span = max(0, head.index - max(0, left_shoulder.index - lookback))
+    if span >= 12:
+        duration_score = 3
+    elif span >= 6:
+        duration_score = 2
+    elif span >= 3:
+        duration_score = 1
+    else:
+        duration_score = 0
+    duration_detail = f"启发式：前置趋势观察跨度 {span} 根K线"
+
+    key_score = 0
+    key_evidence: list[str] = []
+    prior_start = max(0, left_shoulder.index - max(lookback, 20))
+    if prior_start < left_shoulder.index:
+        prior_high = float(df.loc[prior_start:left_shoulder.index, "high"].max())
+        prior_low = float(df.loc[prior_start:left_shoulder.index, "low"].min())
+        if inverse:
+            if head.price <= prior_low:
+                key_score = max(key_score, 1)
+                key_evidence.append("头部接近/刷新前低")
+        else:
+            if head.price >= prior_high:
+                key_score = max(key_score, 1)
+                key_evidence.append("头部接近/刷新前高")
+    row = df.loc[head.index]
+    ma_hits = 0
+    for period in (60, 250):
+        value = _safe_float(row.get(f"ma{period}"))
+        if value is None:
+            continue
+        tolerance = abs(head.price) * 0.01
+        if abs(head.price - value) <= tolerance:
+            ma_hits += 1
+            key_evidence.append(f"靠近 MA{period}")
+    key_score = max(key_score, min(2, ma_hits))
+    key_detail = "启发式：" + ("，".join(key_evidence) if key_evidence else "未观察到前高/前低或中长期均线配合")
+
+    return [
+        _pattern_item("前置趋势明确", clear_score, 5, clear_detail),
+        _pattern_item("趋势具有持续性", duration_score, 3, duration_detail),
+        _pattern_item("关键位置配合", key_score, 2, key_detail),
+    ], trend_clear
+
+
+def _pattern_structure_items(
+    df: pd.DataFrame,
+    left_shoulder: PivotPoint,
+    left_neck: PivotPoint,
+    head: PivotPoint,
+    right_neck: PivotPoint,
+    right_shoulder: PivotPoint,
+    inverse: bool,
+    qtr: float,
+    qtr_anomaly: bool,
+) -> list[dict[str, Any]]:
+    higher_shoulder = min(left_shoulder.price, right_shoulder.price) if inverse else max(left_shoulder.price, right_shoulder.price)
+    head_excess = higher_shoulder - head.price if inverse else head.price - higher_shoulder
+    head_excess_qtr = _safe_ratio(head_excess, qtr) if not qtr_anomaly else None
+    head_score = _score_by_min_thresholds(head_excess_qtr, [(1.5, 8), (1.0, 6), (0.5, 3), (0.0, 1)])
+
+    ds = abs(left_shoulder.price - right_shoulder.price)
+    ds_qtr = _safe_ratio(ds, qtr) if not qtr_anomaly else None
+    shoulder_score = _score_by_thresholds(ds_qtr, [(0.5, 6), (1.0, 5), (1.5, 3), (2.0, 1)])
+
+    order_ok = left_shoulder.index < left_neck.index < head.index < right_neck.index < right_shoulder.index
+    kinds_ok = [left_shoulder.kind, left_neck.kind, head.kind, right_neck.kind, right_shoulder.kind] == (
+        ["low", "high", "low", "high", "low"] if inverse else ["high", "low", "high", "low", "high"]
+    )
+    order_score = 5 if order_ok and kinds_ok else 0
+
+    right_ok = right_shoulder.price > head.price if inverse else right_shoulder.price < head.price
+    right_score = 4 if right_ok else 0
+
+    noise = 0
+    same_kind = "low" if inverse else "high"
+    for index in range(left_shoulder.index + 1, right_shoulder.index):
+        if index in {left_neck.index, head.index, right_neck.index}:
+            continue
+        if inverse:
+            if float(df.loc[index, "low"]) < min(left_shoulder.price, right_shoulder.price, head.price):
+                noise += 1
+        else:
+            if float(df.loc[index, "high"]) > max(left_shoulder.price, right_shoulder.price, head.price):
+                noise += 1
+    noise_score = 2 if noise == 0 else 1 if noise <= 1 else 0
+
+    return [
+        _pattern_item("头部突出度", head_score, 8, f"头部超出较高肩 {head_excess:.4f}，约 {head_excess_qtr if head_excess_qtr is not None else 0:.2f} QTR"),
+        _pattern_item("左右肩高度接近", shoulder_score, 6, f"DS={ds:.4f}，DS/QTR={ds_qtr if ds_qtr is not None else 0:.2f}"),
+        _pattern_item("五点顺序清晰", order_score, 5, "五点 index 与高低点方向均符合结构" if order_score else "五点顺序或方向异常"),
+        _pattern_item("右肩未破坏头部", right_score, 4, "右肩未越过头部极值" if right_ok else "右肩破坏头部极值"),
+        _pattern_item("中间杂峰/杂谷较少", noise_score, 2, f"启发式：{same_kind} 方向破坏性杂点数量 {noise}"),
+    ]
+
+
+def _pattern_neckline_items(
+    df: pd.DataFrame,
+    left_neck: PivotPoint,
+    right_neck: PivotPoint,
+    right_shoulder: PivotPoint,
+    inverse: bool,
+    qtr: float,
+    qtr_anomaly: bool,
+) -> list[dict[str, Any]]:
+    dn = abs(left_neck.price - right_neck.price)
+    dn_qtr = _safe_ratio(dn, qtr) if not qtr_anomaly else None
+    close_score = _score_by_thresholds(dn_qtr, [(0.5, 6), (1.0, 5), (1.5, 3), (2.0, 1)])
+
+    clarity = 0
+    for point in (left_neck, right_neck):
+        left = max(0, point.index - 2)
+        right = min(len(df) - 1, point.index + 2)
+        if inverse:
+            if point.price >= float(df.loc[left:right, "high"].max()):
+                clarity += 1
+        else:
+            if point.price <= float(df.loc[left:right, "low"].min()):
+                clarity += 1
+    clarity_score = 4 if clarity == 2 else 2 if clarity == 1 else 0
+
+    bars = max(1, right_neck.index - left_neck.index)
+    slope_per_bar = abs(right_neck.price - left_neck.price) / bars
+    slope_qtr = _safe_ratio(slope_per_bar, qtr) if not qtr_anomaly else None
+    if slope_qtr is None:
+        slope_score = 0
+    elif slope_qtr <= 0.25:
+        slope_score = 3
+    elif slope_qtr <= 0.5:
+        slope_score = 2
+    elif slope_qtr <= 0.8:
+        slope_score = 1
+    else:
+        slope_score = 0
+
+    pierces = 0
+    tolerance = qtr * 0.25 if not qtr_anomaly else 0
+    for index in range(left_neck.index + 1, min(right_shoulder.index, len(df) - 1) + 1):
+        neckline = calculate_neckline_price(left_neck, right_neck, index)
+        close = float(df.loc[index, "close"])
+        if inverse:
+            if close > neckline + tolerance:
+                pierces += 1
+        else:
+            if close < neckline - tolerance:
+                pierces += 1
+    respect_score = 2 if pierces == 0 else 1 if pierces <= 1 else 0
+
+    return [
+        _pattern_item("左右颈价格接近", close_score, 6, f"DN={dn:.4f}，DN/QTR={dn_qtr if dn_qtr is not None else 0:.2f}"),
+        _pattern_item("N1/N2 拐点清晰", clarity_score, 4, f"启发式：两侧 2 根K线局部极值命中 {clarity}/2"),
+        _pattern_item("颈线斜率合理", slope_score, 3, f"每根K线斜率约 {slope_qtr if slope_qtr is not None else 0:.2f} QTR"),
+        _pattern_item("价格尊重颈线区域", respect_score, 2, f"启发式：形成阶段无效穿越次数 {pierces}"),
+    ]
+
+
+def _pattern_time_items(
+    left_shoulder: PivotPoint,
+    left_neck: PivotPoint,
+    head: PivotPoint,
+    right_neck: PivotPoint,
+    right_shoulder: PivotPoint,
+) -> tuple[list[dict[str, Any]], float, float]:
+    left_span = max(1, head.index - left_shoulder.index)
+    right_span = max(1, right_shoulder.index - head.index)
+    ts = max(left_span, right_span) / min(left_span, right_span)
+    left_neck_span = max(1, head.index - left_neck.index)
+    right_neck_span = max(1, right_neck.index - head.index)
+    tn = max(left_neck_span, right_neck_span) / min(left_neck_span, right_neck_span)
+    ts_score = _score_by_thresholds(ts, [(1.5, 6), (2.0, 5), (2.5, 3), (3.0, 1)])
+    tn_score = _score_by_thresholds(tn, [(1.5, 4), (2.0, 3), (3.0, 1)])
+    return [
+        _pattern_item("肩部时间比例 TS", ts_score, 6, f"TS={ts:.2f}，左右跨度 {left_span}/{right_span} 根"),
+        _pattern_item("颈点时间比例 TN", tn_score, 4, f"TN={tn:.2f}，左右跨度 {left_neck_span}/{right_neck_span} 根"),
+    ], ts, tn
+
+
+def _macd_value(df: pd.DataFrame, index: int) -> float | None:
+    for column in ("macd_hist", "macd_dif"):
+        if column in df.columns:
+            value = _safe_float(df.loc[index].get(column))
+            if value is not None:
+                return value
+    return None
+
+
+def _mean_true_range(df: pd.DataFrame, start_index: int, end_index: int) -> float | None:
+    start_index = max(0, start_index)
+    end_index = min(len(df) - 1, end_index)
+    if start_index > end_index:
+        return None
+    values = [calculate_true_range(df, index) for index in range(start_index, end_index + 1)]
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def _pattern_momentum_items(
+    df: pd.DataFrame,
+    left_shoulder: PivotPoint,
+    left_neck: PivotPoint,
+    head: PivotPoint,
+    right_neck: PivotPoint,
+    right_shoulder: PivotPoint,
+    inverse: bool,
+    trigger_index: int,
+) -> tuple[list[dict[str, Any]], bool]:
+    left_macd = _macd_value(df, left_shoulder.index)
+    head_macd = _macd_value(df, head.index)
+    if left_macd is None or head_macd is None:
+        exhaustion_score = 0
+        exhaustion_detail = "MACD 数据不足，头部衰竭项记 0"
+    else:
+        exhausted = head_macd > left_macd if inverse else head_macd < left_macd
+        exhaustion_score = 5 if exhausted else 0
+        exhaustion_detail = f"MACD 启发式背离：LS={left_macd:.4f}，H={head_macd:.4f}"
+
+    head_leg = abs(head.price - left_neck.price) / max(1, head.index - left_neck.index)
+    right_leg = abs(right_shoulder.price - right_neck.price) / max(1, right_shoulder.index - right_neck.index)
+    right_weaker = right_leg < head_leg
+    right_clearly_stronger = right_leg > head_leg * 1.15
+    right_weaker_score = 4 if right_weaker else 0
+    right_weaker_detail = f"头部推进速度 {head_leg:.4f}/bar，右肩推进速度 {right_leg:.4f}/bar"
+
+    volume_series = df["volume"] if "volume" in df.columns else pd.Series(dtype=float)
+    volume_reliable = (
+        not volume_series.empty
+        and not volume_series.loc[max(0, left_neck.index):min(len(df) - 1, right_shoulder.index)].isna().all()
+        and float(volume_series.fillna(0).sum()) > 0
+    )
+    if volume_reliable:
+        head_volume = float(df.loc[left_neck.index:head.index, "volume"].mean())
+        right_volume = float(df.loc[right_neck.index:right_shoulder.index, "volume"].mean())
+        volume_contracting = right_volume < head_volume
+        volume_score = 3 if volume_contracting else 0
+        volume_detail = f"右肩均量 {right_volume:.2f} vs 头部阶段均量 {head_volume:.2f}"
+    else:
+        head_volatility = _mean_true_range(df, left_neck.index, head.index)
+        right_volatility = _mean_true_range(df, right_neck.index, right_shoulder.index)
+        volume_contracting = (
+            head_volatility is not None
+            and right_volatility is not None
+            and right_volatility < head_volatility
+        )
+        volume_score = 3 if volume_contracting else 0
+        volume_detail = (
+            "成交量缺失/为0，启发式改用波动率代理："
+            f"右肩TR {right_volatility if right_volatility is not None else 0:.4f} vs 头部TR {head_volatility if head_volatility is not None else 0:.4f}"
+        )
+
+    close_move = _pattern_movement(float(df.loc[right_shoulder.index, "close"]), float(df.loc[trigger_index, "close"]), inverse)
+    bars = max(1, trigger_index - right_shoulder.index)
+    trigger_speed = close_move / bars
+    ma_help = False
+    if "ma5" in df.columns and trigger_index >= 3:
+        now = _safe_float(df.loc[trigger_index].get("ma5"))
+        prev = _safe_float(df.loc[trigger_index - min(3, trigger_index)].get("ma5"))
+        if now is not None and prev is not None:
+            ma_help = now > prev if inverse else now < prev
+    trigger_momentum_score = 3 if close_move > 0 and (ma_help or trigger_speed > 0) else 1 if close_move > 0 else 0
+    trigger_momentum_detail = f"RS 到触发收盘推进 {close_move:.4f}，MA5 方向配合={ma_help}"
+
+    return [
+        _pattern_item("头部出现动能衰竭", exhaustion_score, 5, exhaustion_detail),
+        _pattern_item("右肩动能弱于头部", right_weaker_score, 4, right_weaker_detail),
+        _pattern_item("右肩成交量收缩", volume_score, 3, volume_detail),
+        _pattern_item("右肩至半程方向动能", trigger_momentum_score, 3, trigger_momentum_detail),
+    ], right_clearly_stronger
+
+
+def _pattern_trigger_items(
+    right_shoulder: PivotPoint,
+    inverse: bool,
+    trigger_index: int,
+    trigger_price: float,
+    midpoint: float,
+) -> tuple[list[dict[str, Any]], int]:
+    trigger_speed_bars = max(0, trigger_index - right_shoulder.index)
+    if trigger_speed_bars <= 5:
+        speed_score = 3
+    elif trigger_speed_bars <= 10:
+        speed_score = 2
+    elif trigger_speed_bars <= 20:
+        speed_score = 1
+    else:
+        speed_score = 0
+    reached = trigger_price >= midpoint if inverse else trigger_price <= midpoint
+    return [
+        _pattern_item("右肩已被确认", 4, 4, "结构扫描已确认右肩拐点"),
+        _pattern_item("触发前未失效", 4, 4, "半程触发函数已过滤 RS 失效条件"),
+        _pattern_item("收盘价触及半程", 4 if reached else 0, 4, f"收盘触发价 {trigger_price:.4f}，半程价 {midpoint:.4f}"),
+        _pattern_item("触发速度", speed_score, 3, f"RS 后 {trigger_speed_bars} 根K线触发"),
+    ], trigger_speed_bars
+
+
+def _pattern_trade_value_items(
+    df: pd.DataFrame,
+    left_neck: PivotPoint,
+    head: PivotPoint,
+    right_neck: PivotPoint,
+    right_shoulder: PivotPoint,
+    inverse: bool,
+    qtr: float,
+    qtr_anomaly: bool,
+    trigger_index: int,
+    trigger_price: float,
+) -> tuple[list[dict[str, Any]], dict[str, float | None]]:
+    neckline_at_head = calculate_neckline_price(left_neck, right_neck, head.index)
+    neckline_at_trigger = calculate_neckline_price(left_neck, right_neck, trigger_index)
+    ph = neckline_at_head - head.price if inverse else head.price - neckline_at_head
+    if qtr_anomaly or ph <= 0:
+        stop = None
+        target = None
+        risk = None
+        reward = None
+        rr = 0.0
+        ph_qtr = None
+    else:
+        stop = right_shoulder.price - 0.25 * qtr if inverse else right_shoulder.price + 0.25 * qtr
+        target = neckline_at_trigger + ph if inverse else neckline_at_trigger - ph
+        risk = abs(trigger_price - stop)
+        reward = target - trigger_price if inverse else trigger_price - target
+        rr = reward / risk if risk > 0 and reward > 0 else 0.0
+        ph_qtr = ph / qtr
+
+    rr_score = _score_by_min_thresholds(rr, [(3.0, 6), (2.0, 5), (1.5, 3), (1.2, 1)])
+    ph_score = _score_by_min_thresholds(ph_qtr, [(4.0, 2), (2.5, 1)])
+
+    obstacles = 0
+    if target is not None:
+        start = min(trigger_index, len(df) - 1)
+        lookback_start = max(0, left_neck.index - 20)
+        historical = df.loc[lookback_start:start]
+        tolerance = qtr * 0.5 if not qtr_anomaly else abs(trigger_price) * 0.005
+        if inverse:
+            path_low, path_high = sorted((trigger_price, target))
+            obstacles = int(((historical["high"] >= path_low - tolerance) & (historical["high"] <= path_high + tolerance)).sum())
+        else:
+            path_low, path_high = sorted((target, trigger_price))
+            obstacles = int(((historical["low"] >= path_low - tolerance) & (historical["low"] <= path_high + tolerance)).sum())
+    obstacle_score = 2 if obstacles <= 1 else 1 if obstacles <= 3 else 0
+
+    return [
+        _pattern_item("预期盈亏比 RR", rr_score, 6, f"RR={rr:.2f}，Risk={risk if risk is not None else 0:.4f}，Reward={reward if reward is not None else 0:.4f}"),
+        _pattern_item("形态高度/波动率", ph_score, 2, f"PH={ph:.4f}，PH/QTR={ph_qtr if ph_qtr is not None else 0:.2f}"),
+        _pattern_item("目标路径障碍", obstacle_score, 2, f"启发式：触发价到目标价之间历史支撑/压力命中 {obstacles} 次"),
+    ], {
+        "neckline_at_head": neckline_at_head,
+        "neckline_at_trigger": neckline_at_trigger,
+        "ph": ph,
+        "ph_qtr": ph_qtr,
+        "stop": stop,
+        "target": target,
+        "risk": risk,
+        "reward": reward,
+        "rr": rr,
+    }
+
+
+def calculate_pattern_score(
+    df: pd.DataFrame,
+    *,
+    left_shoulder: PivotPoint,
+    left_neck: PivotPoint,
+    head: PivotPoint,
+    right_neck: PivotPoint,
+    right_shoulder: PivotPoint,
+    inverse: bool,
+    qtr: float,
+    trigger_index: int,
+    trigger_price: float,
+    midpoint: float,
+) -> dict[str, Any]:
+    qtr_anomaly = qtr <= 0 or not math.isfinite(qtr)
+    ds = abs(left_shoulder.price - right_shoulder.price)
+    dn = abs(left_neck.price - right_neck.price)
+    ds_qtr = _safe_ratio(ds, qtr) if not qtr_anomaly else None
+    dn_qtr = _safe_ratio(dn, qtr) if not qtr_anomaly else None
+
+    trend_items, trend_clear = _local_trend_score(df, left_shoulder, head, inverse)
+    structure_items = _pattern_structure_items(
+        df, left_shoulder, left_neck, head, right_neck, right_shoulder, inverse, qtr, qtr_anomaly
+    )
+    neckline_items = _pattern_neckline_items(df, left_neck, right_neck, right_shoulder, inverse, qtr, qtr_anomaly)
+    time_items, ts, tn = _pattern_time_items(left_shoulder, left_neck, head, right_neck, right_shoulder)
+    momentum_items, right_momentum_stronger = _pattern_momentum_items(
+        df, left_shoulder, left_neck, head, right_neck, right_shoulder, inverse, trigger_index
+    )
+    trigger_items, trigger_speed_bars = _pattern_trigger_items(
+        right_shoulder, inverse, trigger_index, trigger_price, midpoint
+    )
+    trade_items, trade_metrics = _pattern_trade_value_items(
+        df, left_neck, head, right_neck, right_shoulder, inverse, qtr, qtr_anomaly, trigger_index, trigger_price
+    )
+
+    sections = [
+        _pattern_section("trend", "趋势背景", 10, trend_items),
+        _pattern_section("structure", "三峰/三谷结构", 25, structure_items),
+        _pattern_section("neckline", "颈线质量", 15, neckline_items),
+        _pattern_section("time", "时间对称性", 10, time_items),
+        _pattern_section("momentum", "量能/动能配合", 15, momentum_items),
+        _pattern_section("trigger", "右肩与半程触发质量", 15, trigger_items),
+        _pattern_section("trade_value", "即时交易价值", 10, trade_items),
+    ]
+    raw_score = int(sum(section["score"] for section in sections))
+
+    caps: list[int] = []
+    if not trend_clear:
+        caps.append(75)
+    if ds_qtr is not None and ds_qtr > 2.0:
+        caps.append(75)
+    if dn_qtr is not None and dn_qtr > 2.0:
+        caps.append(75)
+    if ts > 3.0 or tn > 3.0:
+        caps.append(75)
+    if right_momentum_stronger:
+        caps.append(80)
+    final_score = min([raw_score, *caps]) if caps else raw_score
+
+    metrics: dict[str, Any] = {
+        "ds": ds,
+        "dn": dn,
+        "ds_qtr": ds_qtr,
+        "dn_qtr": dn_qtr,
+        "ts": ts,
+        "tn": tn,
+        "qtr": qtr,
+        "qtr_anomaly": qtr_anomaly,
+        "trigger_index": trigger_index,
+        "trigger_price": trigger_price,
+        "midpoint": midpoint,
+        "trigger_speed_bars": trigger_speed_bars,
+        **trade_metrics,
+    }
+
+    return {
+        "final_score": int(final_score),
+        "raw_score": int(raw_score),
+        "grade": _pattern_grade(int(final_score)),
+        "caps": caps,
+        "sections": sections,
+        "metrics": metrics,
+    }
 
 
 def passes_head_neck_bar_limit(
@@ -1138,7 +1690,7 @@ def scan_head_shoulders_top(
         total_score += trend_score
         reasons.extend(trend_reasons)
 
-        triggered, _, trigger_time, trigger_price, midpoint_price = check_right_shoulder_midpoint_trigger(
+        triggered, trigger_index, trigger_time, trigger_price, midpoint_price = check_right_shoulder_midpoint_trigger(
             df,
             p4,
             p5,
@@ -1147,10 +1699,25 @@ def scan_head_shoulders_top(
         )
         if not triggered:
             continue
+        if trigger_index is None or trigger_price is None:
+            continue
 
         used_right_shoulder_setups.add(setup_key)
         neckline_price = calculate_neckline_price(p2, p4, p5.index)
         qtr = calculate_qtr(df, p2, p4)
+        pattern_result = calculate_pattern_score(
+            df,
+            left_shoulder=p1,
+            left_neck=p2,
+            head=p3,
+            right_neck=p4,
+            right_shoulder=p5,
+            inverse=False,
+            qtr=qtr,
+            trigger_index=trigger_index,
+            trigger_price=trigger_price,
+            midpoint=midpoint_price,
+        )
         signals.append(HeadShoulderTopSignal(
             symbol=symbol,
             timeframe=timeframe,
@@ -1171,6 +1738,12 @@ def scan_head_shoulders_top(
             ],
             retest_time=trigger_time,
             retest_price=trigger_price,
+            pattern_score=pattern_result["final_score"],
+            pattern_raw_score=pattern_result["raw_score"],
+            pattern_grade=pattern_result["grade"],
+            pattern_caps=pattern_result["caps"],
+            pattern_sections=pattern_result["sections"],
+            pattern_metrics=pattern_result["metrics"],
             message=(
                 f"{symbol} {timeframe} 头肩顶右肩半程触发，当前评分 {total_score}。"
                 f"触发价 {trigger_price:.2f}，半程价 {midpoint_price:.2f}。"
@@ -1264,7 +1837,7 @@ def scan_inverse_head_shoulders(
         total_score += trend_score
         reasons.extend(trend_reasons)
 
-        triggered, _, trigger_time, trigger_price, midpoint_price = check_right_shoulder_midpoint_trigger(
+        triggered, trigger_index, trigger_time, trigger_price, midpoint_price = check_right_shoulder_midpoint_trigger(
             df,
             p4,
             p5,
@@ -1273,9 +1846,24 @@ def scan_inverse_head_shoulders(
         )
         if not triggered:
             continue
+        if trigger_index is None or trigger_price is None:
+            continue
 
         neckline_price = calculate_neckline_price(p2, p4, p5.index)
         qtr = calculate_qtr(df, p2, p4)
+        pattern_result = calculate_pattern_score(
+            df,
+            left_shoulder=p1,
+            left_neck=p2,
+            head=p3,
+            right_neck=p4,
+            right_shoulder=p5,
+            inverse=True,
+            qtr=qtr,
+            trigger_index=trigger_index,
+            trigger_price=trigger_price,
+            midpoint=midpoint_price,
+        )
         signals.append(HeadShoulderTopSignal(
             symbol=symbol,
             timeframe=timeframe,
@@ -1296,6 +1884,12 @@ def scan_inverse_head_shoulders(
             ],
             retest_time=trigger_time,
             retest_price=trigger_price,
+            pattern_score=pattern_result["final_score"],
+            pattern_raw_score=pattern_result["raw_score"],
+            pattern_grade=pattern_result["grade"],
+            pattern_caps=pattern_result["caps"],
+            pattern_sections=pattern_result["sections"],
+            pattern_metrics=pattern_result["metrics"],
             message=(
                 f"{symbol} {timeframe} 反向头肩右肩半程触发，评分 {total_score}。"
                 f"触发价 {trigger_price:.2f}，半程价 {midpoint_price:.2f}。"

@@ -42,6 +42,7 @@ from app.strategy import (
     PivotPoint,
     calculate_neckline_price,
     calculate_qtr,
+    calculate_pattern_score,
     calculate_true_range,
     check_right_shoulder_midpoint_trigger,
     deduplicate_overlapping_signals,
@@ -65,6 +66,26 @@ from app.monitor import build_wechat_workbot_content
 
 ROOT = Path(__file__).resolve().parents[2]
 SAMPLE = ROOT / "sample_data" / "head_shoulders_sample.csv"
+
+
+def _pattern_test_df(
+    close: list[float],
+    *,
+    volume: list[float] | None = None,
+    macd_hist: list[float] | None = None,
+) -> pd.DataFrame:
+    df = pd.DataFrame({
+        "datetime": pd.date_range("2026-06-14 09:00:00", periods=len(close), freq="min"),
+        "open": close,
+        "high": [price + 0.5 for price in close],
+        "low": [price - 0.5 for price in close],
+        "close": close,
+        "volume": volume if volume is not None else [100.0] * len(close),
+    })
+    if macd_hist is not None:
+        df["macd_hist"] = macd_hist
+        df["macd_dif"] = macd_hist
+    return df
 
 
 def test_symbol_prefix() -> None:
@@ -637,6 +658,118 @@ def test_inverse_midpoint_trigger_waits_for_price_to_reach_halfway() -> None:
 
     assert not before[0]
     assert triggered == (True, 2, times[2], 105.0, 105.0)
+
+
+def test_pattern_score_scores_top_structure_thresholds_and_grade() -> None:
+    close = [90, 92, 94, 96, 100, 98, 95, 102, 111, 104, 96, 99, 104, 100, 96]
+    df = _pattern_test_df(
+        close,
+        volume=[120, 120, 120, 120, 120, 110, 100, 90, 80, 70, 65, 60, 55, 50, 45],
+        macd_hist=[1.0, 1.1, 1.2, 1.3, 2.0, 1.7, 1.5, 1.2, 1.0, 0.6, 0.3, 0.2, 0.1, -0.1, -0.2],
+    )
+    times = pd.to_datetime(df["datetime"])
+    result = calculate_pattern_score(
+        df,
+        left_shoulder=PivotPoint(4, times[4], 100.0, "high"),
+        left_neck=PivotPoint(6, times[6], 95.0, "low"),
+        head=PivotPoint(8, times[8], 111.0, "high"),
+        right_neck=PivotPoint(10, times[10], 96.0, "low"),
+        right_shoulder=PivotPoint(12, times[12], 104.0, "high"),
+        inverse=False,
+        qtr=4.0,
+        trigger_index=14,
+        trigger_price=96.0,
+        midpoint=100.0,
+    )
+
+    structure = next(section for section in result["sections"] if section["key"] == "structure")
+    neckline = next(section for section in result["sections"] if section["key"] == "neckline")
+    assert structure["items"][0]["score"] == 8
+    assert structure["items"][1]["score"] == 5
+    assert neckline["items"][0]["score"] == 6
+    assert result["metrics"]["ds_qtr"] == pytest.approx(1.0)
+    assert result["metrics"]["dn_qtr"] == pytest.approx(0.25)
+    assert result["raw_score"] >= result["final_score"]
+    assert result["grade"] in {"A", "B", "C", "D", "忽略"}
+
+
+def test_pattern_score_applies_lowest_cap_and_rating_threshold() -> None:
+    close = [80, 83, 86, 89, 100, 98, 95, 104, 116, 108, 96, 102, 110, 105, 100]
+    df = _pattern_test_df(close, macd_hist=[2, 2, 2, 2, 4, 3, 2, 1, 0, -1, -2, -2, -2, -3, -4])
+    times = pd.to_datetime(df["datetime"])
+    result = calculate_pattern_score(
+        df,
+        left_shoulder=PivotPoint(4, times[4], 100.0, "high"),
+        left_neck=PivotPoint(6, times[6], 95.0, "low"),
+        head=PivotPoint(8, times[8], 116.0, "high"),
+        right_neck=PivotPoint(10, times[10], 105.0, "low"),
+        right_shoulder=PivotPoint(12, times[12], 110.0, "high"),
+        inverse=False,
+        qtr=2.0,
+        trigger_index=14,
+        trigger_price=100.0,
+        midpoint=107.5,
+    )
+
+    assert 75 in result["caps"]
+    assert result["final_score"] <= 75
+    assert result["grade"] == ("B" if result["final_score"] >= 70 else "C" if result["final_score"] >= 55 else "D" if result["final_score"] >= 40 else "忽略")
+
+
+def test_pattern_score_handles_qtr_anomaly_and_bad_rr() -> None:
+    close = [100, 101, 102, 103, 104, 100, 96, 106, 110, 104, 96, 102, 105, 104, 103]
+    df = _pattern_test_df(close)
+    times = pd.to_datetime(df["datetime"])
+    result = calculate_pattern_score(
+        df,
+        left_shoulder=PivotPoint(4, times[4], 104.0, "high"),
+        left_neck=PivotPoint(6, times[6], 96.0, "low"),
+        head=PivotPoint(8, times[8], 110.0, "high"),
+        right_neck=PivotPoint(10, times[10], 96.0, "low"),
+        right_shoulder=PivotPoint(12, times[12], 105.0, "high"),
+        inverse=False,
+        qtr=0.0,
+        trigger_index=14,
+        trigger_price=103.0,
+        midpoint=100.5,
+    )
+
+    structure = next(section for section in result["sections"] if section["key"] == "structure")
+    trade = next(section for section in result["sections"] if section["key"] == "trade_value")
+    assert result["metrics"]["qtr_anomaly"] is True
+    assert structure["items"][0]["score"] == 0
+    assert structure["items"][1]["score"] == 0
+    assert trade["items"][0]["score"] == 0
+    assert result["metrics"]["rr"] == 0
+
+
+def test_pattern_score_inverse_uses_mirrored_direction_and_volume_proxy() -> None:
+    close = [120, 118, 116, 113, 110, 114, 118, 108, 100, 107, 118, 114, 108, 112, 114]
+    df = _pattern_test_df(
+        close,
+        volume=[0.0] * len(close),
+        macd_hist=[-1.0, -1.1, -1.2, -1.3, -2.0, -1.8, -1.4, -1.0, -0.5, 0.0, 0.3, 0.4, 0.6, 0.8, 1.0],
+    )
+    times = pd.to_datetime(df["datetime"])
+    result = calculate_pattern_score(
+        df,
+        left_shoulder=PivotPoint(4, times[4], 110.0, "low"),
+        left_neck=PivotPoint(6, times[6], 118.0, "high"),
+        head=PivotPoint(8, times[8], 100.0, "low"),
+        right_neck=PivotPoint(10, times[10], 118.0, "high"),
+        right_shoulder=PivotPoint(12, times[12], 108.0, "low"),
+        inverse=True,
+        qtr=4.0,
+        trigger_index=14,
+        trigger_price=114.0,
+        midpoint=113.0,
+    )
+
+    structure = next(section for section in result["sections"] if section["key"] == "structure")
+    momentum = next(section for section in result["sections"] if section["key"] == "momentum")
+    assert structure["items"][0]["score"] == 8
+    assert result["metrics"]["rr"] > 0
+    assert "波动率代理" in momentum["items"][2]["detail"]
 
 
 def test_top_midpoint_trigger_stops_when_right_shoulder_is_broken_upward() -> None:

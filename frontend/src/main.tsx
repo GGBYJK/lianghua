@@ -1667,6 +1667,11 @@ function MonitorAlertFeed({
                         <span className={`monitor-tag pattern-tag ${alert.pattern}`}>{patternLabel(alert.pattern)}</span>
                         <span className={`monitor-tag trend-tag ${trendTagClass(alert.signal_payload)}`}>{trendLabel(alert.signal_payload)}</span>
                         <button type="button" className="monitor-tag score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>{alert.score}</button>
+                        {alert.signal_payload.pattern_score != null && (
+                          <button type="button" className="monitor-tag pattern-score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>
+                            形态 {alert.signal_payload.pattern_score} · {alert.signal_payload.pattern_grade || "-"}
+                          </button>
+                        )}
                       </div>
                       <div className="monitor-message-footer">
                         <div className="message-card-actions">
@@ -1677,6 +1682,11 @@ function MonitorAlertFeed({
                       </div>
                     </div>
                     <button type="button" className="score-badge-button" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>{alert.score}</button>
+                    {alert.signal_payload.pattern_score != null && (
+                      <button type="button" className="score-badge-button pattern-score-badge-button" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>
+                        形态 {alert.signal_payload.pattern_score} · {alert.signal_payload.pattern_grade || "-"}
+                      </button>
+                    )}
                   </article>
                 ))}
               </div>
@@ -1890,6 +1900,11 @@ function CurrentSignalFeed({
                   <span className={`monitor-tag pattern-tag ${signal.pattern}`}>{patternLabel(signal.pattern)}</span>
                   <span className={`monitor-tag trend-tag ${trendTagClass(signal)}`}>{trendLabel(signal)}</span>
                   <button type="button" className="monitor-tag score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(signal); }}>{signal.score}</button>
+                  {signal.pattern_score != null && (
+                    <button type="button" className="monitor-tag pattern-score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(signal); }}>
+                      形态 {signal.pattern_score} · {signal.pattern_grade || "-"}
+                    </button>
+                  )}
                 </div>
                 <div className="monitor-message-footer">
                   <div className="message-card-actions">
@@ -2008,6 +2023,7 @@ type ScoreSection = {
 
 function ScoreDetailModal({ signal, onClose }: { signal: Signal; onClose: () => void }) {
   const sections = buildScoreSections(signal);
+  const patternSections = signal.pattern_sections ?? [];
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section
@@ -2024,8 +2040,16 @@ function ScoreDetailModal({ signal, onClose }: { signal: Signal; onClose: () => 
             <h2 id="score-detail-title">评分详情</h2>
           </div>
           <div className="score-detail-total">
-            <strong>{signal.score}</strong>
-            <span>{signal.trend_label || "未分类"}</span>
+            <div>
+              <strong>{signal.score}</strong>
+              <span>{signal.trend_label || "未分类"}</span>
+            </div>
+            {signal.pattern_score != null && (
+              <div className="pattern-score-total">
+                <strong>{signal.pattern_score}</strong>
+                <span>形态 {signal.pattern_grade || "-"}{signal.pattern_raw_score != null ? ` · 原始 ${signal.pattern_raw_score}` : ""}</span>
+              </div>
+            )}
           </div>
         </div>
         <div className="score-detail-summary">
@@ -2054,6 +2078,37 @@ function ScoreDetailModal({ signal, onClose }: { signal: Signal; onClose: () => 
             </section>
           ))}
         </div>
+        {patternSections.length > 0 && (
+          <div className="pattern-score-detail">
+            <div className="pattern-score-title">
+              <h3>形态质量评分</h3>
+              {signal.pattern_caps && signal.pattern_caps.length > 0 && (
+                <span>封顶 {Math.min(...signal.pattern_caps)}</span>
+              )}
+            </div>
+            <div className="score-section-grid pattern-score-grid">
+              {patternSections.map((section) => (
+                <section className="score-section pattern-score-section" key={section.key}>
+                  <div className="score-section-head">
+                    <h3>{section.title}</h3>
+                    <strong>{section.score}/{section.max}</strong>
+                  </div>
+                  <div className="score-lines">
+                    {section.items.length === 0 ? (
+                      <p className="score-empty">暂无评分细项</p>
+                    ) : section.items.map((item) => (
+                      <div className="score-line" key={`${section.key}-${item.label}`}>
+                        <span>{item.label}</span>
+                        <strong>{item.score}/{item.max}</strong>
+                        <small>{item.detail}</small>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );

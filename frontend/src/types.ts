@@ -24,6 +24,21 @@ export type Neckline = {
   confirmed: boolean;
 };
 
+export type PatternScoreItem = {
+  label: string;
+  score: number;
+  max: number;
+  detail: string;
+};
+
+export type PatternScoreSection = {
+  key: string;
+  title: string;
+  max: number;
+  score: number;
+  items: PatternScoreItem[];
+};
+
 export type Signal = {
   symbol: string;
   timeframe: string;
@@ -45,6 +60,12 @@ export type Signal = {
   retest_time: string | null;
   retest_price: number | null;
   message: string;
+  pattern_score?: number | null;
+  pattern_raw_score?: number | null;
+  pattern_grade?: string;
+  pattern_caps?: number[];
+  pattern_sections?: PatternScoreSection[];
+  pattern_metrics?: Record<string, unknown>;
 };
 
 export type ScanResponse = {
