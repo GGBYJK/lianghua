@@ -511,6 +511,12 @@ def _score_by_min_thresholds(value: float | None, thresholds: list[tuple[float, 
     return default
 
 
+def _scale_score(score: int, old_max: int, new_max: int) -> int:
+    if old_max <= 0:
+        return 0
+    return int(round(score / old_max * new_max))
+
+
 def _safe_ratio(numerator: float, denominator: float) -> float | None:
     if denominator <= 0:
         return None
@@ -627,20 +633,31 @@ def _pattern_structure_items(
     higher_shoulder = min(left_shoulder.price, right_shoulder.price) if inverse else max(left_shoulder.price, right_shoulder.price)
     head_excess = higher_shoulder - head.price if inverse else head.price - higher_shoulder
     head_excess_qtr = _safe_ratio(head_excess, qtr) if not qtr_anomaly else None
-    head_score = _score_by_min_thresholds(head_excess_qtr, [(1.5, 8), (1.0, 6), (0.5, 3), (0.0, 1)])
+    head_score = _score_by_min_thresholds(head_excess_qtr, [(1.5, 4), (1.0, 3), (0.5, 2), (0.0, 1)])
 
     ds = abs(left_shoulder.price - right_shoulder.price)
     ds_qtr = _safe_ratio(ds, qtr) if not qtr_anomaly else None
-    shoulder_score = _score_by_thresholds(ds_qtr, [(0.5, 6), (1.0, 5), (1.5, 3), (2.0, 1)])
+    shoulder_score = _score_by_thresholds(ds_qtr, [(0.5, 10), (1.0, 8), (1.5, 5), (2.0, 2)])
 
-    order_ok = left_shoulder.index < left_neck.index < head.index < right_neck.index < right_shoulder.index
-    kinds_ok = [left_shoulder.kind, left_neck.kind, head.kind, right_neck.kind, right_shoulder.kind] == (
-        ["low", "high", "low", "high", "low"] if inverse else ["high", "low", "high", "low", "high"]
-    )
-    order_score = 5 if order_ok and kinds_ok else 0
+    left_denominator = left_neck.price - head.price if inverse else head.price - left_neck.price
+    left_numerator = left_neck.price - left_shoulder.price if inverse else left_shoulder.price - left_neck.price
+    right_denominator = right_neck.price - head.price if inverse else head.price - right_neck.price
+    right_numerator = right_neck.price - right_shoulder.price if inverse else right_shoulder.price - right_neck.price
+    left_height_ratio = _safe_ratio(left_numerator, left_denominator) if left_denominator > 0 and left_numerator >= 0 else None
+    right_height_ratio = _safe_ratio(right_numerator, right_denominator) if right_denominator > 0 and right_numerator >= 0 else None
 
-    right_ok = right_shoulder.price > head.price if inverse else right_shoulder.price < head.price
-    right_score = 4 if right_ok else 0
+    def shoulder_height_score(ratio: float | None) -> int:
+        if ratio is None:
+            return 0
+        if 0.45 <= ratio <= 0.75:
+            return 4
+        if 0.35 <= ratio < 0.45 or 0.75 < ratio <= 0.85:
+            return 3
+        if 0.25 <= ratio < 0.35 or 0.85 < ratio <= 0.95:
+            return 2
+        if 0.15 <= ratio < 0.25 or 0.95 < ratio < 1.0:
+            return 1
+        return 0
 
     noise = 0
     same_kind = "low" if inverse else "high"
@@ -656,10 +673,10 @@ def _pattern_structure_items(
     noise_score = 2 if noise == 0 else 1 if noise <= 1 else 0
 
     return [
-        _pattern_item("头部突出度", head_score, 8, f"头部超出较高肩 {head_excess:.4f}，约 {head_excess_qtr if head_excess_qtr is not None else 0:.2f} QTR"),
-        _pattern_item("左右肩高度接近", shoulder_score, 6, f"DS={ds:.4f}，DS/QTR={ds_qtr if ds_qtr is not None else 0:.2f}"),
-        _pattern_item("五点顺序清晰", order_score, 5, "五点 index 与高低点方向均符合结构" if order_score else "五点顺序或方向异常"),
-        _pattern_item("右肩未破坏头部", right_score, 4, "右肩未越过头部极值" if right_ok else "右肩破坏头部极值"),
+        _pattern_item("头部突出度", head_score, 4, f"头部超出较高肩 {head_excess:.4f}，约 {head_excess_qtr if head_excess_qtr is not None else 0:.2f} QTR"),
+        _pattern_item("左右肩高度接近", shoulder_score, 10, f"DS={ds:.4f}，DS/QTR={ds_qtr if ds_qtr is not None else 0:.2f}"),
+        _pattern_item("左肩有效高度", shoulder_height_score(left_height_ratio), 4, f"左肩到左颈高度占头部到左颈高度 {left_height_ratio if left_height_ratio is not None else 0:.2f}"),
+        _pattern_item("右肩有效高度", shoulder_height_score(right_height_ratio), 4, f"右颈到右肩高度占头部到右颈高度 {right_height_ratio if right_height_ratio is not None else 0:.2f}"),
         _pattern_item("中间杂峰/杂谷较少", noise_score, 2, f"启发式：{same_kind} 方向破坏性杂点数量 {noise}"),
     ]
 
@@ -675,7 +692,7 @@ def _pattern_neckline_items(
 ) -> list[dict[str, Any]]:
     dn = abs(left_neck.price - right_neck.price)
     dn_qtr = _safe_ratio(dn, qtr) if not qtr_anomaly else None
-    close_score = _score_by_thresholds(dn_qtr, [(0.5, 6), (1.0, 5), (1.5, 3), (2.0, 1)])
+    close_score = _score_by_thresholds(dn_qtr, [(0.5, 10), (1.0, 8), (1.5, 5), (2.0, 2)])
 
     clarity = 0
     for point in (left_neck, right_neck):
@@ -688,20 +705,6 @@ def _pattern_neckline_items(
             if point.price <= float(df.loc[left:right, "low"].min()):
                 clarity += 1
     clarity_score = 4 if clarity == 2 else 2 if clarity == 1 else 0
-
-    bars = max(1, right_neck.index - left_neck.index)
-    slope_per_bar = abs(right_neck.price - left_neck.price) / bars
-    slope_qtr = _safe_ratio(slope_per_bar, qtr) if not qtr_anomaly else None
-    if slope_qtr is None:
-        slope_score = 0
-    elif slope_qtr <= 0.25:
-        slope_score = 3
-    elif slope_qtr <= 0.5:
-        slope_score = 2
-    elif slope_qtr <= 0.8:
-        slope_score = 1
-    else:
-        slope_score = 0
 
     pierces = 0
     tolerance = qtr * 0.25 if not qtr_anomaly else 0
@@ -717,9 +720,8 @@ def _pattern_neckline_items(
     respect_score = 2 if pierces == 0 else 1 if pierces <= 1 else 0
 
     return [
-        _pattern_item("左右颈价格接近", close_score, 6, f"DN={dn:.4f}，DN/QTR={dn_qtr if dn_qtr is not None else 0:.2f}"),
+        _pattern_item("左右颈价格接近", close_score, 10, f"DN={dn:.4f}，DN/QTR={dn_qtr if dn_qtr is not None else 0:.2f}"),
         _pattern_item("N1/N2 拐点清晰", clarity_score, 4, f"启发式：两侧 2 根K线局部极值命中 {clarity}/2"),
-        _pattern_item("颈线斜率合理", slope_score, 3, f"每根K线斜率约 {slope_qtr if slope_qtr is not None else 0:.2f} QTR"),
         _pattern_item("价格尊重颈线区域", respect_score, 2, f"启发式：形成阶段无效穿越次数 {pierces}"),
     ]
 
@@ -737,11 +739,11 @@ def _pattern_time_items(
     left_neck_span = max(1, head.index - left_neck.index)
     right_neck_span = max(1, right_neck.index - head.index)
     tn = max(left_neck_span, right_neck_span) / min(left_neck_span, right_neck_span)
-    ts_score = _score_by_thresholds(ts, [(1.5, 6), (2.0, 5), (2.5, 3), (3.0, 1)])
-    tn_score = _score_by_thresholds(tn, [(1.5, 4), (2.0, 3), (3.0, 1)])
+    ts_score = _score_by_thresholds(ts, [(1.5, 8), (2.0, 7), (2.5, 4), (3.0, 1)])
+    tn_score = _score_by_thresholds(tn, [(1.5, 6), (2.0, 4), (3.0, 2)])
     return [
-        _pattern_item("肩部时间比例 TS", ts_score, 6, f"TS={ts:.2f}，左右跨度 {left_span}/{right_span} 根"),
-        _pattern_item("颈点时间比例 TN", tn_score, 4, f"TN={tn:.2f}，左右跨度 {left_neck_span}/{right_neck_span} 根"),
+        _pattern_item("肩部时间比例 TS", ts_score, 8, f"TS={ts:.2f}，左右跨度 {left_span}/{right_span} 根"),
+        _pattern_item("颈点时间比例 TN", tn_score, 6, f"TN={tn:.2f}，左右跨度 {left_neck_span}/{right_neck_span} 根"),
     ], ts, tn
 
 
@@ -856,8 +858,6 @@ def _pattern_trigger_items(
         speed_score = 0
     reached = trigger_price >= midpoint if inverse else trigger_price <= midpoint
     return [
-        _pattern_item("右肩已被确认", 4, 4, "结构扫描已确认右肩拐点"),
-        _pattern_item("触发前未失效", 4, 4, "半程触发函数已过滤 RS 失效条件"),
         _pattern_item("收盘价触及半程", 4 if reached else 0, 4, f"收盘触发价 {trigger_price:.4f}，半程价 {midpoint:.4f}"),
         _pattern_item("触发速度", speed_score, 3, f"RS 后 {trigger_speed_bars} 根K线触发"),
     ], trigger_speed_bars
@@ -893,8 +893,10 @@ def _pattern_trade_value_items(
         rr = reward / risk if risk > 0 and reward > 0 else 0.0
         ph_qtr = ph / qtr
 
-    rr_score = _score_by_min_thresholds(rr, [(3.0, 6), (2.0, 5), (1.5, 3), (1.2, 1)])
-    ph_score = _score_by_min_thresholds(ph_qtr, [(4.0, 2), (2.5, 1)])
+    rr_base_score = _score_by_min_thresholds(rr, [(3.0, 6), (2.0, 5), (1.5, 3), (1.2, 1)])
+    ph_base_score = _score_by_min_thresholds(ph_qtr, [(4.0, 2), (2.5, 1)])
+    rr_score = _scale_score(rr_base_score, 6, 8)
+    ph_score = _scale_score(ph_base_score, 2, 4)
 
     obstacles = 0
     if target is not None:
@@ -911,8 +913,15 @@ def _pattern_trade_value_items(
     obstacle_score = 2 if obstacles <= 1 else 1 if obstacles <= 3 else 0
 
     return [
-        _pattern_item("预期盈亏比 RR", rr_score, 6, f"RR={rr:.2f}，Risk={risk if risk is not None else 0:.4f}，Reward={reward if reward is not None else 0:.4f}"),
-        _pattern_item("形态高度/波动率", ph_score, 2, f"PH={ph:.4f}，PH/QTR={ph_qtr if ph_qtr is not None else 0:.2f}"),
+        _pattern_item(
+            "预期盈亏比 RR",
+            rr_score,
+            8,
+            f"RR={rr:.2f}，触发价={trigger_price:.4f}，止损价={stop if stop is not None else 0:.4f}，"
+            f"目标价={target if target is not None else 0:.4f}，Risk={risk if risk is not None else 0:.4f}，"
+            f"Reward={reward if reward is not None else 0:.4f}",
+        ),
+        _pattern_item("形态高度/波动率", ph_score, 4, f"PH={ph:.4f}，PH/QTR={ph_qtr if ph_qtr is not None else 0:.2f}"),
         _pattern_item("目标路径障碍", obstacle_score, 2, f"启发式：触发价到目标价之间历史支撑/压力命中 {obstacles} 次"),
     ], {
         "neckline_at_head": neckline_at_head,
@@ -965,12 +974,12 @@ def calculate_pattern_score(
 
     sections = [
         _pattern_section("trend", "趋势背景", 10, trend_items),
-        _pattern_section("structure", "三峰/三谷结构", 25, structure_items),
-        _pattern_section("neckline", "颈线质量", 15, neckline_items),
-        _pattern_section("time", "时间对称性", 10, time_items),
+        _pattern_section("structure", "三峰/三谷结构", 24, structure_items),
+        _pattern_section("neckline", "颈线质量", 16, neckline_items),
+        _pattern_section("time", "时间对称性", 14, time_items),
         _pattern_section("momentum", "量能/动能配合", 15, momentum_items),
-        _pattern_section("trigger", "右肩与半程触发质量", 15, trigger_items),
-        _pattern_section("trade_value", "即时交易价值", 10, trade_items),
+        _pattern_section("trigger", "右肩与半程触发质量", 7, trigger_items),
+        _pattern_section("trade_value", "即时交易价值", 14, trade_items),
     ]
     raw_score = int(sum(section["score"] for section in sections))
 
