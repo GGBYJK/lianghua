@@ -981,8 +981,6 @@ def calculate_pattern_score(
         caps.append(75)
     if dn_qtr is not None and dn_qtr > 2.0:
         caps.append(75)
-    if ts > 3.0 or tn > 3.0:
-        caps.append(75)
     if right_momentum_stronger:
         caps.append(80)
     final_score = min([raw_score, *caps]) if caps else raw_score
