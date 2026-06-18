@@ -237,7 +237,6 @@ function App() {
   const [feedbackNote, setFeedbackNote] = useState("");
   const [selectedFeedbackId, setSelectedFeedbackId] = useState<string | null>(null);
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
-  const [detailSource, setDetailSource] = useState<DetailSource>(null);
   const [scoreDetailSignal, setScoreDetailSignal] = useState<Signal | null>(null);
   const [monitorScrollTargetSymbol, setMonitorScrollTargetSymbol] = useState<string | null>(null);
   const seenSignalKeys = useRef<Set<string>>(new Set());
@@ -280,9 +279,9 @@ function App() {
   }, []);
 
   useEffect(() => {
-    document.body.classList.toggle("modal-open", configOpen || watchEditorOpen || detailSource !== null || scoreDetailSignal !== null || feedbackTarget !== null || feedbackListOpen || contractCenterOpen);
+    document.body.classList.toggle("modal-open", configOpen || watchEditorOpen || scoreDetailSignal !== null || feedbackTarget !== null || feedbackListOpen || contractCenterOpen);
     return () => document.body.classList.remove("modal-open");
-  }, [configOpen, watchEditorOpen, detailSource, scoreDetailSignal, feedbackTarget, feedbackListOpen, contractCenterOpen]);
+  }, [configOpen, watchEditorOpen, scoreDetailSignal, feedbackTarget, feedbackListOpen, contractCenterOpen]);
 
   function scrollToPanel(ref: React.RefObject<HTMLElement | null>) {
     window.setTimeout(() => {
@@ -602,7 +601,7 @@ function App() {
 
   function selectCurrentSignal(signal: Signal) {
     focusCurrentSignal(signal);
-    setDetailSource({ kind: "current", signal });
+    setScoreDetailSignal(signal);
   }
 
   function focusWatchPoolMessages(item: WatchPoolItem) {
@@ -641,7 +640,7 @@ function App() {
     try {
       const fullAlert = await getHeadShouldersAlert(alert.id);
       applyAlertResult(fullAlert);
-      setDetailSource({ kind: "alert", alert: fullAlert });
+      setScoreDetailSignal(fullAlert.signal_payload);
     } catch (err) {
       setError(err instanceof Error ? err.message : "监控消息详情读取失败");
     }
@@ -919,26 +918,6 @@ function App() {
           />
         </aside>
       </section>
-
-      {detailSource && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setDetailSource(null)}>
-          <section
-            className="detail-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="detail-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <SignalDetail
-              signal={detailSource.kind === "alert" ? detailSource.alert.signal_payload : detailSource.signal}
-              sourceLabel={detailSource.kind === "alert" ? "监控消息" : "当前图结果"}
-              titleId="detail-title"
-              onOpenScoreDetail={(signal) => setScoreDetailSignal(signal)}
-              onClose={() => setDetailSource(null)}
-            />
-          </section>
-        </div>
-      )}
 
       {scoreDetailSignal && (
         <ScoreDetailModal signal={scoreDetailSignal} onClose={() => setScoreDetailSignal(null)} />
@@ -1942,7 +1921,6 @@ function SignalDetail({
   signal,
   sourceLabel = "",
   titleId,
-  onOpenScoreDetail,
   onClose,
 }: {
   signal: Signal | null;
@@ -1963,17 +1941,6 @@ function SignalDetail({
     );
   }
 
-  const detailPrices = [
-    { label: "左肩", value: formatPrice(signal.left_shoulder.price), meta: formatTime(signal.left_shoulder.time) },
-    { label: "左颈", value: formatPrice(signal.left_neck.price), meta: formatTime(signal.left_neck.time) },
-    { label: "头部", value: formatPrice(signal.head.price), meta: formatTime(signal.head.time) },
-    { label: "右颈", value: formatPrice(signal.right_neck.price), meta: formatTime(signal.right_neck.time) },
-    { label: "右肩", value: formatPrice(signal.right_shoulder.price), meta: formatTime(signal.right_shoulder.time) },
-    { label: "颈线价", value: formatPrice(signal.neckline_price), meta: signal.confirmed ? "已触发" : "观察中" },
-    { label: "QTR", value: formatOptionalMetric(signal.qtr), meta: "真实波幅均值" },
-  ];
-  const visibleReasons = signal.reasons.filter(shouldShowDetailReason).slice(0, 10);
-
   return (
     <section className="detail-panel inline-detail-panel">
       <div className="feedback-head">
@@ -1986,26 +1953,76 @@ function SignalDetail({
           {onClose && <button type="button" className="icon-button" onClick={onClose}>关闭</button>}
         </div>
       </div>
-      <div className="detail-score">
-        <button type="button" className="detail-score-button" onClick={() => onOpenScoreDetail?.(signal)}>{signal.score}</button>
-        <p>{signal.trend_label ? `${signal.trend_label} · ` : ""}{translateResultText(signal.message)}</p>
-      </div>
-      <div className="detail-price-strip" aria-label="形态价格">
-        {detailPrices.map((item) => (
-          <div className="detail-price-item" key={item.label}>
-            <span>{item.label}</span>
-            <strong>{item.value}</strong>
-            <small>{item.meta}</small>
-          </div>
-        ))}
-      </div>
-      {visibleReasons.length > 0 && (
-        <ul className="detail-reasons">
-          {visibleReasons.map((reason) => <li key={reason}>{translateResultText(reason)}</li>)}
-        </ul>
-      )}
+      <ScoreDetailContent signal={signal} />
     </section>
   );
+}
+
+type DetailPriceItem = {
+  label: string;
+  value: string;
+  meta: string;
+  wide?: boolean;
+};
+
+function buildDetailPrices(signal: Signal): DetailPriceItem[] {
+  return [
+    { label: "头部", value: formatPrice(signal.head.price), meta: formatTime(signal.head.time), wide: true },
+    { label: "左肩", value: formatPrice(signal.left_shoulder.price), meta: formatTime(signal.left_shoulder.time) },
+    { label: "右肩", value: formatPrice(signal.right_shoulder.price), meta: formatTime(signal.right_shoulder.time) },
+    { label: "左颈", value: formatPrice(signal.left_neck.price), meta: formatTime(signal.left_neck.time) },
+    { label: "右颈", value: formatPrice(signal.right_neck.price), meta: formatTime(signal.right_neck.time) },
+    { label: "QTR", value: formatOptionalMetric(signal.qtr), meta: "真实波幅均值", wide: true },
+  ];
+}
+
+function PatternPriceGrid({ signal }: { signal: Signal }) {
+  return (
+    <div className="detail-price-strip" aria-label="形态价格">
+      {buildDetailPrices(signal).map((item) => (
+        <div className={`detail-price-item${item.wide ? " detail-price-item-wide" : ""}`} key={item.label}>
+          <span>{item.label}</span>
+          <strong>{item.value}</strong>
+          <small>{item.meta}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function metricNumber(signal: Signal, key: string): number | null {
+  const value = signal.pattern_metrics?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function TradePriceSummary({ signal }: { signal: Signal }) {
+  const items = [
+    { label: "触发价", value: metricNumber(signal, "trigger_price") },
+    { label: "止损价", value: metricNumber(signal, "stop") },
+    { label: "目标价", value: metricNumber(signal, "target") },
+  ];
+
+  return (
+    <div className="trade-price-summary" aria-label="交易价格">
+      {items.map((item) => (
+        <div className="trade-price-item" key={item.label}>
+          <span>{item.label}</span>
+          <strong>{item.value == null ? "-" : formatPrice(item.value)}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function tradeValueRrDetail(detail: string) {
+  const rr = detail.match(/RR=([\d.-]+)/)?.[1];
+  const risk = detail.match(/Risk=([\d.-]+)/)?.[1];
+  const reward = detail.match(/Reward=([\d.-]+)/)?.[1];
+  return [
+    rr ? `RR=${rr}` : "",
+    risk ? `Risk=${risk}` : "",
+    reward ? `Reward=${reward}` : "",
+  ].filter(Boolean).join("，") || detail;
 }
 
 type ScoreLine = {
@@ -2022,8 +2039,6 @@ type ScoreSection = {
 };
 
 function ScoreDetailModal({ signal, onClose }: { signal: Signal; onClose: () => void }) {
-  const sections = buildScoreSections(signal);
-  const patternSections = signal.pattern_sections ?? [];
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section
@@ -2039,23 +2054,48 @@ function ScoreDetailModal({ signal, onClose }: { signal: Signal; onClose: () => 
             <p className="eyebrow">Score</p>
             <h2 id="score-detail-title">评分详情</h2>
           </div>
-          <div className="score-detail-total">
-            <div>
-              <strong>{signal.score}</strong>
-              <span>{signal.trend_label || "未分类"}</span>
-            </div>
-            {signal.pattern_score != null && (
-              <div className="pattern-score-total">
-                <strong>{signal.pattern_score}</strong>
-                <span>形态 {signal.pattern_grade || "-"}{signal.pattern_raw_score != null ? ` · 原始 ${signal.pattern_raw_score}` : ""}</span>
-              </div>
-            )}
+        </div>
+        <ScoreDetailContent signal={signal} />
+      </section>
+    </div>
+  );
+}
+
+function ScoreDetailContent({ signal }: { signal: Signal }) {
+  const sections = buildScoreSections(signal);
+  const patternSections = signal.pattern_sections ?? [];
+
+  return (
+    <div className="score-detail-content">
+      <div className="score-detail-overview">
+        <div className="score-detail-total">
+          <div>
+            <strong>{signal.score}</strong>
+            <span>{signal.trend_label || "未分类"}</span>
           </div>
+          {signal.pattern_score != null && (
+            <div className="pattern-score-total">
+              <strong>{signal.pattern_score}</strong>
+              <span>形态 {signal.pattern_grade || "-"}{signal.pattern_raw_score != null ? ` · 原始 ${signal.pattern_raw_score}` : ""}</span>
+            </div>
+          )}
         </div>
         <div className="score-detail-summary">
           <span>{patternLabel(signal.pattern)}</span>
           <span>{trendLabel(signal)}</span>
           <span>{signal.timeframe}</span>
+        </div>
+        <TradePriceSummary signal={signal} />
+      </div>
+      <div className="score-detail-block">
+        <div className="score-detail-block-title">
+          <h3>形态结构</h3>
+        </div>
+        <PatternPriceGrid signal={signal} />
+      </div>
+      <div className="score-detail-block">
+        <div className="score-detail-block-title">
+          <h3>趋势评分</h3>
         </div>
         <div className="score-section-grid">
           {sections.map((section) => (
@@ -2078,38 +2118,38 @@ function ScoreDetailModal({ signal, onClose }: { signal: Signal; onClose: () => 
             </section>
           ))}
         </div>
-        {patternSections.length > 0 && (
-          <div className="pattern-score-detail">
-            <div className="pattern-score-title">
-              <h3>形态质量评分</h3>
-              {signal.pattern_caps && signal.pattern_caps.length > 0 && (
-                <span>封顶 {Math.min(...signal.pattern_caps)}</span>
-              )}
-            </div>
-            <div className="score-section-grid pattern-score-grid">
-              {patternSections.map((section) => (
-                <section className="score-section pattern-score-section" key={section.key}>
-                  <div className="score-section-head">
-                    <h3>{section.title}</h3>
-                    <strong>{section.score}/{section.max}</strong>
-                  </div>
-                  <div className="score-lines">
-                    {section.items.length === 0 ? (
-                      <p className="score-empty">暂无评分细项</p>
-                    ) : section.items.map((item) => (
-                      <div className="score-line" key={`${section.key}-${item.label}`}>
-                        <span>{item.label}</span>
-                        <strong>{item.score}/{item.max}</strong>
-                        <small>{item.detail}</small>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </div>
+      </div>
+      {patternSections.length > 0 && (
+        <div className="score-detail-block pattern-score-detail">
+          <div className="pattern-score-title">
+            <h3>形态质量评分</h3>
+            {signal.pattern_caps && signal.pattern_caps.length > 0 && (
+              <span>封顶 {Math.min(...signal.pattern_caps)}</span>
+            )}
           </div>
-        )}
-      </section>
+          <div className="score-section-grid pattern-score-grid">
+            {patternSections.map((section) => (
+              <section className="score-section pattern-score-section" key={section.key}>
+                <div className="score-section-head">
+                  <h3>{section.title}</h3>
+                  <strong>{section.score}/{section.max}</strong>
+                </div>
+                <div className="score-lines">
+                  {section.items.length === 0 ? (
+                    <p className="score-empty">暂无评分细项</p>
+                  ) : section.items.map((item) => (
+                    <div className="score-line" key={`${section.key}-${item.label}`}>
+                      <span>{item.label}</span>
+                      <strong>{item.score}/{item.max}</strong>
+                      <small>{section.key === "trade_value" && item.max === 8 ? tradeValueRrDetail(item.detail) : item.detail}</small>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

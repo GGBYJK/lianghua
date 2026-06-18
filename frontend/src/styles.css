@@ -3503,19 +3503,31 @@ button:hover:not(:disabled) {
 
 .detail-price-strip {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
   margin: 12px;
   overflow: hidden;
 }
 
 .detail-price-item {
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr) minmax(112px, auto);
+  grid-template-columns: 64px minmax(0, 1fr) minmax(112px, auto);
   align-items: center;
   gap: 12px;
   min-width: 0;
   padding: 12px 14px;
+}
+
+.detail-price-item-wide {
+  grid-column: 1 / -1;
+  grid-template-columns: auto auto auto;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.detail-price-item-wide small {
+  text-align: center;
 }
 
 .detail-price-item + .detail-price-item {
@@ -3826,6 +3838,28 @@ textarea.ant-input {
     grid-template-columns: 1fr;
   }
 
+  .score-detail-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .score-detail-total,
+  .score-detail-summary,
+  .trade-price-summary {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .score-detail-total {
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .trade-price-summary {
+    justify-content: flex-start;
+    grid-template-columns: repeat(3, minmax(0, max-content));
+    width: 100%;
+  }
+
   .pool-card-grid {
     grid-template-columns: 1fr;
   }
@@ -3842,6 +3876,16 @@ textarea.ant-input {
   .contract-table-wrap {
     margin-left: 16px;
     margin-right: 16px;
+  }
+}
+
+@media (max-width: 560px) {
+  .detail-price-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-price-item-wide {
+    grid-column: auto;
   }
 }
 
@@ -5495,11 +5539,26 @@ button:disabled {
   padding-right: 104px;
 }
 
+.score-detail-content {
+  min-width: 0;
+}
+
+.score-detail-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, auto) auto;
+  align-items: center;
+  gap: 16px;
+  border-top: 1px solid var(--line-soft);
+  padding: 14px 24px 0;
+}
+
 .score-detail-total {
   display: flex;
   align-items: center;
   justify-items: end;
   gap: 16px;
+  grid-column: 3;
+  grid-row: 1;
   text-align: right;
 }
 
@@ -5529,8 +5588,9 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  border-top: 1px solid var(--line-soft);
-  padding: 14px 24px 0;
+  grid-column: 1;
+  grid-row: 1;
+  padding: 0;
 }
 
 .score-detail-summary span {
@@ -5543,6 +5603,64 @@ button:disabled {
   color: #515154;
   font-size: 12px;
   font-weight: 700;
+}
+
+.trade-price-summary {
+  display: grid;
+  grid-template-columns: repeat(3, max-content);
+  justify-content: center;
+  align-items: center;
+  gap: 18px;
+  grid-column: 2;
+  grid-row: 1;
+  min-height: 42px;
+  border-radius: 8px;
+  background: #f5f5f7;
+  padding: 7px 18px;
+}
+
+.trade-price-item {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.trade-price-item span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.trade-price-item strong {
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.score-detail-block {
+  border-top: 1px solid var(--line-soft);
+  padding: 18px 24px 24px;
+}
+
+.score-detail-block-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.score-detail-block-title h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.score-detail-block .detail-price-strip,
+.score-detail-block .score-section-grid {
+  margin: 0;
+  padding: 0;
 }
 
 .score-section-grid {
@@ -5628,6 +5746,10 @@ button:disabled {
   justify-content: space-between;
   gap: 12px;
   padding: 18px 24px 0;
+}
+
+.score-detail-block .pattern-score-title {
+  padding: 0 0 14px;
 }
 
 .pattern-score-title h3 {
