@@ -1985,6 +1985,8 @@ def signals_conflict(first: HeadShoulderTopSignal, second: HeadShoulderTopSignal
         return False
     if first.alert_type != second.alert_type:
         return False
+    if signals_share_head(first, second) and not signals_share_all_pivots(first, second):
+        return False
     if signal_overlap_ratio(first, second) >= 0.7:
         return True
     return (
@@ -1996,23 +1998,32 @@ def signals_conflict(first: HeadShoulderTopSignal, second: HeadShoulderTopSignal
     )
 
 
+def signals_share_head(first: HeadShoulderTopSignal, second: HeadShoulderTopSignal) -> bool:
+    return (
+        first.symbol == second.symbol
+        and first.timeframe == second.timeframe
+        and first.pattern == second.pattern
+        and first.alert_type == second.alert_type
+        and first.head.index == second.head.index
+    )
+
+
+def signals_share_all_pivots(first: HeadShoulderTopSignal, second: HeadShoulderTopSignal) -> bool:
+    return (
+        first.left_shoulder.index == second.left_shoulder.index
+        and first.left_neck.index == second.left_neck.index
+        and first.head.index == second.head.index
+        and first.right_neck.index == second.right_neck.index
+        and first.right_shoulder.index == second.right_shoulder.index
+    )
+
+
 def deduplicate_overlapping_signals(signals: list[HeadShoulderTopSignal]) -> list[HeadShoulderTopSignal]:
-    def shoulder_absolute_diff(signal: HeadShoulderTopSignal) -> float:
-        return abs(signal.left_shoulder.price - signal.right_shoulder.price)
-
-    def neck_absolute_diff(signal: HeadShoulderTopSignal) -> float:
-        return abs(signal.left_neck.price - signal.right_neck.price)
-
     def shoulder_diff(signal: HeadShoulderTopSignal) -> float:
         return abs(signal.left_shoulder.price - signal.right_shoulder.price) / max(signal.left_shoulder.price, signal.right_shoulder.price)
 
     def neck_diff(signal: HeadShoulderTopSignal) -> float:
         return abs(signal.left_neck.price - signal.right_neck.price) / max(signal.left_neck.price, signal.right_neck.price)
-
-    def qtr_closeness_limit(signal: HeadShoulderTopSignal) -> float | None:
-        if signal.qtr is None:
-            return None
-        return max(0.0, signal.qtr) * 1.5
 
     def relative_span_diff(left_span: int, right_span: int) -> float:
         return abs(left_span - right_span) / max(1, left_span, right_span)
@@ -2049,72 +2060,8 @@ def deduplicate_overlapping_signals(signals: list[HeadShoulderTopSignal]) -> lis
         average_neckline = (signal.left_neck.price + signal.right_neck.price) / 2
         return average_neckline if signal.pattern == "inverse_head_shoulders" else -average_neckline
 
-    def same_head_key(signal: HeadShoulderTopSignal) -> tuple[str, str, str, str, int]:
+    def signal_rank(signal: HeadShoulderTopSignal) -> tuple[Any, ...]:
         return (
-            signal.symbol,
-            signal.timeframe,
-            signal.pattern,
-            signal.alert_type,
-            signal.head.index,
-        )
-
-    same_head_groups: dict[tuple[str, str, str, str, int], list[HeadShoulderTopSignal]] = {}
-    for signal in signals:
-        same_head_groups.setdefault(same_head_key(signal), []).append(signal)
-
-    same_head_condition_counts: dict[int, int] = {}
-    same_head_both_prices_close: dict[int, bool] = {}
-    for group in same_head_groups.values():
-        best_neck_absolute_diff = min(neck_absolute_diff(signal) for signal in group)
-        best_shoulder_absolute_diff = min(shoulder_absolute_diff(signal) for signal in group)
-        best_time_symmetry = min(time_symmetry(signal) for signal in group)
-        for signal in group:
-            closeness_limit = qtr_closeness_limit(signal)
-            neck_close = (
-                neck_absolute_diff(signal) <= closeness_limit
-                if closeness_limit is not None
-                else neck_absolute_diff(signal) == best_neck_absolute_diff
-            )
-            shoulder_close = (
-                shoulder_absolute_diff(signal) <= closeness_limit
-                if closeness_limit is not None
-                else shoulder_absolute_diff(signal) == best_shoulder_absolute_diff
-            )
-            symmetry_best = time_symmetry(signal) == best_time_symmetry
-            same_head_condition_counts[id(signal)] = sum((
-                neck_close,
-                shoulder_close,
-                symmetry_best,
-            ))
-            same_head_both_prices_close[id(signal)] = neck_close and shoulder_close
-
-    def same_head_rank(signal: HeadShoulderTopSignal) -> tuple[Any, ...]:
-        both_prices_close = same_head_both_prices_close[id(signal)]
-        symmetry_rank = tuple(-value for value in time_symmetry(signal))
-        price_difference_total = neck_absolute_diff(signal) + shoulder_absolute_diff(signal)
-        return (
-            signal.confirmed,
-            same_head_condition_counts[id(signal)],
-            both_prices_close,
-            *(symmetry_rank if both_prices_close else (float("-inf"),) * 3),
-            -price_difference_total,
-            *symmetry_rank,
-            head_depth(signal),
-            neckline_height(signal),
-            -shoulder_diff(signal),
-            -neck_diff(signal),
-            signal.score,
-            signal.break_time or signal.right_shoulder.time,
-        )
-
-    same_head_selected = [
-        max(group, key=same_head_rank)
-        for group in same_head_groups.values()
-    ]
-
-    ranked = sorted(
-        same_head_selected,
-        key=lambda signal: (
             signal.confirmed,
             *(-value for value in time_symmetry(signal)),
             head_depth(signal),
@@ -2123,7 +2070,11 @@ def deduplicate_overlapping_signals(signals: list[HeadShoulderTopSignal]) -> lis
             -neck_diff(signal),
             signal.score,
             signal.break_time or signal.right_shoulder.time,
-        ),
+        )
+
+    ranked = sorted(
+        signals,
+        key=signal_rank,
         reverse=True,
     )
     selected: list[HeadShoulderTopSignal] = []

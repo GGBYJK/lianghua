@@ -2161,7 +2161,7 @@ def test_deduplicate_overlapping_signals_keeps_highest_ranked() -> None:
     assert deduplicate_overlapping_signals([weaker, stronger]) == [stronger]
 
 
-def test_deduplicate_prefers_more_symmetric_time_structure() -> None:
+def test_deduplicate_keeps_same_head_with_different_pivots() -> None:
     times = pd.date_range("2026-02-25 10:00:00", periods=10, freq="h")
     shared_head = PivotPoint(623, times[4], 3342, "high")
     asymmetric = HeadShoulderTopSignal(
@@ -2196,78 +2196,10 @@ def test_deduplicate_prefers_more_symmetric_time_structure() -> None:
         break_time=times[9],
         break_price=3296,
     )
-    assert deduplicate_overlapping_signals([asymmetric, symmetric]) == [symmetric]
+    assert deduplicate_overlapping_signals([asymmetric, symmetric]) == [asymmetric, symmetric]
 
 
-def test_deduplicate_same_head_prefers_more_winning_conditions() -> None:
-    times = pd.date_range("2026-02-26 10:00:00", periods=9, freq="h")
-    price_quality = HeadShoulderTopSignal(
-        symbol="hc2610",
-        timeframe="1h",
-        pattern="head_shoulders_top",
-        left_shoulder=PivotPoint(10, times[0], 100, "high"),
-        left_neck=PivotPoint(20, times[1], 90, "low"),
-        head=PivotPoint(50, times[4], 110, "high"),
-        right_neck=PivotPoint(60, times[5], 90.1, "low"),
-        right_shoulder=PivotPoint(70, times[6], 100.1, "high"),
-        neckline_price=90,
-        confirmed=False,
-        score=80,
-        reasons=[],
-    )
-    time_quality = HeadShoulderTopSignal(
-        symbol="hc2610",
-        timeframe="1h",
-        pattern="head_shoulders_top",
-        left_shoulder=PivotPoint(20, times[1], 100, "high"),
-        left_neck=PivotPoint(35, times[2], 90, "low"),
-        head=PivotPoint(50, times[4], 110, "high"),
-        right_neck=PivotPoint(65, times[5], 92, "low"),
-        right_shoulder=PivotPoint(80, times[7], 103, "high"),
-        neckline_price=91,
-        confirmed=False,
-        score=105,
-        reasons=[],
-    )
-
-    assert deduplicate_overlapping_signals([time_quality, price_quality]) == [price_quality]
-
-
-def test_deduplicate_same_head_prefers_combined_price_alignment_before_time_symmetry() -> None:
-    times = pd.date_range("2026-02-27 10:00:00", periods=9, freq="h")
-    shoulder_quality = HeadShoulderTopSignal(
-        symbol="hc2610",
-        timeframe="1h",
-        pattern="head_shoulders_top",
-        left_shoulder=PivotPoint(10, times[0], 100, "high"),
-        left_neck=PivotPoint(20, times[1], 90, "low"),
-        head=PivotPoint(50, times[4], 110, "high"),
-        right_neck=PivotPoint(60, times[5], 90, "low"),
-        right_shoulder=PivotPoint(70, times[6], 100.1, "high"),
-        neckline_price=90,
-        confirmed=False,
-        score=105,
-        reasons=[],
-    )
-    time_quality = HeadShoulderTopSignal(
-        symbol="hc2610",
-        timeframe="1h",
-        pattern="head_shoulders_top",
-        left_shoulder=PivotPoint(20, times[1], 100, "high"),
-        left_neck=PivotPoint(35, times[2], 90, "low"),
-        head=PivotPoint(50, times[4], 110, "high"),
-        right_neck=PivotPoint(65, times[5], 90, "low"),
-        right_shoulder=PivotPoint(80, times[7], 103, "high"),
-        neckline_price=90,
-        confirmed=False,
-        score=80,
-        reasons=[],
-    )
-
-    assert deduplicate_overlapping_signals([shoulder_quality, time_quality]) == [shoulder_quality]
-
-
-def test_deduplicate_m2609_head_uses_three_condition_count() -> None:
+def test_deduplicate_m2609_keeps_same_head_with_different_pivots() -> None:
     times = pd.to_datetime([
         "2026-06-08 13:42:00",
         "2026-06-08 14:42:00",
@@ -2309,10 +2241,10 @@ def test_deduplicate_m2609_head_uses_three_condition_count() -> None:
         reasons=[],
     )
 
-    assert deduplicate_overlapping_signals([wider, expected]) == [wider]
+    assert deduplicate_overlapping_signals([wider, expected]) == [expected, wider]
 
 
-def test_deduplicate_prefers_more_winning_conditions_over_total_price_difference() -> None:
+def test_deduplicate_keeps_same_head_with_different_right_side() -> None:
     times = pd.date_range("2026-05-07 22:00:00", periods=10, freq="h")
     left_shoulder = PivotPoint(10, times[0], 5466, "high")
     left_neck = PivotPoint(18, times[1], 5450, "low")
@@ -2345,81 +2277,7 @@ def test_deduplicate_prefers_more_winning_conditions_over_total_price_difference
         score=80,
         reasons=[],
     )
-    assert deduplicate_overlapping_signals([early_right, later_right]) == [early_right]
-
-
-def test_deduplicate_qtr_close_prices_choose_more_symmetric_pattern() -> None:
-    times = pd.date_range("2026-06-14 10:00:00", periods=9, freq="min")
-    head = PivotPoint(50, times[4], 110.0, "high")
-    less_symmetric = HeadShoulderTopSignal(
-        symbol="a2607",
-        timeframe="3m",
-        pattern="head_shoulders_top",
-        left_shoulder=PivotPoint(10, times[0], 100.0, "high"),
-        left_neck=PivotPoint(20, times[1], 90.0, "low"),
-        head=head,
-        right_neck=PivotPoint(60, times[5], 91.0, "low"),
-        right_shoulder=PivotPoint(70, times[6], 101.0, "high"),
-        neckline_price=90.5,
-        confirmed=False,
-        score=90,
-        reasons=[],
-        qtr=2.0,
-    )
-    more_symmetric = HeadShoulderTopSignal(
-        symbol="a2607",
-        timeframe="3m",
-        pattern="head_shoulders_top",
-        left_shoulder=PivotPoint(20, times[1], 100.0, "high"),
-        left_neck=PivotPoint(35, times[2], 90.0, "low"),
-        head=head,
-        right_neck=PivotPoint(65, times[5], 92.0, "low"),
-        right_shoulder=PivotPoint(80, times[7], 102.0, "high"),
-        neckline_price=91.0,
-        confirmed=False,
-        score=80,
-        reasons=[],
-        qtr=2.0,
-    )
-
-    assert deduplicate_overlapping_signals([less_symmetric, more_symmetric]) == [more_symmetric]
-
-
-def test_deduplicate_qtr_outside_limit_compares_specific_price_differences() -> None:
-    times = pd.date_range("2026-06-14 11:00:00", periods=9, freq="min")
-    head = PivotPoint(50, times[4], 110.0, "high")
-    better_prices = HeadShoulderTopSignal(
-        symbol="a2607",
-        timeframe="3m",
-        pattern="head_shoulders_top",
-        left_shoulder=PivotPoint(10, times[0], 100.0, "high"),
-        left_neck=PivotPoint(20, times[1], 90.0, "low"),
-        head=head,
-        right_neck=PivotPoint(60, times[5], 91.0, "low"),
-        right_shoulder=PivotPoint(70, times[6], 103.0, "high"),
-        neckline_price=90.5,
-        confirmed=False,
-        score=80,
-        reasons=[],
-        qtr=1.0,
-    )
-    more_symmetric = HeadShoulderTopSignal(
-        symbol="a2607",
-        timeframe="3m",
-        pattern="head_shoulders_top",
-        left_shoulder=PivotPoint(20, times[1], 100.0, "high"),
-        left_neck=PivotPoint(35, times[2], 90.0, "low"),
-        head=head,
-        right_neck=PivotPoint(65, times[5], 92.0, "low"),
-        right_shoulder=PivotPoint(80, times[7], 104.0, "high"),
-        neckline_price=91.0,
-        confirmed=False,
-        score=105,
-        reasons=[],
-        qtr=1.0,
-    )
-
-    assert deduplicate_overlapping_signals([more_symmetric, better_prices]) == [better_prices]
+    assert deduplicate_overlapping_signals([early_right, later_right]) == [early_right, later_right]
 
 
 def test_deduplicate_inverse_prefers_time_symmetry_before_head_depth() -> None:
@@ -2521,7 +2379,7 @@ def test_deduplicate_uses_neckline_height_after_equal_depth() -> None:
     assert deduplicate_overlapping_signals([lower_neckline, higher_neckline]) == [higher_neckline]
 
 
-def test_deduplicate_inverse_prefers_nearest_left_setup_when_head_matches() -> None:
+def test_deduplicate_inverse_keeps_same_head_with_different_left_setup() -> None:
     times = pd.date_range("2026-06-11 09:00:00", periods=8, freq="h")
     shared_left_neck = PivotPoint(56, times[1], 4712, "high")
     shared_head = PivotPoint(76, times[2], 4644, "low")
@@ -2555,10 +2413,10 @@ def test_deduplicate_inverse_prefers_nearest_left_setup_when_head_matches() -> N
         score=80,
         reasons=[],
     )
-    assert deduplicate_overlapping_signals([broad, near]) == [near]
+    assert deduplicate_overlapping_signals([broad, near]) == [near, broad]
 
 
-def test_deduplicate_inverse_prefers_higher_right_neck_near_left_neck() -> None:
+def test_deduplicate_inverse_keeps_same_head_with_different_right_side() -> None:
     times = pd.date_range("2026-05-15 21:00:00", periods=10, freq="min")
     left_shoulder = PivotPoint(867, times[0], 3442, "low")
     left_neck = PivotPoint(880, times[1], 3449, "high")
@@ -2594,7 +2452,7 @@ def test_deduplicate_inverse_prefers_higher_right_neck_near_left_neck() -> None:
         reasons=[],
     )
 
-    assert deduplicate_overlapping_signals([early_right_neck, higher_right_neck]) == [higher_right_neck]
+    assert deduplicate_overlapping_signals([early_right_neck, higher_right_neck]) == [early_right_neck, higher_right_neck]
 
 
 def test_api_scan() -> None:
