@@ -1985,7 +1985,7 @@ function CurrentSignalFeed({
         {signals.length === 0 ? (
           <p className="empty">当前图暂无头肩顶结果。左侧直接搜索识别到的结果会显示在这里。</p>
         ) : groupedSignals.map((group) => (
-          <details className="message-tree-group current-signal-group" key={group.key} open>
+          <details className="message-tree-group current-signal-group" key={group.key}>
             <summary className="message-tree-summary">
               <span className="message-tree-marker" aria-hidden="true" />
               <div>

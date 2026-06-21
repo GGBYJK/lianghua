@@ -1017,7 +1017,7 @@ def calculate_pattern_score(
     )
     neckline_items = _pattern_neckline_items(df, left_neck, right_neck, right_shoulder, inverse, qtr, qtr_anomaly)
     time_items, ts, tn = _pattern_time_items(left_shoulder, left_neck, head, right_neck, right_shoulder)
-    momentum_items, right_momentum_stronger = _pattern_momentum_items(
+    momentum_items, _ = _pattern_momentum_items(
         df, left_shoulder, left_neck, head, right_neck, right_shoulder, inverse, trigger_index
     )
     trigger_items, trigger_speed_bars = _pattern_trigger_items(
@@ -1045,8 +1045,6 @@ def calculate_pattern_score(
         caps.append(75)
     if dn_qtr is not None and dn_qtr > 2.0:
         caps.append(75)
-    if right_momentum_stronger:
-        caps.append(80)
     final_score = min([raw_score, *caps]) if caps else raw_score
 
     metrics: dict[str, Any] = {
@@ -1725,7 +1723,6 @@ def scan_head_shoulders_top(
     df = add_macd_columns(add_ma_columns(df, config), config)
     pivots = find_structure_pivots_for_timeframe(df, timeframe, config)
     signals: list[HeadShoulderTopSignal] = []
-    used_right_shoulder_setups: set[tuple[int, int, int, int]] = set()
 
     for p1, p2, p3, p4, p5 in iter_timeframe_pattern_candidates(
         df,
@@ -1734,9 +1731,6 @@ def scan_head_shoulders_top(
         ["high", "low", "high", "low", "high"],
         structure_pivots=pivots,
     ):
-        setup_key = (p1.index, p2.index, p3.index, p4.index)
-        if setup_key in used_right_shoulder_setups:
-            continue
         if not passes_head_neck_bar_limit(timeframe, p2, p3, p4):
             continue
         ok, reasons, total_score = validate_head_shoulders_structure([p1, p2, p3, p4, p5], config)
@@ -1790,7 +1784,6 @@ def scan_head_shoulders_top(
         if not _pattern_quality_allows_alert(pattern_result, config):
             continue
 
-        used_right_shoulder_setups.add(setup_key)
         signals.append(HeadShoulderTopSignal(
             symbol=symbol,
             timeframe=timeframe,
