@@ -847,7 +847,7 @@ function App() {
           策略参数
         </AntButton>
       </div>
-      <div className="progress-box">
+      <div className="progress-box market-status-box">
         <div className="progress-meta">
           <span>行情接口</span>
           <strong>{marketSettings?.api_key_set === "是" ? "已配置" : "未配置"}</strong>
@@ -878,9 +878,9 @@ function App() {
           <InputNumber min={30} max={1000} value={marketLimit} onChange={(value) => setMarketLimit(Number(value) || 30)} />
         </label>
       </div>
-      <AntButton type="primary" className="primary-action" loading={loading} disabled={loading} onClick={() => void pollMarket()}>{loading ? "扫描中..." : "获取K线数据"}</AntButton>
+      <AntButton type="primary" className="primary-action" loading={loading} disabled={loading} onClick={() => void pollMarket()}>{loading ? "扫描中..." : activePage === "research" ? "回测" : "获取K线数据"}</AntButton>
       {error && <div className="error-box">{error}</div>}
-      <div className="progress-box">
+      <div className="progress-box scan-status-box">
         <div className="progress-meta">
           <span>{result ? "本次扫描完成" : "等待扫描"}</span>
           <strong>{progress}%</strong>
