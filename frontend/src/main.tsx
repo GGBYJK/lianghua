@@ -144,6 +144,7 @@ type WatchPoolItem = {
 
 type WatchPoolDraft = Omit<WatchPoolItem, "id" | "createdAt">;
 type FeedbackTab = "alerts" | "current" | "feedbacks";
+type WorkspacePage = "monitor" | "pool" | "research";
 type DetailSource =
   | { kind: "alert"; alert: HeadShouldersAlert }
   | { kind: "current"; signal: Signal }
@@ -157,9 +158,9 @@ type ContractSymbolOption = {
 };
 
 const watchPoolImportDemo = [
-  ["品种名称", "监控品种", "监控周期", "检测时长", "头部到颈线最小高度", "颈到肩最小价差", "交易时间段", "监控开关"],
-  ["螺纹钢", "SHFE.rb2605", "1m", "30", "0", "0", "day,night", "开启"],
-  ["热卷", "SHFE.hc2610", "3m", "60", "8", "4", "day", "开启"],
+  ["监控品种", "监控周期", "头部到左颈，头部到右颈最小高度", "左颈到左肩，右颈到右肩最小价差", "启用关键区间趋势评分", "阻挡区间", "支撑区间", "交易时间段", "监控开关"],
+  ["SHFE.rb2605", "1m", "0", "0", "关闭", "", "", "day,night", "开启"],
+  ["SHFE.hc2610", "3m", "8", "4", "开启", "3500-3520", "3300-3320", "day", "开启"],
 ];
 
 const tradingSessionOptions: Array<{ key: TradingSessionKey; label: string; range: string }> = [
@@ -275,6 +276,7 @@ function App() {
   const [watchImportResult, setWatchImportResult] = useState<WatchPoolImportResult | null>(null);
   const [watchImporting, setWatchImporting] = useState(false);
   const [watchTogglePendingIds, setWatchTogglePendingIds] = useState<Set<string>>(new Set());
+  const [activePage, setActivePage] = useState<WorkspacePage>("monitor");
   const [feedbackTab, setFeedbackTab] = useState<FeedbackTab>("alerts");
   const [monitorAlerts, setMonitorAlerts] = useState<HeadShouldersAlertSummary[]>([]);
   const [feedbacks, setFeedbacks] = useState<AlertFeedback[]>([]);
@@ -834,6 +836,147 @@ function App() {
     }
   }
 
+  const controlModule = (
+    <aside className="control-panel">
+      <div className="control-head">
+        <div>
+          <p className="eyebrow">Kline Config</p>
+          <h2>K线图配置</h2>
+        </div>
+        <AntButton className="icon-button" onClick={() => setConfigOpen(true)} aria-label="打开配置">
+          策略参数
+        </AntButton>
+      </div>
+      <div className="progress-box">
+        <div className="progress-meta">
+          <span>行情接口</span>
+          <strong>{marketSettings?.api_key_set === "是" ? "已配置" : "未配置"}</strong>
+        </div>
+        <p>{marketSettings?.provider ?? "行情源"}：{marketSettings?.base_url ?? "未知"}</p>
+        {marketLastFetch && <p>最近拉取：{marketLastFetch}</p>}
+      </div>
+      <div className="market-form">
+        <label>
+          监控品种
+          <Select
+            showSearch
+            value={symbol}
+            options={contractSymbolOptions}
+            optionFilterProp="label"
+            placeholder="输入代码或名称搜索"
+            onChange={setSymbol}
+            optionLabelProp="value"
+            filterOption={(input, option) => String(option?.searchText ?? "").toLowerCase().includes(input.toLowerCase())}
+          />
+        </label>
+        <label>
+          监控周期
+          <Select value={timeframe} onChange={setTimeframe} options={TIMEFRAME_OPTIONS} />
+        </label>
+        <label>
+          拉取K线数量
+          <InputNumber min={30} max={1000} value={marketLimit} onChange={(value) => setMarketLimit(Number(value) || 30)} />
+        </label>
+      </div>
+      <AntButton type="primary" className="primary-action" loading={loading} disabled={loading} onClick={() => void pollMarket()}>{loading ? "扫描中..." : "获取K线数据"}</AntButton>
+      {error && <div className="error-box">{error}</div>}
+      <div className="progress-box">
+        <div className="progress-meta">
+          <span>{result ? "本次扫描完成" : "等待扫描"}</span>
+          <strong>{progress}%</strong>
+        </div>
+        <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
+        {latestBar && <p>最新K线：{formatTime(latestBar.time)}，收盘 {formatPrice(latestBar.close)}，成交量 {latestBar.volume}</p>}
+      </div>
+    </aside>
+  );
+
+  const chartModule = (
+    <section className="result-panel chart-panel">
+      <div className="panel-head">
+        <div>
+          <h2>实时K线结构</h2>
+          <p>{result ? `${result.start_time} - ${result.end_time}` : "选择左侧配置后获取K线，点击右侧消息可定位头肩顶区间。"}</p>
+        </div>
+        <span className="badge">{result?.symbol ?? symbol} / {result?.timeframe ?? timeframe}</span>
+      </div>
+      <KlineChartEcharts
+        candles={result?.chart.candles ?? EMPTY_CANDLES}
+        pivots={result?.chart.pivots ?? EMPTY_PIVOTS}
+        necklines={result?.chart.necklines ?? EMPTY_NECKLINES}
+        signals={selectedSignals}
+        focusedSignal={focusedSignal}
+      />
+      <div className="signal-display-controls">
+        <div>
+          <strong>图上显示</strong>
+          <span>{selectedCount} / {currentSignals.length} 条当前图结果</span>
+        </div>
+        <div className="signal-display-actions">
+          <AntButton className="compact-button" onClick={showAllSignals} disabled={currentSignals.length === 0}>显示全部</AntButton>
+          <AntButton className="compact-button muted-button" onClick={clearSelectedSignals} disabled={selectedCount === 0}>清空</AntButton>
+        </div>
+      </div>
+    </section>
+  );
+
+  const watchPoolModule = (
+    <WatchPool
+      items={watchPool}
+      draft={watchDraft}
+      contractOptions={contractSymbolOptions}
+      editingId={editingWatchId}
+      editorOpen={watchEditorOpen}
+      onDraftChange={setWatchDraft}
+      onNew={startCreateWatch}
+      onSave={saveWatchPoolItem}
+      onCancel={resetWatchDraft}
+      onEdit={startEditWatch}
+      onDelete={removeWatchPoolItem}
+      onToggleEnabled={toggleWatchPoolEnabled}
+      onFocusMessages={focusWatchPoolMessages}
+      onEnableAll={enableAllWatchPool}
+      onDisableAll={disableAllWatchPool}
+      onScanNow={() => void scanWatchPoolNow()}
+      onDownloadTemplate={() => void downloadWatchTemplate()}
+      onImportFile={(file) => void importWatchPoolFile(file)}
+      importOpen={watchImportOpen}
+      onImportOpen={() => setWatchImportOpen(true)}
+      onImportClose={() => setWatchImportOpen(false)}
+      importResult={watchImportResult}
+      importing={watchImporting}
+      togglePendingIds={watchTogglePendingIds}
+    />
+  );
+
+  const renderFeedbackModule = (tab: FeedbackTab, visibleTabs: FeedbackTab[]) => (
+    <aside className="feedback-panel" ref={feedbackPanelRef}>
+      <FeedbackTabs
+        activeTab={tab}
+        visibleTabs={visibleTabs}
+        onTabChange={setFeedbackTab}
+        monitorAlerts={visibleMonitorAlerts}
+        currentSignals={currentSignals}
+        selectedAlertId={selectedAlertId}
+        selectedSignalKey={focusedSignalKey}
+        feedbacks={feedbacks}
+        selectedFeedbackId={selectedFeedbackId}
+        onSelectAlert={(alert) => void selectMonitorAlert(alert)}
+        onOpenAlertDetail={(alert) => void openMonitorAlertDetail(alert)}
+        onOpenScoreDetail={(signal) => setScoreDetailSignal(signal)}
+        onHideAlert={(alertId) => void hideMonitorAlert(alertId)}
+        onFeedbackAlert={startAlertFeedback}
+        monitorScrollTargetSymbol={monitorScrollTargetSymbol}
+        onMonitorScrollComplete={() => setMonitorScrollTargetSymbol(null)}
+        onFocusCurrentSignal={focusCurrentSignal}
+        onSelectCurrentSignal={selectCurrentSignal}
+        onOpenCurrentScoreDetail={(signal) => setScoreDetailSignal(signal)}
+        onSelectFeedback={selectFeedback}
+        onDeleteFeedback={(id) => void removeFeedback(id)}
+      />
+    </aside>
+  );
+
   return (
     <ConfigProvider theme={antTheme}>
     <main className="app-shell">
@@ -842,6 +985,11 @@ function App() {
           <strong>K线头肩形态检测</strong>
           <span>交易分析工作台</span>
         </div>
+        <nav className="top-page-nav" aria-label="页面导航">
+          <button type="button" className={activePage === "monitor" ? "active" : ""} onClick={() => setActivePage("monitor")}>实时监控信息</button>
+          <button type="button" className={activePage === "pool" ? "active" : ""} onClick={() => setActivePage("pool")}>品种检测池子</button>
+          <button type="button" className={activePage === "research" ? "active" : ""} onClick={() => setActivePage("research")}>回测研究</button>
+        </nav>
         <div className="terminal-status">
           <AntButton className="header-feedback-button" onClick={() => setFeedbackListOpen(true)}>&#21453;&#39304;&#21015;&#34920;</AntButton>
           <AntButton className="header-feedback-button" onClick={() => void openContractCenter()}>合约中心</AntButton>
@@ -850,140 +998,23 @@ function App() {
           <span>{marketLastFetch ?? "等待扫描"}</span>
         </div>
       </header>
-      <section className="trading-desk">
-        <aside className="control-panel">
-          <div className="control-head">
-            <div>
-              <p className="eyebrow">Kline Config</p>
-              <h2>K线图配置</h2>
-            </div>
-            <AntButton className="icon-button" onClick={() => setConfigOpen(true)} aria-label="打开配置">
-              策略参数
-            </AntButton>
-          </div>
-          <div className="progress-box">
-            <div className="progress-meta">
-              <span>行情接口</span>
-              <strong>{marketSettings?.api_key_set === "是" ? "已配置" : "未配置"}</strong>
-            </div>
-            <p>{marketSettings?.provider ?? "行情源"}：{marketSettings?.base_url ?? "未知"}</p>
-            {marketLastFetch && <p>最近拉取：{marketLastFetch}</p>}
-          </div>
-          <div className="market-form">
-            <label>
-              监控品种
-              <Select
-                showSearch
-                value={symbol}
-                options={contractSymbolOptions}
-                optionFilterProp="label"
-                placeholder="输入代码或名称搜索"
-                onChange={setSymbol}
-                optionLabelProp="value"
-                filterOption={(input, option) => String(option?.searchText ?? "").toLowerCase().includes(input.toLowerCase())}
-              />
-            </label>
-            <label>
-              监控周期
-              <Select value={timeframe} onChange={setTimeframe} options={TIMEFRAME_OPTIONS} />
-            </label>
-            <label>
-              拉取K线数量
-              <InputNumber min={30} max={1000} value={marketLimit} onChange={(value) => setMarketLimit(Number(value) || 30)} />
-            </label>
-          </div>
-          <AntButton type="primary" className="primary-action" loading={loading} disabled={loading} onClick={() => void pollMarket()}>{loading ? "扫描中..." : "获取K线数据"}</AntButton>
-          {error && <div className="error-box">{error}</div>}
-          <div className="progress-box">
-            <div className="progress-meta">
-              <span>{result ? "本次扫描完成" : "等待扫描"}</span>
-              <strong>{progress}%</strong>
-            </div>
-            <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
-            {latestBar && <p>最新K线：{formatTime(latestBar.time)}，收盘 {formatPrice(latestBar.close)}，成交量 {latestBar.volume}</p>}
-          </div>
-        </aside>
-
-        <section className="main-stage">
-          <section className="result-panel chart-panel">
-            <div className="panel-head">
-              <div>
-                <h2>实时K线结构</h2>
-                <p>{result ? `${result.start_time} - ${result.end_time}` : "选择左侧配置后获取K线，点击右侧消息可定位头肩顶区间。"} </p>
-              </div>
-              <span className="badge">{result?.symbol ?? symbol} / {result?.timeframe ?? timeframe}</span>
-            </div>
-            <KlineChartEcharts
-              candles={result?.chart.candles ?? EMPTY_CANDLES}
-              pivots={result?.chart.pivots ?? EMPTY_PIVOTS}
-              necklines={result?.chart.necklines ?? EMPTY_NECKLINES}
-              signals={selectedSignals}
-              focusedSignal={focusedSignal}
-            />
-            <div className="signal-display-controls">
-              <div>
-                <strong>图上显示</strong>
-                <span>{selectedCount} / {currentSignals.length} 条当前图结果</span>
-              </div>
-              <div className="signal-display-actions">
-                <AntButton className="compact-button" onClick={showAllSignals} disabled={currentSignals.length === 0}>显示全部</AntButton>
-                <AntButton className="compact-button muted-button" onClick={clearSelectedSignals} disabled={selectedCount === 0}>清空</AntButton>
-              </div>
-            </div>
-          </section>
-
-        <WatchPool
-          items={watchPool}
-          draft={watchDraft}
-          contractOptions={contractSymbolOptions}
-          editingId={editingWatchId}
-        editorOpen={watchEditorOpen}
-        onDraftChange={setWatchDraft}
-        onNew={startCreateWatch}
-        onSave={saveWatchPoolItem}
-        onCancel={resetWatchDraft}
-        onEdit={startEditWatch}
-          onDelete={removeWatchPoolItem}
-          onToggleEnabled={toggleWatchPoolEnabled}
-          onFocusMessages={focusWatchPoolMessages}
-          onEnableAll={enableAllWatchPool}
-          onDisableAll={disableAllWatchPool}
-          onScanNow={() => void scanWatchPoolNow()}
-          onDownloadTemplate={() => void downloadWatchTemplate()}
-        onImportFile={(file) => void importWatchPoolFile(file)}
-        importOpen={watchImportOpen}
-        onImportOpen={() => setWatchImportOpen(true)}
-        onImportClose={() => setWatchImportOpen(false)}
-          importResult={watchImportResult}
-          importing={watchImporting}
-          togglePendingIds={watchTogglePendingIds}
-        />
-        </section>
-
-        <aside className="feedback-panel" ref={feedbackPanelRef}>
-          <FeedbackTabs
-            activeTab={feedbackTab}
-            onTabChange={setFeedbackTab}
-            monitorAlerts={visibleMonitorAlerts}
-            currentSignals={currentSignals}
-            selectedAlertId={selectedAlertId}
-            selectedSignalKey={focusedSignalKey}
-            feedbacks={feedbacks}
-            selectedFeedbackId={selectedFeedbackId}
-            onSelectAlert={(alert) => void selectMonitorAlert(alert)}
-            onOpenAlertDetail={(alert) => void openMonitorAlertDetail(alert)}
-            onOpenScoreDetail={(signal) => setScoreDetailSignal(signal)}
-            onHideAlert={(alertId) => void hideMonitorAlert(alertId)}
-            onFeedbackAlert={startAlertFeedback}
-            monitorScrollTargetSymbol={monitorScrollTargetSymbol}
-            onMonitorScrollComplete={() => setMonitorScrollTargetSymbol(null)}
-            onFocusCurrentSignal={focusCurrentSignal}
-            onSelectCurrentSignal={selectCurrentSignal}
-            onOpenCurrentScoreDetail={(signal) => setScoreDetailSignal(signal)}
-            onSelectFeedback={selectFeedback}
-            onDeleteFeedback={(id) => void removeFeedback(id)}
-          />
-        </aside>
+      <section className={`trading-desk page-${activePage}`}>
+        {activePage === "monitor" && (
+          <>
+            <section className="monitor-stage">{chartModule}</section>
+            {renderFeedbackModule("alerts", ["alerts"])}
+          </>
+        )}
+        {activePage === "pool" && (
+          <section className="pool-page-stage">{watchPoolModule}</section>
+        )}
+        {activePage === "research" && (
+          <>
+            {controlModule}
+            <section className="main-stage research-main-stage">{chartModule}</section>
+            {renderFeedbackModule("current", ["current"])}
+          </>
+        )}
       </section>
 
       {scoreDetailSignal && (
@@ -1513,6 +1544,7 @@ const WatchPool = React.forwardRef<HTMLElement, {
 
 function FeedbackTabs({
   activeTab,
+  visibleTabs = ["alerts", "current"],
   onTabChange,
   monitorAlerts,
   currentSignals,
@@ -1534,6 +1566,7 @@ function FeedbackTabs({
   onDeleteFeedback,
 }: {
   activeTab: FeedbackTab;
+  visibleTabs?: FeedbackTab[];
   onTabChange: (tab: FeedbackTab) => void;
   monitorAlerts: HeadShouldersAlertSummary[];
   currentSignals: Signal[];
@@ -1554,8 +1587,9 @@ function FeedbackTabs({
   onSelectFeedback: (feedback: AlertFeedback) => void;
   onDeleteFeedback: (id: string) => void;
 }) {
+  const displayTab = visibleTabs.includes(activeTab) ? activeTab : visibleTabs[0] ?? activeTab;
   return (
-    <section className="message-panel feedback-tabs-panel">
+    <section className={`message-panel feedback-tabs-panel ${visibleTabs.length === 1 ? "single-tab" : ""}`}>
       <div className="feedback-head">
         <div>
           <p className="eyebrow">&#21453;&#39304;</p>
@@ -1563,11 +1597,13 @@ function FeedbackTabs({
         </div>
         <span className="badge">{monitorAlerts.length} &#26465;&#30417;&#25511;&#28040;&#24687;</span>
       </div>
-      <div className="feedback-tabs" role="tablist">
-        <button type="button" className={activeTab === "alerts" ? "active" : ""} onClick={() => onTabChange("alerts")}>&#30417;&#25511;&#28040;&#24687;</button>
-        <button type="button" className={activeTab === "current" ? "active" : ""} onClick={() => onTabChange("current")}>&#24403;&#21069;&#22270;&#32467;&#26524;</button>
-      </div>
-      {activeTab === "alerts" && (
+      {visibleTabs.length > 1 && (
+        <div className="feedback-tabs" role="tablist">
+          {visibleTabs.includes("alerts") && <button type="button" className={displayTab === "alerts" ? "active" : ""} onClick={() => onTabChange("alerts")}>&#30417;&#25511;&#28040;&#24687;</button>}
+          {visibleTabs.includes("current") && <button type="button" className={displayTab === "current" ? "active" : ""} onClick={() => onTabChange("current")}>&#24403;&#21069;&#22270;&#32467;&#26524;</button>}
+        </div>
+      )}
+      {displayTab === "alerts" && (
         <MonitorAlertFeed
           alerts={monitorAlerts}
           selectedId={selectedAlertId}
@@ -1580,7 +1616,7 @@ function FeedbackTabs({
           onTargetHandled={onMonitorScrollComplete}
         />
       )}
-      {activeTab === "current" && (
+      {displayTab === "current" && (
         <CurrentSignalFeed
           signals={currentSignals}
           selectedKey={selectedSignalKey}
@@ -1589,7 +1625,7 @@ function FeedbackTabs({
           onOpenScoreDetail={onOpenCurrentScoreDetail}
         />
       )}
-      {activeTab === "feedbacks" && (
+      {displayTab === "feedbacks" && (
         <FeedbackFeed
           feedbacks={feedbacks}
           selectedId={selectedFeedbackId}

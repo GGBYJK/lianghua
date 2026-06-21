@@ -3818,6 +3818,26 @@ textarea.ant-input {
 }
 
 @media (max-width: 1180px) {
+  .terminal-header {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: 44px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .top-page-nav,
+  .terminal-status {
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .trading-desk.page-monitor,
+  .trading-desk.page-research {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
   .pool-head {
     grid-template-columns: 1fr;
   }
@@ -5855,6 +5875,81 @@ button:disabled {
 
 .pool-zone-toggle {
   grid-column: 1 / -1;
+}
+
+.terminal-header {
+  display: grid;
+  grid-template-columns: minmax(180px, auto) minmax(360px, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+}
+
+.terminal-title,
+.terminal-status,
+.top-page-nav {
+  display: flex;
+  align-items: center;
+}
+
+.top-page-nav {
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.top-page-nav button {
+  min-height: 30px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.top-page-nav button:hover {
+  background: rgba(0, 102, 204, 0.08);
+  color: var(--primary);
+}
+
+.top-page-nav button.active {
+  border-color: rgba(0, 102, 204, 0.2);
+  background: var(--primary);
+  color: #ffffff;
+}
+
+.trading-desk.page-monitor {
+  grid-template-columns: minmax(620px, 1fr) minmax(300px, 380px);
+}
+
+.trading-desk.page-pool {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.trading-desk.page-research {
+  grid-template-columns: minmax(280px, 340px) minmax(600px, 1fr) minmax(300px, 380px);
+}
+
+.monitor-stage,
+.pool-page-stage {
+  min-width: 0;
+  min-height: 0;
+}
+
+.monitor-stage .chart-panel,
+.pool-page-stage .pool-panel {
+  height: 100%;
+}
+
+.page-pool .pool-panel {
+  overflow: hidden;
+}
+
+.feedback-tabs-panel.single-tab {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .message-card-actions .message-detail-button,
