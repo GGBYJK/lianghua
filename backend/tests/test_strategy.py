@@ -2567,3 +2567,45 @@ def test_market_scan_fetches_daily_klines_for_combined_score(monkeypatch) -> Non
     assert ("5m", 120) in calls
     assert ("1h", 120) in calls
     assert ("1d", 120) in calls
+
+
+def test_scan_response_filters_same_head_same_timeframe_by_increasing_pattern_score() -> None:
+    from app import main
+
+    times = pd.date_range("2026-06-21 09:00:00", periods=8, freq="min")
+    left_shoulder = PivotPoint(0, times[0], 100, "high")
+    left_neck = PivotPoint(1, times[1], 92, "low")
+    head = PivotPoint(2, times[2], 110, "high")
+    right_neck = PivotPoint(3, times[3], 93, "low")
+
+    def signal(timeframe: str, right_index: int, pattern_score: int) -> HeadShoulderTopSignal:
+        return HeadShoulderTopSignal(
+            symbol="SHFE.sp2609",
+            timeframe=timeframe,
+            pattern="head_shoulders_top",
+            alert_type="right_shoulder_confirmed",
+            left_shoulder=left_shoulder,
+            left_neck=left_neck,
+            head=head,
+            right_neck=right_neck,
+            right_shoulder=PivotPoint(right_index, times[right_index], 104 + right_index, "high"),
+            neckline_price=94,
+            confirmed=False,
+            score=0,
+            pattern_score=pattern_score,
+            reasons=[],
+        )
+
+    kept = main.filter_scan_signals_by_head_score_progression([
+        signal("5m", 4, 80),
+        signal("5m", 5, 80),
+        signal("5m", 6, 79),
+        signal("5m", 7, 81),
+        signal("3m", 5, 80),
+    ])
+
+    assert [(item.timeframe, item.right_shoulder.index, item.pattern_score) for item in kept] == [
+        ("5m", 4, 80),
+        ("5m", 7, 81),
+        ("3m", 5, 80),
+    ]

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from app.alert_keys import build_signal_unique_key
 from app.monitor import build_watch_pool_config_overrides, build_wechat_workbot_content, is_in_trading_session, should_emit_signal_for_item
 from app.watch_pool_store import (
+    _alert_beats_existing_head_score,
     _alert_structure_exists,
     _deduplicate_alert_summaries,
     _refresh_existing_alert_score_if_missing,
@@ -142,6 +143,106 @@ def test_alert_structure_exists_matches_legacy_unique_key_rows() -> None:
 
     assert _alert_structure_exists(cursor, inserted_alert)
     assert cursor.params == ("CZCE.SA609", "3m", "inverse_head_shoulders")
+
+
+def test_same_head_same_timeframe_alert_requires_higher_pattern_score() -> None:
+    existing_signal = {
+        "symbol": "CZCE.SA609",
+        "timeframe": "3m",
+        "pattern": "inverse_head_shoulders",
+        "head": {"time": "2026-06-02T21:33:00", "price": 4644},
+        "pattern_score": 82,
+    }
+    new_alert = {
+        "symbol": "CZCE.SA609",
+        "timeframe": "3m",
+        "pattern": "inverse_head_shoulders",
+        "signal_payload": {
+            **existing_signal,
+            "pattern_score": 82,
+        },
+    }
+
+    class Cursor:
+        def execute(self, sql, params) -> None:
+            self.params = params
+
+        def fetchall(self):
+            return [{"signal_payload": json.dumps(existing_signal), "unique_key": "existing"}]
+
+    cursor = Cursor()
+
+    assert not _alert_beats_existing_head_score(cursor, new_alert)
+    assert cursor.params == ("CZCE.SA609", "3m", "inverse_head_shoulders")
+
+    new_alert["signal_payload"]["pattern_score"] = 83
+    assert _alert_beats_existing_head_score(cursor, new_alert)
+
+
+def test_same_head_different_timeframe_does_not_share_pattern_score_gate() -> None:
+    existing_signal = {
+        "symbol": "CZCE.SA609",
+        "timeframe": "3m",
+        "pattern": "inverse_head_shoulders",
+        "head": {"time": "2026-06-02T21:33:00", "price": 4644},
+        "pattern_score": 82,
+    }
+    new_alert = {
+        "symbol": "CZCE.SA609",
+        "timeframe": "5m",
+        "pattern": "inverse_head_shoulders",
+        "signal_payload": {
+            **existing_signal,
+            "timeframe": "5m",
+            "pattern_score": 82,
+        },
+    }
+
+    class Cursor:
+        def execute(self, sql, params) -> None:
+            self.params = params
+
+        def fetchall(self):
+            return [{"signal_payload": json.dumps(existing_signal), "unique_key": "existing"}]
+
+    cursor = Cursor()
+
+    assert _alert_beats_existing_head_score(cursor, new_alert)
+    assert cursor.params == ("CZCE.SA609", "5m", "inverse_head_shoulders")
+
+
+def test_same_head_score_gate_is_separate_per_pattern() -> None:
+    existing_signal = {
+        "symbol": "SHFE.sp2609",
+        "timeframe": "3m",
+        "pattern": "head_shoulders_top",
+        "head": {"time": "2026-06-02T21:33:00", "price": 4908},
+        "pattern_score": 90,
+    }
+    new_alert = {
+        "symbol": "SHFE.sp2609",
+        "timeframe": "3m",
+        "pattern": "inverse_head_shoulders",
+        "signal_payload": {
+            "symbol": "SHFE.sp2609",
+            "timeframe": "3m",
+            "pattern": "inverse_head_shoulders",
+            "head": {"time": "2026-06-02T21:33:00", "price": 4908},
+            "pattern_score": 70,
+        },
+    }
+
+    class Cursor:
+        def execute(self, sql, params) -> None:
+            self.params = params
+
+        def fetchall(self):
+            return [{"signal_payload": json.dumps(existing_signal), "unique_key": "existing"}]
+
+    cursor = Cursor()
+
+    assert _alert_beats_existing_head_score(cursor, new_alert)
+    assert cursor.params == ("SHFE.sp2609", "3m", "inverse_head_shoulders")
 
 
 def test_score_detail_detection_handles_new_and_legacy_payloads() -> None:

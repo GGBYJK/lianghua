@@ -20,7 +20,7 @@ from .csv_loader import read_csv_bytes
 from .market_client import MarketApiError, fetch_kline_from_market, fetch_market_symbols, fetch_tqsdk_contracts, get_market_settings, shutdown_market_clients
 from .monitor import monitor_watch_pool_loop, scan_watch_pool_once
 from .schemas import AlertFeedbackCreate, AlertFeedbackResponse, ContractCenterItemResponse, ContractCenterRefreshResponse, ContractCenterUpdateRequest, ContractCenterUpdateResponse, DefaultConfigResponse, HeadShouldersAlertResponse, HeadShouldersAlertSummaryResponse, HealthResponse, ScanResponse, WatchPoolImportResponse, WatchPoolItemCreate, WatchPoolItemResponse, WatchPoolItemUpdate
-from .strategy import add_macd_columns, add_ma_columns, find_pivots, prepare_chart_payload, scan_head_shoulders
+from .strategy import HeadShoulderTopSignal, add_macd_columns, add_ma_columns, find_pivots, prepare_chart_payload, scan_head_shoulders
 from .watch_pool_import import ImportIssue, parse_watch_pool_excel
 from .watch_pool_store import (
     WatchPoolStoreError,
@@ -127,6 +127,33 @@ def parse_overrides(config_overrides: str | None) -> dict[str, Any] | None:
     return overrides
 
 
+def _scan_signal_pattern_score(signal: HeadShoulderTopSignal) -> int:
+    return int(signal.pattern_score) if signal.pattern_score is not None else -1
+
+
+def _scan_signal_head_key(signal: HeadShoulderTopSignal) -> tuple[str, str, str, str]:
+    return (
+        signal.symbol,
+        signal.timeframe,
+        signal.pattern,
+        f"{float(signal.head.price):.8f}",
+    )
+
+
+def filter_scan_signals_by_head_score_progression(signals: list[HeadShoulderTopSignal]) -> list[HeadShoulderTopSignal]:
+    best_score_by_head: dict[tuple[str, str, str, str], int] = {}
+    filtered: list[HeadShoulderTopSignal] = []
+    for signal in signals:
+        key = _scan_signal_head_key(signal)
+        score = _scan_signal_pattern_score(signal)
+        best_score = best_score_by_head.get(key)
+        if best_score is not None and score <= best_score:
+            continue
+        best_score_by_head[key] = score
+        filtered.append(signal)
+    return filtered
+
+
 def build_scan_response(
     df: pd.DataFrame,
     symbol: str,
@@ -145,6 +172,7 @@ def build_scan_response(
         daily_df["datetime"] = pd.to_datetime(daily_df["datetime"])
     config = load_head_shoulder_config(symbol=symbol, timeframe=timeframe, overrides=overrides)
     signals = scan_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config, hourly_df=hourly_df, daily_df=daily_df)
+    signals = filter_scan_signals_by_head_score_progression(signals)
     enriched_df = add_macd_columns(add_ma_columns(df, config), config)
     pivots = find_pivots(enriched_df, left=config.pivot_left, right=config.pivot_right)
     chart = prepare_chart_payload(enriched_df, pivots, signals, config)

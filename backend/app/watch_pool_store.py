@@ -532,12 +532,60 @@ def _deduplicate_alert_summaries(alerts: list[dict[str, Any]]) -> list[dict[str,
     selected: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
     for alert in alerts:
-        key = build_alert_structure_key(alert)
+        key = f"{build_alert_structure_key(alert)}|pattern_score:{_alert_pattern_score(alert)}"
         if key in seen_keys:
             continue
         seen_keys.add(key)
         selected.append(alert)
     return selected
+
+
+def _signal_from_alert(alert: dict[str, Any]) -> dict[str, Any]:
+    signal = alert.get("signal_payload", alert)
+    if isinstance(signal, str):
+        try:
+            signal = json.loads(signal)
+        except json.JSONDecodeError:
+            return alert
+    return signal if isinstance(signal, dict) else alert
+
+
+def _alert_pattern_score(alert: dict[str, Any]) -> int:
+    signal = _signal_from_alert(alert)
+    value = signal.get("pattern_score")
+    if value is None:
+        return -1
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _format_head_price(value: Any) -> str | None:
+    try:
+        return f"{float(value):.8f}"
+    except (TypeError, ValueError):
+        return None
+
+
+def _alert_head_progression_key(alert: dict[str, Any]) -> str:
+    signal = _signal_from_alert(alert)
+    head = signal.get("head") if isinstance(signal.get("head"), dict) else {}
+    head_price = _format_head_price(head.get("price"))
+    head_identity = f"price:{head_price}" if head_price is not None else f"time:{head.get('time', '')}"
+    return "|".join(
+        str(part)
+        for part in [
+            signal.get("symbol", alert.get("symbol", "")),
+            signal.get("timeframe", alert.get("timeframe", "")),
+            signal.get("pattern", alert.get("pattern", "")),
+            head_identity,
+        ]
+    )
+
+
+def _storage_unique_key(alert: dict[str, Any]) -> str:
+    return f"{alert['unique_key']}|pattern_score:{_alert_pattern_score(alert)}"
 
 
 def _signal_has_score_details(signal: Any) -> bool:
@@ -592,6 +640,40 @@ def _alert_structure_exists(cursor: Any, alert: dict[str, Any]) -> bool:
     return _matching_alert_structure(cursor, alert) is not None
 
 
+def _max_existing_pattern_score_for_head(cursor: Any, alert: dict[str, Any]) -> int | None:
+    target_key = _alert_head_progression_key(alert)
+    cursor.execute(
+        """
+        SELECT id, unique_key, signal_payload
+        FROM head_shoulders_alerts
+        WHERE hidden_at IS NULL
+          AND symbol = %s
+          AND timeframe = %s
+          AND pattern = %s
+        ORDER BY created_at DESC, id DESC
+        LIMIT 300
+        """,
+        (
+            alert["symbol"],
+            alert["timeframe"],
+            alert["pattern"],
+        ),
+    )
+    scores = [
+        _alert_pattern_score(row)
+        for row in cursor.fetchall()
+        if _alert_head_progression_key(row) == target_key
+    ]
+    return max(scores) if scores else None
+
+
+def _alert_beats_existing_head_score(cursor: Any, alert: dict[str, Any]) -> bool:
+    existing_score = _max_existing_pattern_score_for_head(cursor, alert)
+    if existing_score is None:
+        return True
+    return _alert_pattern_score(alert) > existing_score
+
+
 def _refresh_existing_alert_score_if_missing(cursor: Any, existing: dict[str, Any], alert: dict[str, Any]) -> None:
     if _signal_has_score_details(existing.get("signal_payload")):
         return
@@ -622,6 +704,7 @@ def insert_head_shoulders_alert_if_new(alert: dict[str, Any]) -> bool:
         existing = _matching_alert_structure(cursor, alert)
         if existing is not None:
             _refresh_existing_alert_score_if_missing(cursor, existing, alert)
+        if not _alert_beats_existing_head_score(cursor, alert):
             return False
         cursor.execute(
             """
@@ -639,7 +722,7 @@ def insert_head_shoulders_alert_if_new(alert: dict[str, Any]) -> bool:
                 alert["alert_type"],
                 alert["score"],
                 alert["message"],
-                alert["unique_key"],
+                _storage_unique_key(alert),
                 json.dumps(alert["signal_payload"], ensure_ascii=False),
                 json.dumps(alert["chart_payload"], ensure_ascii=False),
             ),
