@@ -1662,7 +1662,10 @@ function MonitorAlertFeed({
   const groupedAlerts = useMemo(() => {
     const groups = new Map<string, HeadShouldersAlertSummary[]>();
     for (const alert of alerts) {
-      const key = alert.symbol || "UNKNOWN";
+      const symbol = alert.symbol || "UNKNOWN";
+      const headPrice = Number(alert.signal_payload.head.price);
+      const headKey = Number.isFinite(headPrice) ? headPrice.toFixed(8) : "UNKNOWN_HEAD";
+      const key = `${symbol}::${headKey}`;
       const group = groups.get(key);
       if (group) {
         group.push(alert);
@@ -1670,27 +1673,35 @@ function MonitorAlertFeed({
         groups.set(key, [alert]);
       }
     }
-    return Array.from(groups, ([symbol, items]) => ({
-      symbol,
-      alerts: items,
-      confirmedCount: items.filter((alert) => alert.alert_type === "neckline_break").length,
-      latestTime: formatMessageTreeLatestTime(items.reduce<string | null>((latest, alert) => {
-        if (!alert.created_at) {
-          return latest;
-        }
-        if (!latest) {
-          return alert.created_at;
-        }
-        return alert.created_at > latest ? alert.created_at : latest;
-      }, null)),
-    }));
+    return Array.from(groups, ([key, items]) => {
+      const first = items[0];
+      const timeframes = Array.from(new Set(items.map((alert) => alert.timeframe))).join(" / ");
+      return {
+        key,
+        symbol: first.symbol || "UNKNOWN",
+        headPrice: first.signal_payload.head.price,
+        timeframes,
+        alerts: items,
+        confirmedCount: items.filter((alert) => alert.alert_type === "neckline_break").length,
+        latestTime: formatMessageTreeLatestTime(items.reduce<string | null>((latest, alert) => {
+          if (!alert.created_at) {
+            return latest;
+          }
+          if (!latest) {
+            return alert.created_at;
+          }
+          return alert.created_at > latest ? alert.created_at : latest;
+        }, null)),
+      };
+    });
   }, [alerts]);
 
   useEffect(() => {
     if (!targetSymbol) {
       return;
     }
-    const target = groupRefs.current[targetSymbol];
+    const targetGroup = groupedAlerts.find((group) => group.symbol === targetSymbol);
+    const target = targetGroup ? groupRefs.current[targetGroup.key] : null;
     if (!target) {
       return;
     }
@@ -1708,16 +1719,16 @@ function MonitorAlertFeed({
       ) : groupedAlerts.map((group) => (
             <details
               className="message-tree-group"
-              key={group.symbol}
+              key={group.key}
               ref={(element) => {
-                groupRefs.current[group.symbol] = element;
+                groupRefs.current[group.key] = element;
               }}
             >
               <summary className="message-tree-summary">
                 <span className="message-tree-marker" aria-hidden="true" />
                 <div>
-                  <strong>{group.symbol}</strong>
-                  <small>{group.alerts.length} &#26465;&#30417;&#25511;&#28040;&#24687;</small>
+                  <strong>{group.symbol} 头部价格：{formatPrice(group.headPrice)}</strong>
+                  <small>{group.alerts.length} &#26465;&#30417;&#25511;&#28040;&#24687; · {group.timeframes}</small>
                 </div>
                 <span className="message-tree-summary-meta">
                   <span className="message-tree-latest-time">
