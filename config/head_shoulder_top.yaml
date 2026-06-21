@@ -31,6 +31,11 @@ default:
   enable_score: true
   min_score_to_alert: 70
   min_pattern_score_to_alert: 60
+  enable_key_zone_trend_score: false
+  resistance_zone_min: 0
+  resistance_zone_max: 0
+  support_zone_min: 0
+  support_zone_max: 0
 
 timeframes:
   1m:

@@ -342,6 +342,12 @@ def build_watch_pool_config_overrides(item: dict[str, Any]) -> dict[str, Any] | 
         overrides["min_head_to_neck_height"] = float(item["min_head_to_neck_height"])
     if float(item.get("min_shoulder_to_neck_height", 0)) > 0:
         overrides["min_shoulder_to_neck_height"] = float(item["min_shoulder_to_neck_height"])
+    if item.get("enable_key_zone_trend_score"):
+        overrides["enable_key_zone_trend_score"] = True
+        overrides["resistance_zone_min"] = float(item.get("resistance_zone_min", 0) or 0)
+        overrides["resistance_zone_max"] = float(item.get("resistance_zone_max", 0) or 0)
+        overrides["support_zone_min"] = float(item.get("support_zone_min", 0) or 0)
+        overrides["support_zone_max"] = float(item.get("support_zone_max", 0) or 0)
     return overrides or None
 
 

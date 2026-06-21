@@ -1524,6 +1524,62 @@ def test_combined_trend_score_adds_hourly_and_daily_scores_to_one_hundred() -> N
     assert "日线评分：50/50" in reasons
 
 
+def test_key_zone_trend_score_gives_hourly_full_score_for_top_resistance_touch() -> None:
+    times = pd.date_range("2026-06-01 09:00:00", periods=12, freq="h")
+    hourly = pd.DataFrame({
+        "datetime": times,
+        "open": [100.0] * len(times),
+        "high": [105.0, 105.0, 105.0, 105.0, 111.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0],
+        "low": [95.0] * len(times),
+        "close": [100.0] * len(times),
+        "volume": [1.0] * len(times),
+    })
+    config = HeadShoulderTopConfig(
+        enable_key_zone_trend_score=True,
+        resistance_zone_min=110.0,
+        resistance_zone_max=112.0,
+    )
+
+    score, reasons = calculate_combined_trend_score(
+        hourly,
+        bullish=False,
+        signal_time=times[6],
+        head_time=times[6],
+        config=config,
+    )
+
+    assert score == 50
+    assert any("阻挡区间" in reason for reason in reasons)
+
+
+def test_key_zone_trend_score_gives_hourly_full_score_for_inverse_support_touch() -> None:
+    times = pd.date_range("2026-06-01 09:00:00", periods=12, freq="h")
+    hourly = pd.DataFrame({
+        "datetime": times,
+        "open": [100.0] * len(times),
+        "high": [105.0] * len(times),
+        "low": [95.0, 95.0, 95.0, 95.0, 89.5, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0],
+        "close": [100.0] * len(times),
+        "volume": [1.0] * len(times),
+    })
+    config = HeadShoulderTopConfig(
+        enable_key_zone_trend_score=True,
+        support_zone_min=88.0,
+        support_zone_max=90.0,
+    )
+
+    score, reasons = calculate_combined_trend_score(
+        hourly,
+        bullish=True,
+        signal_time=times[6],
+        head_time=times[6],
+        config=config,
+    )
+
+    assert score == 50
+    assert any("支撑区间" in reason for reason in reasons)
+
+
 def test_trend_label_maps_score_by_pattern_direction() -> None:
     assert trend_label_from_score(85, bullish=False) == "强空头趋势"
     assert trend_label_from_score(70, bullish=False) == "空头趋势"

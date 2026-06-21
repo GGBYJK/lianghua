@@ -36,6 +36,11 @@ class WatchPoolItemBase(BaseModel):
     trading_sessions: str = Field(default="day,night", max_length=40)
     min_head_to_neck_height: float = Field(default=0.0, ge=0.0)
     min_shoulder_to_neck_height: float = Field(default=0.0, ge=0.0)
+    enable_key_zone_trend_score: bool = False
+    resistance_zone_min: float = Field(default=0.0, ge=0.0)
+    resistance_zone_max: float = Field(default=0.0, ge=0.0)
+    support_zone_min: float = Field(default=0.0, ge=0.0)
+    support_zone_max: float = Field(default=0.0, ge=0.0)
 
 
 class WatchPoolItemCreate(WatchPoolItemBase):

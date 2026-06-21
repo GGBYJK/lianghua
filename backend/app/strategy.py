@@ -54,6 +54,11 @@ class HeadShoulderTopConfig:
     enable_score: bool = True
     min_score_to_alert: int = 70
     min_pattern_score_to_alert: int = 60
+    enable_key_zone_trend_score: bool = False
+    resistance_zone_min: float = 0.0
+    resistance_zone_max: float = 0.0
+    support_zone_min: float = 0.0
+    support_zone_max: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -441,13 +446,62 @@ def _score_named_timeframe(
     return score, [f"{name_cn}评分：{score}/50", *reasons]
 
 
+def _normalized_zone(lower: float, upper: float) -> tuple[float, float] | None:
+    if not math.isfinite(lower) or not math.isfinite(upper):
+        return None
+    if lower <= 0 and upper <= 0:
+        return None
+    return min(lower, upper), max(lower, upper)
+
+
+def _hourly_key_zone_trend_override(
+    hourly_df: pd.DataFrame | None,
+    bullish: bool,
+    head_time: pd.Timestamp | None,
+    config: HeadShoulderTopConfig | None,
+) -> tuple[int, list[str]] | None:
+    if hourly_df is None or head_time is None or config is None or not config.enable_key_zone_trend_score:
+        return None
+
+    zone = (
+        _normalized_zone(config.support_zone_min, config.support_zone_max)
+        if bullish
+        else _normalized_zone(config.resistance_zone_min, config.resistance_zone_max)
+    )
+    if zone is None:
+        return None
+
+    score_df = hourly_df.copy().reset_index(drop=True)
+    score_df["datetime"] = pd.to_datetime(score_df["datetime"])
+    head_hour_index = _timeframe_score_index(score_df, head_time)
+    if head_hour_index is None:
+        return None
+
+    start = max(0, head_hour_index - 5)
+    end = min(len(score_df) - 1, head_hour_index + 5)
+    window = score_df.loc[start:end]
+    zone_min, zone_max = zone
+    touched = bool(((window["high"].astype(float) >= zone_min) & (window["low"].astype(float) <= zone_max)).any())
+    if not touched:
+        return None
+
+    label = "支撑区间" if bullish else "阻挡区间"
+    return 50, ["小时线评分：50/50", f"头部所在小时线前后各5根触碰{label} {zone_min:.4f}-{zone_max:.4f}，小时线趋势评分直接满分"]
+
+
 def calculate_combined_trend_score(
     hourly_df: pd.DataFrame | None,
     bullish: bool,
     signal_time: pd.Timestamp | None = None,
     daily_df: pd.DataFrame | None = None,
+    config: HeadShoulderTopConfig | None = None,
+    head_time: pd.Timestamp | None = None,
 ) -> tuple[int, list[str]]:
-    hourly_score, hourly_reasons = _score_named_timeframe(hourly_df, "Hourly", bullish, signal_time)
+    hourly_override = _hourly_key_zone_trend_override(hourly_df, bullish, head_time, config)
+    if hourly_override is not None:
+        hourly_score, hourly_reasons = hourly_override
+    else:
+        hourly_score, hourly_reasons = _score_named_timeframe(hourly_df, "Hourly", bullish, signal_time)
     daily_score, daily_reasons = _score_named_timeframe(daily_df, "Daily", bullish, signal_time)
     return hourly_score + daily_score, [*hourly_reasons, *daily_reasons]
 
@@ -1700,6 +1754,8 @@ def scan_head_shoulders_top(
             bullish=False,
             signal_time=p5.time,
             daily_df=daily_df,
+            config=config,
+            head_time=p3.time,
         )
         total_score += trend_score
         reasons.extend(trend_reasons)
@@ -1850,6 +1906,8 @@ def scan_inverse_head_shoulders(
             bullish=True,
             signal_time=p5.time,
             daily_df=daily_df,
+            config=config,
+            head_time=p3.time,
         )
         total_score += trend_score
         reasons.extend(trend_reasons)

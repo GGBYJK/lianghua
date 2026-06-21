@@ -130,6 +130,11 @@ export type WatchPoolItem = {
   trading_sessions: string;
   min_head_to_neck_height: number;
   min_shoulder_to_neck_height: number;
+  enable_key_zone_trend_score: boolean;
+  resistance_zone_min: number;
+  resistance_zone_max: number;
+  support_zone_min: number;
+  support_zone_max: number;
   monitor_started_at: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -144,6 +149,11 @@ export type WatchPoolPayload = {
   trading_sessions: string;
   min_head_to_neck_height: number;
   min_shoulder_to_neck_height: number;
+  enable_key_zone_trend_score: boolean;
+  resistance_zone_min: number;
+  resistance_zone_max: number;
+  support_zone_min: number;
+  support_zone_max: number;
 };
 
 export type WatchPoolImportIssue = {

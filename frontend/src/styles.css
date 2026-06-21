@@ -5853,6 +5853,10 @@ button:disabled {
   border-left-color: var(--primary);
 }
 
+.pool-zone-toggle {
+  grid-column: 1 / -1;
+}
+
 .message-card-actions .message-detail-button,
 .monitor-message-footer .message-detail-button {
   display: inline-flex;

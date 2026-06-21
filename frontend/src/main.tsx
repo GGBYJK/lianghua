@@ -136,6 +136,9 @@ type WatchPoolItem = {
   tradingSessions: string;
   minHeadToNeckHeight: number;
   minShoulderToNeckHeight: number;
+  enableKeyZoneTrendScore: boolean;
+  resistanceZone: string;
+  supportZone: string;
   createdAt: string;
 };
 
@@ -164,15 +167,61 @@ const tradingSessionOptions: Array<{ key: TradingSessionKey; label: string; rang
   { key: "night", label: "夜间", range: "21:00-23:00" },
 ];
 
+function timeframeToMonitorMinutes(timeframe: string) {
+  if (timeframe.endsWith("m")) {
+    return Math.max(1, Number.parseInt(timeframe, 10) || 1);
+  }
+  if (timeframe.endsWith("h")) {
+    return Math.max(1, (Number.parseInt(timeframe, 10) || 1) * 60);
+  }
+  if (timeframe.endsWith("d")) {
+    return Math.max(1, (Number.parseInt(timeframe, 10) || 1) * 1440);
+  }
+  return 1;
+}
+
+function formatZoneInput(minValue: number | null | undefined, maxValue: number | null | undefined) {
+  const lower = Number(minValue) || 0;
+  const upper = Number(maxValue) || 0;
+  if (lower <= 0 && upper <= 0) {
+    return "";
+  }
+  if (lower === upper || upper <= 0) {
+    return String(lower);
+  }
+  if (lower <= 0) {
+    return String(upper);
+  }
+  return `${Math.min(lower, upper)}-${Math.max(lower, upper)}`;
+}
+
+function parseZoneInput(value: string) {
+  const parts = value
+    .trim()
+    .split(/[-~，,、\s]+/)
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item) && item > 0);
+  if (parts.length === 0) {
+    return { min: 0, max: 0 };
+  }
+  if (parts.length === 1) {
+    return { min: parts[0], max: parts[0] };
+  }
+  return { min: Math.min(parts[0], parts[1]), max: Math.max(parts[0], parts[1]) };
+}
+
 const emptyWatchDraft: WatchPoolDraft = {
   name: "",
   symbol: "",
   timeframe: "1m",
   enabled: true,
-  monitorMinutes: 30,
+  monitorMinutes: 1,
   tradingSessions: DEFAULT_TRADING_SESSIONS,
   minHeadToNeckHeight: 0,
   minShoulderToNeckHeight: 0,
+  enableKeyZoneTrendScore: false,
+  resistanceZone: "",
+  supportZone: "",
 };
 
 function normalizeTradingSessions(value: string) {
@@ -196,6 +245,9 @@ function mapWatchPoolItem(item: ApiWatchPoolItem): WatchPoolItem {
     tradingSessions: item.trading_sessions || DEFAULT_TRADING_SESSIONS,
     minHeadToNeckHeight: item.min_head_to_neck_height ?? 0,
     minShoulderToNeckHeight: item.min_shoulder_to_neck_height ?? 0,
+    enableKeyZoneTrendScore: item.enable_key_zone_trend_score ?? false,
+    resistanceZone: formatZoneInput(item.resistance_zone_min, item.resistance_zone_max),
+    supportZone: formatZoneInput(item.support_zone_min, item.support_zone_max),
     createdAt: item.created_at ? formatAlertTime(item.created_at) : "--",
   };
 }
@@ -451,6 +503,9 @@ function App() {
       tradingSessions: item.tradingSessions,
       minHeadToNeckHeight: item.minHeadToNeckHeight,
       minShoulderToNeckHeight: item.minShoulderToNeckHeight,
+      enableKeyZoneTrendScore: item.enableKeyZoneTrendScore,
+      resistanceZone: item.resistanceZone,
+      supportZone: item.supportZone,
     });
     setWatchEditorOpen(true);
   }
@@ -478,15 +533,22 @@ function App() {
       setError("请选择交易时间段");
       return;
     }
+    const resistanceZone = parseZoneInput(watchDraft.resistanceZone);
+    const supportZone = parseZoneInput(watchDraft.supportZone);
     const payload = {
       name: normalizedName,
       symbol: normalizedSymbol,
       timeframe: watchDraft.timeframe,
       enabled: watchDraft.enabled,
-      monitor_minutes: Math.max(1, Number(watchDraft.monitorMinutes) || 1),
+      monitor_minutes: timeframeToMonitorMinutes(watchDraft.timeframe),
       trading_sessions: normalizedTradingSessions,
       min_head_to_neck_height: Math.max(0, Number(watchDraft.minHeadToNeckHeight) || 0),
       min_shoulder_to_neck_height: Math.max(0, Number(watchDraft.minShoulderToNeckHeight) || 0),
+      enable_key_zone_trend_score: watchDraft.enableKeyZoneTrendScore,
+      resistance_zone_min: resistanceZone.min,
+      resistance_zone_max: resistanceZone.max,
+      support_zone_min: supportZone.min,
+      support_zone_max: supportZone.max,
     };
     try {
       const saved = editingWatchId
@@ -554,10 +616,15 @@ function App() {
         symbol: item.symbol,
         timeframe: item.timeframe,
         enabled: !item.enabled,
-        monitor_minutes: item.monitorMinutes,
+        monitor_minutes: timeframeToMonitorMinutes(item.timeframe),
         trading_sessions: normalizeTradingSessions(item.tradingSessions) || DEFAULT_TRADING_SESSIONS,
         min_head_to_neck_height: item.minHeadToNeckHeight,
         min_shoulder_to_neck_height: item.minShoulderToNeckHeight,
+        enable_key_zone_trend_score: item.enableKeyZoneTrendScore,
+        resistance_zone_min: parseZoneInput(item.resistanceZone).min,
+        resistance_zone_max: parseZoneInput(item.resistanceZone).max,
+        support_zone_min: parseZoneInput(item.supportZone).min,
+        support_zone_max: parseZoneInput(item.supportZone).max,
       });
       const nextItem = mapWatchPoolItem(saved);
       setWatchPool((items) => items.map((current) => current.id === item.id ? nextItem : current));
@@ -1121,8 +1188,6 @@ const WatchPool = React.forwardRef<HTMLElement, {
   const enabledCount = items.filter((item) => item.enabled).length;
   const allEnabled = items.length > 0 && enabledCount === items.length;
   const allDisabled = enabledCount === 0;
-  const selectedDraftOption = contractOptions.find((item) => item.value.toLowerCase() === draft.symbol.trim().toLowerCase());
-  const draftName = selectedDraftOption?.name ?? draft.name;
 
   const renderPoolCard = (item: WatchPoolItem) => {
     const togglePending = togglePendingIds.has(item.id);
@@ -1326,14 +1391,6 @@ const WatchPool = React.forwardRef<HTMLElement, {
               </AntButton>
             </div>
             <div className="pool-editor modal-form">
-              <label>
-                品种名称
-                <Input
-                  value={draftName}
-                  onChange={(event) => onDraftChange((prev) => ({ ...prev, name: event.target.value }))}
-                  placeholder="手动输入代码时必填"
-                />
-              </label>
               <label className="pool-symbol-combobox">
                 监控品种
                 <Select
@@ -1354,16 +1411,8 @@ const WatchPool = React.forwardRef<HTMLElement, {
                 监控周期
                 <Select
                   value={draft.timeframe}
-                  onChange={(value) => onDraftChange((prev) => ({ ...prev, timeframe: value }))}
+                  onChange={(value) => onDraftChange((prev) => ({ ...prev, timeframe: value, monitorMinutes: timeframeToMonitorMinutes(value) }))}
                   options={TIMEFRAME_OPTIONS.filter((item) => item.value !== "1d")}
-                />
-              </label>
-              <label>
-                检测时长
-                <InputNumber
-                  min={1}
-                  value={draft.monitorMinutes}
-                  onChange={(value) => onDraftChange((prev) => ({ ...prev, monitorMinutes: Number(value) || 1 }))}
                 />
               </label>
               <label>
@@ -1384,6 +1433,31 @@ const WatchPool = React.forwardRef<HTMLElement, {
                   value={draft.minShoulderToNeckHeight}
                   onChange={(value) => onDraftChange((prev) => ({ ...prev, minShoulderToNeckHeight: Number(value) || 0 }))}
                   placeholder="0 表示使用策略默认值"
+                />
+              </label>
+              <label className="pool-toggle pool-zone-toggle">
+                <Checkbox
+                  checked={draft.enableKeyZoneTrendScore}
+                  onChange={(event) => onDraftChange((prev) => ({ ...prev, enableKeyZoneTrendScore: event.target.checked }))}
+                />
+                启用关键区间趋势评分
+              </label>
+              <label>
+                阻挡区间
+                <Input
+                  value={draft.resistanceZone}
+                  disabled={!draft.enableKeyZoneTrendScore}
+                  onChange={(event) => onDraftChange((prev) => ({ ...prev, resistanceZone: event.target.value }))}
+                  placeholder="例如 3500-3520"
+                />
+              </label>
+              <label>
+                支撑区间
+                <Input
+                  value={draft.supportZone}
+                  disabled={!draft.enableKeyZoneTrendScore}
+                  onChange={(event) => onDraftChange((prev) => ({ ...prev, supportZone: event.target.value }))}
+                  placeholder="例如 3300-3320"
                 />
               </label>
               <div className="pool-session-field">
