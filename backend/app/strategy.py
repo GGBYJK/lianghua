@@ -53,6 +53,7 @@ class HeadShoulderTopConfig:
     max_signal_age_bars: int = 0
     enable_score: bool = True
     min_score_to_alert: int = 70
+    min_pattern_score_to_alert: int = 60
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -1020,6 +1021,12 @@ def calculate_pattern_score(
     }
 
 
+def _pattern_quality_allows_alert(pattern_result: dict[str, Any], config: HeadShoulderTopConfig) -> bool:
+    if not config.enable_score or config.min_pattern_score_to_alert <= 0:
+        return True
+    return int(pattern_result["final_score"]) >= config.min_pattern_score_to_alert
+
+
 def passes_head_neck_bar_limit(
     timeframe: str,
     left_neck: "PivotPoint",
@@ -1709,7 +1716,6 @@ def scan_head_shoulders_top(
         if trigger_index is None or trigger_price is None:
             continue
 
-        used_right_shoulder_setups.add(setup_key)
         neckline_price = calculate_neckline_price(p2, p4, p5.index)
         qtr = calculate_qtr(df, p2, p4)
         pattern_result = calculate_pattern_score(
@@ -1725,6 +1731,10 @@ def scan_head_shoulders_top(
             trigger_price=trigger_price,
             midpoint=midpoint_price,
         )
+        if not _pattern_quality_allows_alert(pattern_result, config):
+            continue
+
+        used_right_shoulder_setups.add(setup_key)
         signals.append(HeadShoulderTopSignal(
             symbol=symbol,
             timeframe=timeframe,
@@ -1871,6 +1881,9 @@ def scan_inverse_head_shoulders(
             trigger_price=trigger_price,
             midpoint=midpoint_price,
         )
+        if not _pattern_quality_allows_alert(pattern_result, config):
+            continue
+
         signals.append(HeadShoulderTopSignal(
             symbol=symbol,
             timeframe=timeframe,

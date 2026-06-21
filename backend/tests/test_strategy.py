@@ -161,6 +161,7 @@ def test_config_merge_override() -> None:
     config = load_head_shoulder_config("rb2405", "5m", {"min_score_to_alert": 65})
     assert config.min_shoulder_to_head_height_ratio == 0.3
     assert config.min_score_to_alert == 65
+    assert config.min_pattern_score_to_alert == 60
 
 
 def test_five_minute_config_also_enables_strict_shape_rules() -> None:
@@ -800,6 +801,17 @@ def test_pattern_score_inverse_uses_mirrored_direction_and_volume_proxy() -> Non
     assert structure_scores["头部突出度"] == 4
     assert result["metrics"]["rr"] > 0
     assert "波动率代理" in momentum["items"][2]["detail"]
+
+
+def test_pattern_quality_threshold_blocks_scores_below_sixty() -> None:
+    config = HeadShoulderTopConfig()
+
+    assert not strategy_module._pattern_quality_allows_alert({"final_score": 59}, config)
+    assert strategy_module._pattern_quality_allows_alert({"final_score": 60}, config)
+    assert strategy_module._pattern_quality_allows_alert(
+        {"final_score": 59},
+        HeadShoulderTopConfig(enable_score=False),
+    )
 
 
 def test_top_midpoint_trigger_stops_when_right_shoulder_is_broken_upward() -> None:

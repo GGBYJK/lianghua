@@ -30,6 +30,7 @@ default:
   max_signal_age_bars: 0
   enable_score: true
   min_score_to_alert: 70
+  min_pattern_score_to_alert: 60
 
 timeframes:
   1m:

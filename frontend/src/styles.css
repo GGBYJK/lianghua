@@ -5822,6 +5822,29 @@ button:disabled {
   border-left-color: #b8c2cc;
 }
 
+.current-signal-group .message-tree-summary {
+  align-items: center;
+}
+
+.current-signal-group .message-tree-summary strong {
+  white-space: normal;
+}
+
+.current-signal-group-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.current-signal-group-title .monitor-tag {
+  flex: 0 0 auto;
+}
+
+.current-signal-group .message-tree-children {
+  padding-left: 16px;
+}
+
 .current-signal-list .message-item.confirmed {
   border-left-color: #0b5cab;
 }

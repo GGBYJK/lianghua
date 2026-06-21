@@ -1851,59 +1851,93 @@ function CurrentSignalFeed({
   onSelect: (signal: Signal) => void;
   onOpenScoreDetail: (signal: Signal) => void;
 }) {
+  const groupedSignals = useMemo(() => {
+    const groups = new Map<string, Signal[]>();
+    for (const signal of signals) {
+      const key = signalHeadGroupKey(signal);
+      const group = groups.get(key);
+      if (group) {
+        group.push(signal);
+      } else {
+        groups.set(key, [signal]);
+      }
+    }
+    return Array.from(groups, ([key, items]) => ({
+      key,
+      signal: items[0],
+      signals: items,
+    }));
+  }, [signals]);
+
   return (
     <>
       <div className="message-list current-signal-list monitor-message-list">
         {signals.length === 0 ? (
           <p className="empty">当前图暂无头肩顶结果。左侧直接搜索识别到的结果会显示在这里。</p>
-        ) : signals.map((signal) => {
-          const key = signalKey(signal);
-          const displayTime = signal.break_time ?? signal.retest_time ?? signal.right_shoulder.time;
-          return (
-            <article
-              className={`message-item ${signal.confirmed ? "confirmed" : ""} ${selectedKey === key ? "selected" : ""}`}
-              key={key}
-              onClick={() => onFocus(signal)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onFocus(signal);
-                }
-              }}
-            >
-              <div className="message-main monitor-message-main">
-                <div className="monitor-alert-tags">
-                  <span className={`monitor-tag timeframe-tag timeframe-${signal.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{signal.timeframe}</span>
-                  <span className={`monitor-tag pattern-tag ${signal.pattern}`}>{patternLabel(signal.pattern)}</span>
-                  <span className={`monitor-tag trend-tag ${trendTagClass(signal)}`}>{trendLabel(signal)}</span>
-                  <button type="button" className="monitor-tag score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(signal); }}>{signal.score}</button>
-                  {signal.pattern_score != null && (
-                    <button type="button" className="monitor-tag pattern-score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(signal); }}>
-                      形态 {signal.pattern_score} · {signal.pattern_grade || "-"}
-                    </button>
-                  )}
-                </div>
-                <div className="monitor-message-footer">
-                  <div className="message-card-actions">
-                    <button
-                      type="button"
-                      className="message-detail-button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onSelect(signal);
-                      }}
-                    >
-                      详情
-                    </button>
-                  </div>
-                  <time>{formatTime(displayTime)}</time>
-                </div>
+        ) : groupedSignals.map((group) => (
+          <details className="message-tree-group current-signal-group" key={group.key} open>
+            <summary className="message-tree-summary">
+              <span className="message-tree-marker" aria-hidden="true" />
+              <div>
+                <strong className="current-signal-group-title">
+                  <span className={`monitor-tag pattern-tag ${group.signal.pattern}`}>{patternLabel(group.signal.pattern)}</span>
+                  <span>头部价格：{formatPrice(group.signal.head.price)}</span>
+                </strong>
+                <small>{group.signals.length} 个形态选择</small>
               </div>
-            </article>
-          );
-        })}
+            </summary>
+            <div className="message-tree-children">
+              {group.signals.map((signal) => {
+                const key = signalKey(signal);
+                const displayTime = signal.break_time ?? signal.retest_time ?? signal.right_shoulder.time;
+                return (
+                  <article
+                    className={`message-item ${signal.confirmed ? "confirmed" : ""} ${selectedKey === key ? "selected" : ""}`}
+                    key={key}
+                    onClick={() => onFocus(signal)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onFocus(signal);
+                      }
+                    }}
+                  >
+                    <div className="message-main monitor-message-main">
+                      <div className="monitor-alert-tags">
+                        <span className={`monitor-tag timeframe-tag timeframe-${signal.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{signal.timeframe}</span>
+                        <span className={`monitor-tag pattern-tag ${signal.pattern}`}>{patternLabel(signal.pattern)}</span>
+                        <span className={`monitor-tag trend-tag ${trendTagClass(signal)}`}>{trendLabel(signal)}</span>
+                        <button type="button" className="monitor-tag score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(signal); }}>{signal.score}</button>
+                        {signal.pattern_score != null && (
+                          <button type="button" className="monitor-tag pattern-score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(signal); }}>
+                            形态 {signal.pattern_score} · {signal.pattern_grade || "-"}
+                          </button>
+                        )}
+                      </div>
+                      <div className="monitor-message-footer">
+                        <div className="message-card-actions">
+                          <button
+                            type="button"
+                            className="message-detail-button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onSelect(signal);
+                            }}
+                          >
+                            详情
+                          </button>
+                        </div>
+                        <time>{formatTime(displayTime)}</time>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </details>
+        ))}
       </div>
     </>
   );
@@ -2988,10 +3022,21 @@ function signalKey(signal: Signal) {
     signal.pattern,
     signal.alert_type,
     signal.left_shoulder.index,
+    signal.left_neck.index,
     signal.head.index,
+    signal.right_neck.index,
     signal.right_shoulder.index,
-    signal.break_time ?? "未跌破",
-    signal.retest_time ?? "未回测",
+    signal.break_time ?? "no-break",
+    signal.retest_time ?? "no-retest",
+  ].join("-");
+}
+
+function signalHeadGroupKey(signal: Signal) {
+  return [
+    signal.pattern,
+    signal.head.time,
+    signal.head.index,
+    signal.head.price,
   ].join("-");
 }
 
