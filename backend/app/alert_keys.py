@@ -16,6 +16,7 @@ def build_signal_unique_key(signal: dict[str, Any]) -> str:
         signal["symbol"],
         signal["timeframe"],
         signal["pattern"],
+        signal.get("alert_type", ""),
         _point_time(signal, "head"),
     ]
     return "|".join(str(part) for part in parts)

@@ -136,6 +136,7 @@ def _scan_signal_head_key(signal: HeadShoulderTopSignal) -> tuple[str, str, str,
         signal.symbol,
         signal.timeframe,
         signal.pattern,
+        signal.alert_type,
         f"{float(signal.head.price):.8f}",
     )
 

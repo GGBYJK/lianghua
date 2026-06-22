@@ -16,6 +16,9 @@ MIXED_PIVOT_CONFIRMATION_TIMEFRAMES = {"1m", "3m", "5m"}
 INVERSE_PRIOR_HIGH_TIMEFRAMES = {"3m", "5m"}
 STRUCTURE_PIVOT_WINDOW = 5
 RIGHT_SHOULDER_PIVOT_WINDOW = 3
+PULLBACK_LOOKAHEAD_BARS = 60
+PULLBACK_MAX_TREND_SCORE = 35
+PULLBACK_MIN_PATTERN_SCORE = 80
 
 
 @dataclass
@@ -1710,6 +1713,55 @@ def check_right_shoulder_midpoint_trigger(
     return False, None, None, None, midpoint_price
 
 
+def check_neckline_break_then_pullback(
+    df: pd.DataFrame,
+    left_neck: PivotPoint,
+    right_neck: PivotPoint,
+    right_shoulder: PivotPoint,
+    *,
+    inverse: bool,
+    lookahead_bars: int = PULLBACK_LOOKAHEAD_BARS,
+) -> tuple[bool, int | None, pd.Timestamp | None, float | None, int | None, pd.Timestamp | None, float | None, float]:
+    start_index = right_shoulder.index + 1
+    end_index = min(len(df) - 1, right_shoulder.index + lookahead_bars)
+    pullback_price = (
+        right_shoulder.price + (right_neck.price - right_shoulder.price) / 4
+        if inverse
+        else right_shoulder.price - (right_shoulder.price - right_neck.price) / 4
+    )
+    if start_index >= len(df):
+        return False, None, None, None, None, None, None, pullback_price
+
+    break_index: int | None = None
+    break_time: pd.Timestamp | None = None
+    break_price: float | None = None
+    for i in range(start_index, end_index + 1):
+        neckline_price = calculate_neckline_price(left_neck, right_neck, i)
+        if break_index is None:
+            candidate_break_price = float(df.loc[i, "high" if inverse else "low"])
+            broke_neckline = candidate_break_price > neckline_price if inverse else candidate_break_price < neckline_price
+            if not broke_neckline:
+                continue
+            break_index = i
+            break_time = df.loc[i, "datetime"]
+            break_price = candidate_break_price
+            continue
+
+        candidate_retest_price = float(df.loc[i, "low" if inverse else "high"])
+        retested = candidate_retest_price <= pullback_price if inverse else candidate_retest_price >= pullback_price
+        if retested:
+            return True, break_index, break_time, break_price, i, df.loc[i, "datetime"], candidate_retest_price, pullback_price
+
+    return False, break_index, break_time, break_price, None, None, None, pullback_price
+
+
+def should_emit_pullback_alert(total_score: int, pattern_result: dict[str, Any]) -> bool:
+    return (
+        total_score <= PULLBACK_MAX_TREND_SCORE
+        and int(pattern_result["final_score"]) >= PULLBACK_MIN_PATTERN_SCORE
+    )
+
+
 def scan_head_shoulders_top(
     df: pd.DataFrame,
     symbol: str,
@@ -1815,6 +1867,62 @@ def scan_head_shoulders_top(
                 f"触发价 {trigger_price:.2f}，半程价 {midpoint_price:.2f}。"
             ),
         ))
+
+        if should_emit_pullback_alert(total_score, pattern_result):
+            (
+                pullback_triggered,
+                break_index,
+                break_time,
+                break_price,
+                pullback_index,
+                pullback_time,
+                pullback_price,
+                pullback_level,
+            ) = check_neckline_break_then_pullback(
+                df,
+                p2,
+                p4,
+                p5,
+                inverse=False,
+            )
+            if pullback_triggered and break_time is not None and break_price is not None and pullback_time is not None and pullback_price is not None:
+                neckline_at_break = calculate_neckline_price(p2, p4, break_index or p5.index)
+                signals.append(HeadShoulderTopSignal(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    pattern="head_shoulders_top",
+                    alert_type="head_shoulders_top_pullback",
+                    left_shoulder=p1,
+                    left_neck=p2,
+                    head=p3,
+                    right_neck=p4,
+                    right_shoulder=p5,
+                    neckline_price=neckline_at_break,
+                    confirmed=True,
+                    score=total_score,
+                    qtr=qtr,
+                    trend_label=trend_label_from_score(total_score, bullish=False),
+                    reasons=reasons + [
+                        f"趋势评分 {total_score} <= {PULLBACK_MAX_TREND_SCORE}",
+                        f"形态质量评分 {pattern_result['final_score']} >= {PULLBACK_MIN_PATTERN_SCORE}",
+                        f"右肩后 {PULLBACK_LOOKAHEAD_BARS} 条K线内先跌破颈线，再涨回四分之一反抽位 {pullback_level:.2f}",
+                    ],
+                    break_time=break_time,
+                    break_price=break_price,
+                    retest_time=pullback_time,
+                    retest_price=pullback_price,
+                    pattern_score=pattern_result["final_score"],
+                    pattern_raw_score=pattern_result["raw_score"],
+                    pattern_grade=pattern_result["grade"],
+                    pattern_caps=pattern_result["caps"],
+                    pattern_sections=pattern_result["sections"],
+                    pattern_metrics=pattern_result["metrics"],
+                    message=(
+                        f"{symbol} {timeframe} 头肩顶反抽，趋势评分 {total_score}，"
+                        f"形态评分 {pattern_result['final_score']}。跌破价 {break_price:.2f}，"
+                        f"反抽价 {pullback_price:.2f}，反抽位 {pullback_level:.2f}。"
+                    ),
+                ))
 
         continue
 
@@ -1966,6 +2074,62 @@ def scan_inverse_head_shoulders(
                 f"触发价 {trigger_price:.2f}，半程价 {midpoint_price:.2f}。"
             ),
         ))
+
+        if should_emit_pullback_alert(total_score, pattern_result):
+            (
+                pullback_triggered,
+                break_index,
+                break_time,
+                break_price,
+                pullback_index,
+                pullback_time,
+                pullback_price,
+                pullback_level,
+            ) = check_neckline_break_then_pullback(
+                df,
+                p2,
+                p4,
+                p5,
+                inverse=True,
+            )
+            if pullback_triggered and break_time is not None and break_price is not None and pullback_time is not None and pullback_price is not None:
+                neckline_at_break = calculate_neckline_price(p2, p4, break_index or p5.index)
+                signals.append(HeadShoulderTopSignal(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    pattern="inverse_head_shoulders",
+                    alert_type="inverse_head_shoulders_pullback",
+                    left_shoulder=p1,
+                    left_neck=p2,
+                    head=p3,
+                    right_neck=p4,
+                    right_shoulder=p5,
+                    neckline_price=neckline_at_break,
+                    confirmed=True,
+                    score=total_score,
+                    qtr=qtr,
+                    trend_label=trend_label_from_score(total_score, bullish=True),
+                    reasons=reasons + [
+                        f"趋势评分 {total_score} <= {PULLBACK_MAX_TREND_SCORE}",
+                        f"形态质量评分 {pattern_result['final_score']} >= {PULLBACK_MIN_PATTERN_SCORE}",
+                        f"右肩后 {PULLBACK_LOOKAHEAD_BARS} 条K线内先突破颈线，再跌回四分之一反抽位 {pullback_level:.2f}",
+                    ],
+                    break_time=break_time,
+                    break_price=break_price,
+                    retest_time=pullback_time,
+                    retest_price=pullback_price,
+                    pattern_score=pattern_result["final_score"],
+                    pattern_raw_score=pattern_result["raw_score"],
+                    pattern_grade=pattern_result["grade"],
+                    pattern_caps=pattern_result["caps"],
+                    pattern_sections=pattern_result["sections"],
+                    pattern_metrics=pattern_result["metrics"],
+                    message=(
+                        f"{symbol} {timeframe} 反向头肩顶反抽，趋势评分 {total_score}，"
+                        f"形态评分 {pattern_result['final_score']}。突破价 {break_price:.2f}，"
+                        f"反抽价 {pullback_price:.2f}，反抽位 {pullback_level:.2f}。"
+                    ),
+                ))
         continue
 
         confirmed, break_index, break_time, break_price, reason, score = check_neckline_break_up(df, p2, p4, p5, config)

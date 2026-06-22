@@ -579,6 +579,7 @@ def _alert_head_progression_key(alert: dict[str, Any]) -> str:
             signal.get("symbol", alert.get("symbol", "")),
             signal.get("timeframe", alert.get("timeframe", "")),
             signal.get("pattern", alert.get("pattern", "")),
+            signal.get("alert_type", alert.get("alert_type", "")),
             head_identity,
         ]
     )

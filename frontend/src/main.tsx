@@ -1681,6 +1681,7 @@ function MonitorAlertFeed({
         const headPrice = Number(alert.signal_payload.head.price);
         const key = [
           alert.signal_payload.pattern,
+          monitorHeadCategoryKey(alert),
           Number.isFinite(headPrice) ? headPrice.toFixed(8) : "UNKNOWN_HEAD",
         ].join("::");
         const group = headGroups.get(key);
@@ -1707,7 +1708,7 @@ function MonitorAlertFeed({
           alert: first,
           alerts: items,
           timeframes: Array.from(new Set(items.map((alert) => alert.timeframe))).join(" / "),
-          confirmedCount: items.filter((alert) => alert.alert_type === "neckline_break").length,
+          confirmedCount: items.filter((alert) => isConfirmedAlertType(alert.alert_type)).length,
           latestTime: formatMessageTreeLatestTime(latestCreatedAt),
         };
       });
@@ -1726,7 +1727,7 @@ function MonitorAlertFeed({
         symbol,
         alerts: symbolAlerts,
         heads,
-        confirmedCount: symbolAlerts.filter((alert) => alert.alert_type === "neckline_break").length,
+        confirmedCount: symbolAlerts.filter((alert) => isConfirmedAlertType(alert.alert_type)).length,
         latestTime: formatMessageTreeLatestTime(latestCreatedAt),
       };
     });
@@ -1799,7 +1800,7 @@ function MonitorAlertFeed({
                       <span className="message-tree-marker" aria-hidden="true" />
                       <div>
                         <strong className="message-head-title">
-                          <PatternTag pattern={headGroup.alert.pattern} />
+                          <PatternTag pattern={headGroup.alert.pattern} label={monitorHeadCategoryLabel(headGroup.alert)} />
                           <span>头部价格：{formatPrice(headGroup.alert.signal_payload.head.price)}</span>
                         </strong>
                         <small>{headGroup.alerts.length} 条监控消息 · {headGroup.timeframes}</small>
@@ -1818,7 +1819,7 @@ function MonitorAlertFeed({
                     <div className="message-tree-children monitor-head-children">
                       {headGroup.alerts.map((alert) => (
                         <article
-                          className={`message-item ${alert.alert_type === "neckline_break" ? "confirmed" : ""} ${selectedId === alert.id ? "selected" : ""}`}
+                          className={`message-item ${isConfirmedAlertType(alert.alert_type) ? "confirmed" : ""} ${selectedId === alert.id ? "selected" : ""}`}
                           key={alert.id}
                           onClick={() => onSelect(alert)}
                           role="button"
@@ -1839,6 +1840,9 @@ function MonitorAlertFeed({
                             <div className="monitor-alert-tags">
                               <span className={`monitor-tag timeframe-tag timeframe-${alert.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{alert.timeframe}</span>
                               <span className={`monitor-tag pattern-tag ${alert.pattern}`}>{patternLabel(alert.pattern)}</span>
+                              {alert.alert_type !== "right_shoulder_confirmed" && (
+                                <span className="monitor-tag alert-type-tag">{alertTypeLabel(alert.alert_type)}</span>
+                              )}
                               <span className={`monitor-tag trend-tag ${trendTagClass(alert.signal_payload)}`}>{trendLabel(alert.signal_payload)}</span>
                               <button type="button" className="monitor-tag score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>{alert.score}</button>
                               {alert.signal_payload.pattern_score != null && (
@@ -2198,7 +2202,7 @@ function CurrentSignalFeed({
               <span className="message-tree-marker" aria-hidden="true" />
               <div>
                 <strong className="current-signal-group-title message-head-title">
-                  <PatternTag pattern={group.signal.pattern} />
+                  <PatternTag pattern={group.signal.pattern} label={signalCategoryLabel(group.signal)} />
                   <span>头部价格：{formatPrice(group.signal.head.price)}</span>
                 </strong>
                 <small>{group.signals.length} 个形态选择</small>
@@ -2225,7 +2229,7 @@ function CurrentSignalFeed({
                     <div className="message-main monitor-message-main">
                       <div className="monitor-alert-tags">
                         <span className={`monitor-tag timeframe-tag timeframe-${signal.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{signal.timeframe}</span>
-                        <span className={`monitor-tag pattern-tag ${signal.pattern}`}>{patternLabel(signal.pattern)}</span>
+                        <PatternTag pattern={signal.pattern} label={signalCategoryLabel(signal)} />
                         <span className={`monitor-tag trend-tag ${trendTagClass(signal)}`}>{trendLabel(signal)}</span>
                         <button type="button" className="monitor-tag score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(signal); }}>{signal.score}</button>
                         {signal.pattern_score != null && (
@@ -2732,7 +2736,7 @@ function SignalGroup({
         >
           <div className="signal-top">
             <strong>{signal.score}</strong>
-            <span>{patternLabel(signal.pattern)} · {signal.confirmed ? "已确认" : "疑似"} · {selected ? "图上显示" : "点击显示"}</span>
+            <span>{signalCategoryLabel(signal)} · {signal.confirmed ? "已确认" : "疑似"} · {selected ? "图上显示" : "点击显示"}</span>
           </div>
           <p>{translateResultText(signal.message)}</p>
           <div className="signal-times">
@@ -3352,6 +3356,7 @@ function signalKey(signal: Signal) {
 function signalHeadGroupKey(signal: Signal) {
   return [
     signal.pattern,
+    signalCategoryKey(signal),
     signal.head.time,
     signal.head.index,
     signal.head.price,
@@ -3362,7 +3367,17 @@ function alertTypeLabel(alertType: Signal["alert_type"]) {
   if (alertType === "right_shoulder_confirmed") {
     return "右肩半程触发";
   }
+  if (alertType === "head_shoulders_top_pullback") {
+    return "头肩顶反抽";
+  }
+  if (alertType === "inverse_head_shoulders_pullback") {
+    return "反向头肩顶反抽";
+  }
   return "跌破颈线";
+}
+
+function isConfirmedAlertType(alertType: Signal["alert_type"]) {
+  return alertType !== "right_shoulder_confirmed";
 }
 
 function trendLabel(signal: Pick<Signal, "trend_label" | "score" | "pattern"> | null | undefined) {
@@ -3412,12 +3427,32 @@ function patternLabel(pattern: Signal["pattern"]) {
   return "头肩顶";
 }
 
-function PatternTag({ pattern }: { pattern: Signal["pattern"] }) {
-  return <span className={`monitor-tag pattern-tag ${pattern}`}>{patternLabel(pattern)}</span>;
+function PatternTag({ pattern, label }: { pattern: Signal["pattern"]; label?: string }) {
+  return <span className={`monitor-tag pattern-tag ${pattern}`}>{label ?? patternLabel(pattern)}</span>;
+}
+
+function isPullbackAlertType(alertType: Signal["alert_type"]) {
+  return alertType === "head_shoulders_top_pullback" || alertType === "inverse_head_shoulders_pullback";
+}
+
+function signalCategoryKey(signal: Pick<Signal, "alert_type">) {
+  return isPullbackAlertType(signal.alert_type) ? signal.alert_type : "pattern";
+}
+
+function signalCategoryLabel(signal: Pick<Signal, "alert_type" | "pattern">) {
+  return isPullbackAlertType(signal.alert_type) ? alertTypeLabel(signal.alert_type) : patternLabel(signal.pattern);
 }
 
 function isMonitorAlertVisible(alert: HeadShouldersAlertSummary) {
   return (alert.signal_payload.pattern_score ?? -Infinity) >= MIN_MONITOR_PATTERN_SCORE;
+}
+
+function monitorHeadCategoryKey(alert: Pick<HeadShouldersAlertSummary, "alert_type">) {
+  return signalCategoryKey(alert);
+}
+
+function monitorHeadCategoryLabel(alert: Pick<HeadShouldersAlertSummary, "alert_type" | "pattern">) {
+  return signalCategoryLabel(alert);
 }
 
 function calculateChartNeckline(leftNeck: PivotPoint, rightNeck: PivotPoint, currentIndex: number) {

@@ -79,7 +79,7 @@ def test_alert_summary_list_collapses_repeated_structure_updates() -> None:
         "signal_payload": {**base_signal, "alert_type": "neckline_break", "break_time": "2026-06-02T22:10:00"},
     }
 
-    assert _deduplicate_alert_summaries([newer_alert, older_alert, breakout_alert]) == [newer_alert]
+    assert _deduplicate_alert_summaries([newer_alert, older_alert, breakout_alert]) == [newer_alert, breakout_alert]
 
 
 def test_signal_unique_key_uses_head_position_not_score() -> None:

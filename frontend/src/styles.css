@@ -5608,6 +5608,11 @@ button:disabled {
   color: #067647;
 }
 
+.alert-type-tag {
+  background: #fff7ed;
+  color: #b45309;
+}
+
 .trend-tag.bearish {
   background: #fff0f0;
   color: #b42318;

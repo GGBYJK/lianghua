@@ -44,6 +44,7 @@ from app.strategy import (
     calculate_qtr,
     calculate_pattern_score,
     calculate_true_range,
+    check_neckline_break_then_pullback,
     check_right_shoulder_midpoint_trigger,
     deduplicate_overlapping_signals,
     find_pivots,
@@ -546,7 +547,7 @@ def test_monitor_unique_key_uses_stable_pattern_structure() -> None:
         "trend_label": "空头趋势",
     }
     assert build_signal_unique_key(signal) == (
-        "c0|1m|head_shoulders_top|2026-05-12T09:10:00"
+        "c0|1m|head_shoulders_top|neckline_break|2026-05-12T09:10:00"
     )
 
 
@@ -659,6 +660,58 @@ def test_inverse_midpoint_trigger_waits_for_price_to_reach_halfway() -> None:
 
     assert not before[0]
     assert triggered == (True, 2, times[2], 105.0, 105.0)
+
+
+def test_inverse_pullback_requires_break_then_fall_to_quarter_level() -> None:
+    times = pd.date_range("2026-06-14 09:00:00", periods=6, freq="min")
+    df = pd.DataFrame({
+        "datetime": times,
+        "low": [100.0, 100.0, 100.0, 100.0, 107.0, 102.5],
+        "high": [101.0, 101.0, 101.0, 101.0, 111.0, 106.0],
+        "close": [100.0, 100.0, 100.0, 100.0, 110.0, 104.5],
+    })
+    left_neck = PivotPoint(0, times[0], 110.0, "high")
+    right_neck = PivotPoint(2, times[2], 110.0, "high")
+    right_shoulder = PivotPoint(3, times[3], 100.0, "low")
+
+    result = check_neckline_break_then_pullback(
+        df,
+        left_neck,
+        right_neck,
+        right_shoulder,
+        inverse=True,
+    )
+
+    assert result[0]
+    assert result[1] == 4
+    assert result[4] == 5
+    assert result[7] == 102.5
+
+
+def test_top_pullback_requires_break_then_rise_to_quarter_level() -> None:
+    times = pd.date_range("2026-06-14 09:00:00", periods=6, freq="min")
+    df = pd.DataFrame({
+        "datetime": times,
+        "low": [100.0, 100.0, 100.0, 100.0, 89.0, 94.0],
+        "high": [101.0, 101.0, 101.0, 101.0, 92.0, 97.5],
+        "close": [100.0, 100.0, 100.0, 100.0, 90.0, 95.0],
+    })
+    left_neck = PivotPoint(0, times[0], 90.0, "low")
+    right_neck = PivotPoint(2, times[2], 90.0, "low")
+    right_shoulder = PivotPoint(3, times[3], 100.0, "high")
+
+    result = check_neckline_break_then_pullback(
+        df,
+        left_neck,
+        right_neck,
+        right_shoulder,
+        inverse=False,
+    )
+
+    assert result[0]
+    assert result[1] == 4
+    assert result[4] == 5
+    assert result[7] == 97.5
 
 
 def test_pattern_score_scores_top_structure_thresholds_and_grade() -> None:

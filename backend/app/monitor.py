@@ -83,6 +83,8 @@ ZH = {
     "inverse_pattern_short": "\u53cd\u5411\u5934\u80a9",
     "right_shoulder_confirmed": "\u53f3\u80a9\u534a\u7a0b\u89e6\u53d1",
     "neckline_break": "\u8dcc\u7834\u9888\u7ebf\u786e\u8ba4",
+    "head_shoulders_top_pullback": "\u5934\u80a9\u9876\u53cd\u62bd",
+    "inverse_head_shoulders_pullback": "\u53cd\u5411\u5934\u80a9\u9876\u53cd\u62bd",
     "shape_alert": "\u5f62\u6001\u63d0\u9192",
     "new_alert": "\u76d1\u63a7\u5230\u65b0\u7684\u5f62\u6001\u63d0\u9192",
     "new_pattern": "\u65b0\u5f62\u6001",
@@ -122,6 +124,10 @@ def alert_type_label(alert_type: str | None) -> str:
         return ZH["right_shoulder_confirmed"]
     if alert_type == "neckline_break":
         return ZH["neckline_break"]
+    if alert_type == "head_shoulders_top_pullback":
+        return ZH["head_shoulders_top_pullback"]
+    if alert_type == "inverse_head_shoulders_pullback":
+        return ZH["inverse_head_shoulders_pullback"]
     return alert_type or ZH["shape_alert"]
 
 
