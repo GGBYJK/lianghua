@@ -1675,12 +1675,8 @@ function MonitorAlertFeed({
       const headGroups = new Map<string, HeadShouldersAlertSummary[]>();
       for (const alert of symbolAlerts) {
         const headPrice = Number(alert.signal_payload.head.price);
-        const headTime = alert.signal_payload.head.time || "UNKNOWN_TIME";
-        const headIndex = alert.signal_payload.head.index;
         const key = [
           alert.signal_payload.pattern,
-          headTime,
-          Number.isFinite(headIndex) ? headIndex : "UNKNOWN_INDEX",
           Number.isFinite(headPrice) ? headPrice.toFixed(8) : "UNKNOWN_HEAD",
         ].join("::");
         const group = headGroups.get(key);
@@ -1884,12 +1880,8 @@ function FeedbackFeed({
       const headGroups = new Map<string, AlertFeedback[]>();
       for (const feedback of symbolFeedbacks) {
         const headPrice = Number(feedback.signal_payload.head.price);
-        const headTime = feedback.signal_payload.head.time || "UNKNOWN_TIME";
-        const headIndex = feedback.signal_payload.head.index;
         const headKey = [
           feedback.signal_payload.pattern,
-          headTime,
-          Number.isFinite(headIndex) ? headIndex : "UNKNOWN_INDEX",
           Number.isFinite(headPrice) ? headPrice.toFixed(8) : "UNKNOWN_HEAD",
         ].join("::");
         const headGroup = headGroups.get(headKey);
