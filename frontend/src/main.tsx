@@ -1039,7 +1039,10 @@ function App() {
             </div>
             <div className="feedback-target">
               <strong>{feedbackTarget.symbol} / {feedbackTarget.timeframe}</strong>
-              <span>{patternLabel(feedbackTarget.pattern)} &middot; {trendLabel(feedbackTarget.signal_payload)} &middot; &#35780;&#20998; {feedbackTarget.score}</span>
+              <div className="feedback-target-meta">
+                <PatternTag pattern={feedbackTarget.pattern} />
+                <span>{trendLabel(feedbackTarget.signal_payload)} &middot; &#35780;&#20998; {feedbackTarget.score}</span>
+              </div>
             </div>
             <label className="feedback-note-field">
               &#21453;&#39304;&#20449;&#24687;
@@ -1771,6 +1774,21 @@ function MonitorAlertFeed({
                     {group.latestTime}
                   </span>
                   {group.confirmedCount > 0 && <b>{group.confirmedCount}</b>}
+                  <button
+                    type="button"
+                    className="monitor-symbol-clear-button"
+                    aria-label={`清空 ${group.symbol} 监控消息`}
+                    title="清空该品种消息"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      group.alerts.forEach((alert) => onHide(alert.id));
+                    }}
+                  >
+                    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                      <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+                    </svg>
+                  </button>
                 </span>
               </summary>
               <div className="message-tree-children monitor-symbol-children">
@@ -1779,8 +1797,9 @@ function MonitorAlertFeed({
                     <summary className="message-tree-summary monitor-head-summary">
                       <span className="message-tree-marker" aria-hidden="true" />
                       <div>
-                        <strong>
-                          {patternLabel(headGroup.alert.pattern)} 头部价格：{formatPrice(headGroup.alert.signal_payload.head.price)}
+                        <strong className="message-head-title">
+                          <PatternTag pattern={headGroup.alert.pattern} />
+                          <span>头部价格：{formatPrice(headGroup.alert.signal_payload.head.price)}</span>
                         </strong>
                         <small>{headGroup.alerts.length} 条监控消息 · {headGroup.timeframes}</small>
                       </div>
@@ -1959,8 +1978,9 @@ function FeedbackFeed({
                 <summary className="message-tree-summary feedback-head-summary">
                   <span className="message-tree-marker" aria-hidden="true" />
                   <div>
-                    <strong>
-                      {patternLabel(headGroup.feedback.pattern)} 头部价格：{formatPrice(headGroup.feedback.signal_payload.head.price)}
+                    <strong className="message-head-title">
+                      <PatternTag pattern={headGroup.feedback.pattern} />
+                      <span>头部价格：{formatPrice(headGroup.feedback.signal_payload.head.price)}</span>
                     </strong>
                     <small>{headGroup.feedbacks.length} 条反馈 · {headGroup.timeframes}</small>
                   </div>
@@ -2176,8 +2196,8 @@ function CurrentSignalFeed({
             <summary className="message-tree-summary">
               <span className="message-tree-marker" aria-hidden="true" />
               <div>
-                <strong className="current-signal-group-title">
-                  <span className={`monitor-tag pattern-tag ${group.signal.pattern}`}>{patternLabel(group.signal.pattern)}</span>
+                <strong className="current-signal-group-title message-head-title">
+                  <PatternTag pattern={group.signal.pattern} />
                   <span>头部价格：{formatPrice(group.signal.head.price)}</span>
                 </strong>
                 <small>{group.signals.length} 个形态选择</small>
@@ -3389,6 +3409,10 @@ function patternLabel(pattern: Signal["pattern"]) {
     return "反向头肩顶";
   }
   return "头肩顶";
+}
+
+function PatternTag({ pattern }: { pattern: Signal["pattern"] }) {
+  return <span className={`monitor-tag pattern-tag ${pattern}`}>{patternLabel(pattern)}</span>;
 }
 
 function calculateChartNeckline(leftNeck: PivotPoint, rightNeck: PivotPoint, currentIndex: number) {
