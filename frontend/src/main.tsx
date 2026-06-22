@@ -74,6 +74,7 @@ const EMPTY_CANDLES: Candle[] = [];
 const EMPTY_PIVOTS: PivotPoint[] = [];
 const EMPTY_NECKLINES: Neckline[] = [];
 const DEFAULT_TRADING_SESSIONS = "day,night";
+const MIN_MONITOR_PATTERN_SCORE = 70;
 const TIMEFRAME_OPTIONS = [
   { value: "1m", label: "1分钟" },
   { value: "3m", label: "3分钟" },
@@ -474,7 +475,7 @@ function App() {
   async function refreshMonitorAlerts() {
     try {
       const alerts = await listHeadShouldersAlerts(100);
-      setMonitorAlerts(alerts);
+      setMonitorAlerts(alerts.filter(isMonitorAlertVisible));
     } catch (err) {
       setError(err instanceof Error ? `监控消息读取失败：${err.message}` : "监控消息读取失败");
     }
@@ -3413,6 +3414,10 @@ function patternLabel(pattern: Signal["pattern"]) {
 
 function PatternTag({ pattern }: { pattern: Signal["pattern"] }) {
   return <span className={`monitor-tag pattern-tag ${pattern}`}>{patternLabel(pattern)}</span>;
+}
+
+function isMonitorAlertVisible(alert: HeadShouldersAlertSummary) {
+  return (alert.signal_payload.pattern_score ?? -Infinity) >= MIN_MONITOR_PATTERN_SCORE;
 }
 
 function calculateChartNeckline(leftNeck: PivotPoint, rightNeck: PivotPoint, currentIndex: number) {
