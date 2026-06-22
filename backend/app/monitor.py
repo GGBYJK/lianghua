@@ -30,6 +30,9 @@ WECHAT_WORKBOT_MENTIONED_LIST = [
     if item.strip()
 ]
 WECHAT_WORKBOT_TIMEOUT_SECONDS = float(os.getenv("WECHAT_WORKBOT_TIMEOUT_SECONDS", "8"))
+WECHAT_MIN_TREND_SCORE = 65
+WECHAT_MIN_PATTERN_SCORE = 75
+WECHAT_PULLBACK_ALERT_TYPES = {"head_shoulders_top_pullback", "inverse_head_shoulders_pullback"}
 WATCH_POOL_TRADING_SESSIONS: dict[str, tuple[tuple[time, time], ...]] = {
     "day": (
         (time(9, 0), time(11, 30)),
@@ -200,6 +203,29 @@ def build_wechat_workbot_content(signal: dict[str, Any], item: dict[str, Any]) -
         f"{format_compact_signal_time(signal_notification_time(signal))}{comma}"
         f"{score}\u5206{comma}"
         f"{trend_label_from_signal(signal)}"
+    )
+
+
+def _int_signal_value(signal: dict[str, Any], key: str) -> int | None:
+    try:
+        value = signal.get(key)
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def should_send_wechat_workbot_notification(signal: dict[str, Any]) -> bool:
+    if signal.get("alert_type") in WECHAT_PULLBACK_ALERT_TYPES:
+        return True
+    score = _int_signal_value(signal, "score")
+    pattern_score = _int_signal_value(signal, "pattern_score")
+    return (
+        score is not None
+        and pattern_score is not None
+        and score >= WECHAT_MIN_TREND_SCORE
+        and pattern_score >= WECHAT_MIN_PATTERN_SCORE
     )
 
 
@@ -402,7 +428,18 @@ async def scan_watch_pool_once(limit: int = 420) -> int:
                 }
                 if insert_head_shoulders_alert_if_new(alert):
                     inserted += 1
-                    await send_wechat_workbot_notification(signal, item)
+                    if should_send_wechat_workbot_notification(signal):
+                        await send_wechat_workbot_notification(signal, item)
+                    else:
+                        logger.info(
+                            "wechat notification skipped by score rule: watch_pool_id=%s symbol=%s timeframe=%s alert_type=%s score=%s pattern_score=%s",
+                            item["id"],
+                            signal.get("symbol"),
+                            signal.get("timeframe"),
+                            signal.get("alert_type"),
+                            signal.get("score"),
+                            signal.get("pattern_score"),
+                        )
                 else:
                     logger.info(
                         "duplicate alert skipped for notification: watch_pool_id=%s unique_key=%s",
@@ -498,7 +535,18 @@ async def monitor_watch_pool_loop(stop_event: asyncio.Event) -> None:
                         if insert_head_shoulders_alert_if_new(alert):
                             inserted_for_item += 1
                             inserted_count += 1
-                            await send_wechat_workbot_notification(signal, item)
+                            if should_send_wechat_workbot_notification(signal):
+                                await send_wechat_workbot_notification(signal, item)
+                            else:
+                                logger.info(
+                                    "wechat notification skipped by score rule: watch_pool_id=%s symbol=%s timeframe=%s alert_type=%s score=%s pattern_score=%s",
+                                    item["id"],
+                                    signal.get("symbol"),
+                                    signal.get("timeframe"),
+                                    signal.get("alert_type"),
+                                    signal.get("score"),
+                                    signal.get("pattern_score"),
+                                )
                         else:
                             logger.info(
                                 "duplicate alert skipped for notification: watch_pool_id=%s unique_key=%s",

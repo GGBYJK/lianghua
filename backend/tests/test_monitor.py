@@ -8,7 +8,13 @@ from zoneinfo import ZoneInfo
 from fastapi.testclient import TestClient
 
 from app.alert_keys import build_signal_unique_key
-from app.monitor import build_watch_pool_config_overrides, build_wechat_workbot_content, is_in_trading_session, should_emit_signal_for_item
+from app.monitor import (
+    build_watch_pool_config_overrides,
+    build_wechat_workbot_content,
+    is_in_trading_session,
+    should_emit_signal_for_item,
+    should_send_wechat_workbot_notification,
+)
 from app.watch_pool_store import (
     _alert_beats_existing_head_score,
     _alert_structure_exists,
@@ -616,6 +622,34 @@ def test_night_session_signal_is_emitted_during_night_session() -> None:
     signal = make_signal(right_shoulder={"time": "2026-05-27T22:09:00"})
 
     assert should_emit_signal_for_item(signal, item, now=datetime(2026, 5, 27, 22, 31, tzinfo=TZ))
+
+
+def test_wechat_notification_requires_trend_and_pattern_score_for_normal_alerts() -> None:
+    signal = {
+        "pattern": "head_shoulders_top",
+        "alert_type": "right_shoulder_confirmed",
+        "score": 65,
+        "pattern_score": 75,
+    }
+
+    assert should_send_wechat_workbot_notification(signal)
+    assert not should_send_wechat_workbot_notification({**signal, "score": 64})
+    assert not should_send_wechat_workbot_notification({**signal, "pattern_score": 74})
+
+
+def test_wechat_notification_sends_pullback_alerts_without_score_gate() -> None:
+    assert should_send_wechat_workbot_notification({
+        "pattern": "head_shoulders_top",
+        "alert_type": "head_shoulders_top_pullback",
+        "score": 10,
+        "pattern_score": 10,
+    })
+    assert should_send_wechat_workbot_notification({
+        "pattern": "inverse_head_shoulders",
+        "alert_type": "inverse_head_shoulders_pullback",
+        "score": None,
+        "pattern_score": None,
+    })
 
 
 def test_wechat_workbot_content_includes_core_signal_fields() -> None:
