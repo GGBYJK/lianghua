@@ -1732,6 +1732,7 @@ def check_neckline_break_then_pullback(
     if start_index >= len(df):
         return False, None, None, None, None, None, None, pullback_price
 
+    neck_boundary_price = max(left_neck.price, right_neck.price) if inverse else min(left_neck.price, right_neck.price)
     break_index: int | None = None
     break_time: pd.Timestamp | None = None
     break_price: float | None = None
@@ -1740,7 +1741,8 @@ def check_neckline_break_then_pullback(
         if break_index is None:
             candidate_break_price = float(df.loc[i, "high" if inverse else "low"])
             broke_neckline = candidate_break_price > neckline_price if inverse else candidate_break_price < neckline_price
-            if not broke_neckline:
+            broke_neck_boundary = candidate_break_price > neck_boundary_price if inverse else candidate_break_price < neck_boundary_price
+            if not (broke_neckline and broke_neck_boundary):
                 continue
             break_index = i
             break_time = df.loc[i, "datetime"]

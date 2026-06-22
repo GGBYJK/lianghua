@@ -131,7 +131,7 @@ def _scan_signal_pattern_score(signal: HeadShoulderTopSignal) -> int:
     return int(signal.pattern_score) if signal.pattern_score is not None else -1
 
 
-def _scan_signal_head_key(signal: HeadShoulderTopSignal) -> tuple[str, str, str, str]:
+def _scan_signal_head_key(signal: HeadShoulderTopSignal) -> tuple[str, str, str, str, str]:
     return (
         signal.symbol,
         signal.timeframe,
@@ -141,11 +141,38 @@ def _scan_signal_head_key(signal: HeadShoulderTopSignal) -> tuple[str, str, str,
     )
 
 
+def _is_pullback_alert_type(alert_type: str | None) -> bool:
+    return alert_type in {"head_shoulders_top_pullback", "inverse_head_shoulders_pullback"}
+
+
+def _scan_signal_time_priority(signal: HeadShoulderTopSignal) -> tuple[Any, int]:
+    return (
+        signal.retest_time or signal.break_time or signal.right_shoulder.time,
+        signal.right_shoulder.index,
+    )
+
+
 def filter_scan_signals_by_head_score_progression(signals: list[HeadShoulderTopSignal]) -> list[HeadShoulderTopSignal]:
-    best_score_by_head: dict[tuple[str, str, str, str], int] = {}
+    best_score_by_head: dict[tuple[str, str, str, str, str], int] = {}
+    earliest_pullback_by_head: dict[tuple[str, str, str, str, str], HeadShoulderTopSignal] = {}
+    for signal in signals:
+        if not _is_pullback_alert_type(signal.alert_type):
+            continue
+        key = _scan_signal_head_key(signal)
+        current = earliest_pullback_by_head.get(key)
+        if current is None or _scan_signal_time_priority(signal) < _scan_signal_time_priority(current):
+            earliest_pullback_by_head[key] = signal
+
+    seen_pullback_heads: set[tuple[str, str, str, str, str]] = set()
     filtered: list[HeadShoulderTopSignal] = []
     for signal in signals:
         key = _scan_signal_head_key(signal)
+        if _is_pullback_alert_type(signal.alert_type):
+            if key in seen_pullback_heads or earliest_pullback_by_head.get(key) is not signal:
+                continue
+            seen_pullback_heads.add(key)
+            filtered.append(signal)
+            continue
         score = _scan_signal_pattern_score(signal)
         best_score = best_score_by_head.get(key)
         if best_score is not None and score <= best_score:

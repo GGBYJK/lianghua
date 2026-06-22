@@ -589,6 +589,10 @@ def _storage_unique_key(alert: dict[str, Any]) -> str:
     return f"{alert['unique_key']}|pattern_score:{_alert_pattern_score(alert)}"
 
 
+def _is_pullback_alert_type(alert_type: str | None) -> bool:
+    return alert_type in {"head_shoulders_top_pullback", "inverse_head_shoulders_pullback"}
+
+
 def _signal_has_score_details(signal: Any) -> bool:
     if isinstance(signal, str):
         try:
@@ -672,6 +676,8 @@ def _alert_beats_existing_head_score(cursor: Any, alert: dict[str, Any]) -> bool
     existing_score = _max_existing_pattern_score_for_head(cursor, alert)
     if existing_score is None:
         return True
+    if _is_pullback_alert_type(alert.get("alert_type")):
+        return False
     return _alert_pattern_score(alert) > existing_score
 
 

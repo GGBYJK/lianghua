@@ -714,6 +714,52 @@ def test_top_pullback_requires_break_then_rise_to_quarter_level() -> None:
     assert result[7] == 97.5
 
 
+def test_inverse_pullback_requires_break_above_both_necks() -> None:
+    times = pd.date_range("2026-06-14 09:00:00", periods=6, freq="min")
+    df = pd.DataFrame({
+        "datetime": times,
+        "low": [100.0, 100.0, 100.0, 100.0, 108.0, 102.5],
+        "high": [101.0, 101.0, 101.0, 101.0, 112.0, 106.0],
+        "close": [100.0, 100.0, 100.0, 100.0, 111.0, 104.5],
+    })
+    left_neck = PivotPoint(0, times[0], 110.0, "high")
+    right_neck = PivotPoint(2, times[2], 115.0, "high")
+    right_shoulder = PivotPoint(3, times[3], 100.0, "low")
+
+    result = check_neckline_break_then_pullback(
+        df,
+        left_neck,
+        right_neck,
+        right_shoulder,
+        inverse=True,
+    )
+
+    assert not result[0]
+
+
+def test_top_pullback_requires_break_below_both_necks() -> None:
+    times = pd.date_range("2026-06-14 09:00:00", periods=6, freq="min")
+    df = pd.DataFrame({
+        "datetime": times,
+        "low": [100.0, 100.0, 100.0, 100.0, 88.0, 94.0],
+        "high": [101.0, 101.0, 101.0, 101.0, 92.0, 97.5],
+        "close": [100.0, 100.0, 100.0, 100.0, 90.0, 95.0],
+    })
+    left_neck = PivotPoint(0, times[0], 90.0, "low")
+    right_neck = PivotPoint(2, times[2], 85.0, "low")
+    right_shoulder = PivotPoint(3, times[3], 100.0, "high")
+
+    result = check_neckline_break_then_pullback(
+        df,
+        left_neck,
+        right_neck,
+        right_shoulder,
+        inverse=False,
+    )
+
+    assert not result[0]
+
+
 def test_pattern_score_scores_top_structure_thresholds_and_grade() -> None:
     close = [90, 92, 94, 96, 100, 98, 95, 102, 111, 104, 96, 99, 104, 100, 96]
     df = _pattern_test_df(
@@ -2662,3 +2708,41 @@ def test_scan_response_filters_same_head_same_timeframe_by_increasing_pattern_sc
         ("5m", 7, 81),
         ("3m", 5, 80),
     ]
+
+
+def test_scan_response_keeps_earliest_pullback_per_same_head() -> None:
+    from app import main
+
+    times = pd.date_range("2026-06-21 09:00:00", periods=8, freq="min")
+    left_shoulder = PivotPoint(0, times[0], 100, "low")
+    left_neck = PivotPoint(1, times[1], 110, "high")
+    head = PivotPoint(2, times[2], 90, "low")
+    right_neck = PivotPoint(3, times[3], 109, "high")
+
+    def signal(right_index: int, retest_index: int, pattern_score: int) -> HeadShoulderTopSignal:
+        return HeadShoulderTopSignal(
+            symbol="DCE.a2609",
+            timeframe="3m",
+            pattern="inverse_head_shoulders",
+            alert_type="inverse_head_shoulders_pullback",
+            left_shoulder=left_shoulder,
+            left_neck=left_neck,
+            head=head,
+            right_neck=right_neck,
+            right_shoulder=PivotPoint(right_index, times[right_index], 98 + right_index, "low"),
+            neckline_price=109,
+            confirmed=True,
+            score=0,
+            pattern_score=pattern_score,
+            break_time=times[4],
+            break_price=111,
+            retest_time=times[retest_index],
+            retest_price=102,
+            reasons=[],
+        )
+
+    later = signal(5, 7, 95)
+    earlier = signal(4, 6, 90)
+    kept = main.filter_scan_signals_by_head_score_progression([later, earlier])
+
+    assert kept == [earlier]

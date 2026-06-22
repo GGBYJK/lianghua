@@ -179,6 +179,39 @@ def test_same_head_same_timeframe_alert_requires_higher_pattern_score() -> None:
     assert _alert_beats_existing_head_score(cursor, new_alert)
 
 
+def test_same_head_pullback_alert_is_only_inserted_once() -> None:
+    existing_signal = {
+        "symbol": "DCE.a2609",
+        "timeframe": "3m",
+        "pattern": "inverse_head_shoulders",
+        "alert_type": "inverse_head_shoulders_pullback",
+        "head": {"time": "2026-06-22T09:51:00", "price": 4673},
+        "pattern_score": 90,
+    }
+    new_alert = {
+        "symbol": "DCE.a2609",
+        "timeframe": "3m",
+        "pattern": "inverse_head_shoulders",
+        "alert_type": "inverse_head_shoulders_pullback",
+        "signal_payload": {
+            **existing_signal,
+            "pattern_score": 95,
+        },
+    }
+
+    class Cursor:
+        def execute(self, sql, params) -> None:
+            self.params = params
+
+        def fetchall(self):
+            return [{"signal_payload": json.dumps(existing_signal), "unique_key": "existing"}]
+
+    cursor = Cursor()
+
+    assert not _alert_beats_existing_head_score(cursor, new_alert)
+    assert cursor.params == ("DCE.a2609", "3m", "inverse_head_shoulders")
+
+
 def test_same_head_different_timeframe_does_not_share_pattern_score_gate() -> None:
     existing_signal = {
         "symbol": "CZCE.SA609",
