@@ -5284,7 +5284,7 @@ button:disabled {
   transition: transform 0.16s ease;
 }
 
-.message-tree-group[open] .message-tree-marker {
+.message-tree-group[open] > .message-tree-summary .message-tree-marker {
   transform: rotate(90deg);
 }
 
@@ -5347,8 +5347,92 @@ button:disabled {
   padding: 8px 8px 10px 20px;
 }
 
+.feedback-tree-list {
+  gap: 12px;
+}
+
+.feedback-symbol-group {
+  border-color: #d7d7dc;
+}
+
+.feedback-symbol-summary {
+  min-height: 54px;
+  background: #f9f9fb;
+}
+
+.feedback-symbol-summary strong {
+  font-size: 16px;
+}
+
+.feedback-symbol-children {
+  gap: 10px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.feedback-head-group {
+  border-color: #ececf0;
+}
+
+.feedback-head-group + .feedback-head-group {
+  margin-top: 0;
+}
+
+.feedback-head-summary {
+  min-height: 46px;
+  background: #ffffff;
+}
+
+.feedback-head-children {
+  padding-left: 12px;
+}
+
+.feedback-tree-list .message-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.feedback-tree-list .message-card-actions {
+  grid-column: 1 / -1;
+}
+
 .monitor-message-list {
   gap: 12px;
+}
+
+.monitor-symbol-group {
+  border-color: #d7d7dc;
+}
+
+.monitor-symbol-summary {
+  min-height: 54px;
+  background: #f9f9fb;
+}
+
+.monitor-symbol-summary strong {
+  font-size: 16px;
+}
+
+.monitor-symbol-children {
+  gap: 10px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.monitor-head-group {
+  border-color: #ececf0;
+}
+
+.monitor-head-group + .monitor-head-group {
+  margin-top: 0;
+}
+
+.monitor-head-summary {
+  min-height: 46px;
+  background: #ffffff;
+}
+
+.monitor-head-children {
+  padding-left: 12px;
 }
 
 .monitor-message-list .message-item {

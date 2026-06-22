@@ -1660,30 +1660,40 @@ function MonitorAlertFeed({
 }) {
   const groupRefs = useRef<Record<string, HTMLDetailsElement | null>>({});
   const groupedAlerts = useMemo(() => {
-    const groups = new Map<string, HeadShouldersAlertSummary[]>();
+    const symbolGroups = new Map<string, HeadShouldersAlertSummary[]>();
     for (const alert of alerts) {
       const symbol = alert.symbol || "UNKNOWN";
-      const headPrice = Number(alert.signal_payload.head.price);
-      const headKey = Number.isFinite(headPrice) ? headPrice.toFixed(8) : "UNKNOWN_HEAD";
-      const key = `${symbol}::${headKey}`;
-      const group = groups.get(key);
+      const group = symbolGroups.get(symbol);
       if (group) {
         group.push(alert);
       } else {
-        groups.set(key, [alert]);
+        symbolGroups.set(symbol, [alert]);
       }
     }
-    return Array.from(groups, ([key, items]) => {
-      const first = items[0];
-      const timeframes = Array.from(new Set(items.map((alert) => alert.timeframe))).join(" / ");
-      return {
-        key,
-        symbol: first.symbol || "UNKNOWN",
-        headPrice: first.signal_payload.head.price,
-        timeframes,
-        alerts: items,
-        confirmedCount: items.filter((alert) => alert.alert_type === "neckline_break").length,
-        latestTime: formatMessageTreeLatestTime(items.reduce<string | null>((latest, alert) => {
+
+    return Array.from(symbolGroups, ([symbol, symbolAlerts]) => {
+      const headGroups = new Map<string, HeadShouldersAlertSummary[]>();
+      for (const alert of symbolAlerts) {
+        const headPrice = Number(alert.signal_payload.head.price);
+        const headTime = alert.signal_payload.head.time || "UNKNOWN_TIME";
+        const headIndex = alert.signal_payload.head.index;
+        const key = [
+          alert.signal_payload.pattern,
+          headTime,
+          Number.isFinite(headIndex) ? headIndex : "UNKNOWN_INDEX",
+          Number.isFinite(headPrice) ? headPrice.toFixed(8) : "UNKNOWN_HEAD",
+        ].join("::");
+        const group = headGroups.get(key);
+        if (group) {
+          group.push(alert);
+        } else {
+          headGroups.set(key, [alert]);
+        }
+      }
+
+      const heads = Array.from(headGroups, ([key, items]) => {
+        const first = items[0];
+        const latestCreatedAt = items.reduce<string | null>((latest, alert) => {
           if (!alert.created_at) {
             return latest;
           }
@@ -1691,7 +1701,33 @@ function MonitorAlertFeed({
             return alert.created_at;
           }
           return alert.created_at > latest ? alert.created_at : latest;
-        }, null)),
+        }, null);
+        return {
+          key,
+          alert: first,
+          alerts: items,
+          timeframes: Array.from(new Set(items.map((alert) => alert.timeframe))).join(" / "),
+          confirmedCount: items.filter((alert) => alert.alert_type === "neckline_break").length,
+          latestTime: formatMessageTreeLatestTime(latestCreatedAt),
+        };
+      });
+
+      const latestCreatedAt = symbolAlerts.reduce<string | null>((latest, alert) => {
+        if (!alert.created_at) {
+          return latest;
+        }
+        if (!latest) {
+          return alert.created_at;
+        }
+        return alert.created_at > latest ? alert.created_at : latest;
+      }, null);
+
+      return {
+        symbol,
+        alerts: symbolAlerts,
+        heads,
+        confirmedCount: symbolAlerts.filter((alert) => alert.alert_type === "neckline_break").length,
+        latestTime: formatMessageTreeLatestTime(latestCreatedAt),
       };
     });
   }, [alerts]);
@@ -1701,7 +1737,7 @@ function MonitorAlertFeed({
       return;
     }
     const targetGroup = groupedAlerts.find((group) => group.symbol === targetSymbol);
-    const target = targetGroup ? groupRefs.current[targetGroup.key] : null;
+    const target = targetGroup ? groupRefs.current[targetGroup.symbol] : null;
     if (!target) {
       return;
     }
@@ -1718,17 +1754,17 @@ function MonitorAlertFeed({
         <p className="empty">&#26242;&#26080;&#30417;&#25511;&#28040;&#24687;&#12290;</p>
       ) : groupedAlerts.map((group) => (
             <details
-              className="message-tree-group"
-              key={group.key}
+              className="message-tree-group monitor-symbol-group"
+              key={group.symbol}
               ref={(element) => {
-                groupRefs.current[group.key] = element;
+                groupRefs.current[group.symbol] = element;
               }}
             >
-              <summary className="message-tree-summary">
+              <summary className="message-tree-summary monitor-symbol-summary">
                 <span className="message-tree-marker" aria-hidden="true" />
                 <div>
-                  <strong>{group.symbol} 头部价格：{formatPrice(group.headPrice)}</strong>
-                  <small>{group.alerts.length} &#26465;&#30417;&#25511;&#28040;&#24687; · {group.timeframes}</small>
+                  <strong>{group.symbol}</strong>
+                  <small>{group.alerts.length} 条监控消息 · {group.heads.length} 个头部分类</small>
                 </div>
                 <span className="message-tree-summary-meta">
                   <span className="message-tree-latest-time">
@@ -1741,53 +1777,78 @@ function MonitorAlertFeed({
                   {group.confirmedCount > 0 && <b>{group.confirmedCount}</b>}
                 </span>
               </summary>
-              <div className="message-tree-children">
-                {group.alerts.map((alert) => (
-                  <article
-                    className={`message-item ${alert.alert_type === "neckline_break" ? "confirmed" : ""} ${selectedId === alert.id ? "selected" : ""}`}
-                    key={alert.id}
-                    onClick={() => onSelect(alert)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        onSelect(alert);
-                      }
-                    }}
-                  >
-                    <button type="button" className="message-close-button monitor-close-button" aria-label="&#20851;&#38381;" onClick={(event) => { event.stopPropagation(); onHide(alert.id); }}>
-                      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                        <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
-                      </svg>
-                    </button>
-                    <div className="message-main monitor-message-main">
-                      <div className="monitor-alert-tags">
-                        <span className={`monitor-tag timeframe-tag timeframe-${alert.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{alert.timeframe}</span>
-                        <span className={`monitor-tag pattern-tag ${alert.pattern}`}>{patternLabel(alert.pattern)}</span>
-                        <span className={`monitor-tag trend-tag ${trendTagClass(alert.signal_payload)}`}>{trendLabel(alert.signal_payload)}</span>
-                        <button type="button" className="monitor-tag score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>{alert.score}</button>
-                        {alert.signal_payload.pattern_score != null && (
-                          <button type="button" className="monitor-tag pattern-score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>
-                            形态 {alert.signal_payload.pattern_score} · {alert.signal_payload.pattern_grade || "-"}
+              <div className="message-tree-children monitor-symbol-children">
+                {group.heads.map((headGroup) => (
+                  <details className="message-tree-group monitor-head-group" key={headGroup.key}>
+                    <summary className="message-tree-summary monitor-head-summary">
+                      <span className="message-tree-marker" aria-hidden="true" />
+                      <div>
+                        <strong>
+                          {patternLabel(headGroup.alert.pattern)} 头部价格：{formatPrice(headGroup.alert.signal_payload.head.price)}
+                        </strong>
+                        <small>{headGroup.alerts.length} 条监控消息 · {headGroup.timeframes}</small>
+                      </div>
+                      <span className="message-tree-summary-meta">
+                        <span className="message-tree-latest-time">
+                          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                            <circle cx="8" cy="8" r="5.5" />
+                            <path d="M8 4.8v3.4l2.3 1.4" />
+                          </svg>
+                          {headGroup.latestTime}
+                        </span>
+                        {headGroup.confirmedCount > 0 && <b>{headGroup.confirmedCount}</b>}
+                      </span>
+                    </summary>
+                    <div className="message-tree-children monitor-head-children">
+                      {headGroup.alerts.map((alert) => (
+                        <article
+                          className={`message-item ${alert.alert_type === "neckline_break" ? "confirmed" : ""} ${selectedId === alert.id ? "selected" : ""}`}
+                          key={alert.id}
+                          onClick={() => onSelect(alert)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              onSelect(alert);
+                            }
+                          }}
+                        >
+                          <button type="button" className="message-close-button monitor-close-button" aria-label="&#20851;&#38381;" onClick={(event) => { event.stopPropagation(); onHide(alert.id); }}>
+                            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                              <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+                            </svg>
                           </button>
-                        )}
-                      </div>
-                      <div className="monitor-message-footer">
-                        <div className="message-card-actions">
-                          <button type="button" className="message-detail-button" onClick={(event) => { event.stopPropagation(); onOpenDetail(alert); }}>&#35814;&#24773;</button>
-                          <button type="button" className="message-detail-button" onClick={(event) => { event.stopPropagation(); onFeedback(alert); }}>&#21453;&#39304;</button>
-                        </div>
-                        <time>{alert.created_at ? formatAlertTime(alert.created_at) : "--"}</time>
-                      </div>
+                          <div className="message-main monitor-message-main">
+                            <div className="monitor-alert-tags">
+                              <span className={`monitor-tag timeframe-tag timeframe-${alert.timeframe.replace(/[^a-zA-Z0-9]/g, "")}`}>{alert.timeframe}</span>
+                              <span className={`monitor-tag pattern-tag ${alert.pattern}`}>{patternLabel(alert.pattern)}</span>
+                              <span className={`monitor-tag trend-tag ${trendTagClass(alert.signal_payload)}`}>{trendLabel(alert.signal_payload)}</span>
+                              <button type="button" className="monitor-tag score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>{alert.score}</button>
+                              {alert.signal_payload.pattern_score != null && (
+                                <button type="button" className="monitor-tag pattern-score-tag score-detail-trigger" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>
+                                  形态 {alert.signal_payload.pattern_score} · {alert.signal_payload.pattern_grade || "-"}
+                                </button>
+                              )}
+                            </div>
+                            <div className="monitor-message-footer">
+                              <div className="message-card-actions">
+                                <button type="button" className="message-detail-button" onClick={(event) => { event.stopPropagation(); onOpenDetail(alert); }}>&#35814;&#24773;</button>
+                                <button type="button" className="message-detail-button" onClick={(event) => { event.stopPropagation(); onFeedback(alert); }}>&#21453;&#39304;</button>
+                              </div>
+                              <time>{alert.created_at ? formatAlertTime(alert.created_at) : "--"}</time>
+                            </div>
+                          </div>
+                          <button type="button" className="score-badge-button" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>{alert.score}</button>
+                          {alert.signal_payload.pattern_score != null && (
+                            <button type="button" className="score-badge-button pattern-score-badge-button" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>
+                              形态 {alert.signal_payload.pattern_score} · {alert.signal_payload.pattern_grade || "-"}
+                            </button>
+                          )}
+                        </article>
+                      ))}
                     </div>
-                    <button type="button" className="score-badge-button" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>{alert.score}</button>
-                    {alert.signal_payload.pattern_score != null && (
-                      <button type="button" className="score-badge-button pattern-score-badge-button" onClick={(event) => { event.stopPropagation(); onOpenScoreDetail(alert.signal_payload); }}>
-                        形态 {alert.signal_payload.pattern_score} · {alert.signal_payload.pattern_grade || "-"}
-                      </button>
-                    )}
-                  </article>
+                  </details>
                 ))}
               </div>
             </details>
@@ -1807,30 +1868,153 @@ function FeedbackFeed({
   onSelect: (feedback: AlertFeedback) => void;
   onDelete: (id: string) => void;
 }) {
+  const groupedFeedbacks = useMemo(() => {
+    const symbolGroups = new Map<string, AlertFeedback[]>();
+    for (const feedback of feedbacks) {
+      const symbol = feedback.symbol || "UNKNOWN";
+      const group = symbolGroups.get(symbol);
+      if (group) {
+        group.push(feedback);
+      } else {
+        symbolGroups.set(symbol, [feedback]);
+      }
+    }
+
+    return Array.from(symbolGroups, ([symbol, symbolFeedbacks]) => {
+      const headGroups = new Map<string, AlertFeedback[]>();
+      for (const feedback of symbolFeedbacks) {
+        const headPrice = Number(feedback.signal_payload.head.price);
+        const headTime = feedback.signal_payload.head.time || "UNKNOWN_TIME";
+        const headIndex = feedback.signal_payload.head.index;
+        const headKey = [
+          feedback.signal_payload.pattern,
+          headTime,
+          Number.isFinite(headIndex) ? headIndex : "UNKNOWN_INDEX",
+          Number.isFinite(headPrice) ? headPrice.toFixed(8) : "UNKNOWN_HEAD",
+        ].join("::");
+        const headGroup = headGroups.get(headKey);
+        if (headGroup) {
+          headGroup.push(feedback);
+        } else {
+          headGroups.set(headKey, [feedback]);
+        }
+      }
+
+      const heads = Array.from(headGroups, ([key, items]) => {
+        const first = items[0];
+        const latestCreatedAt = items.reduce<string | null>((latest, feedback) => {
+          if (!feedback.created_at) {
+            return latest;
+          }
+          if (!latest) {
+            return feedback.created_at;
+          }
+          return feedback.created_at > latest ? feedback.created_at : latest;
+        }, null);
+        return {
+          key,
+          feedback: first,
+          feedbacks: items,
+          timeframes: Array.from(new Set(items.map((feedback) => feedback.timeframe))).join(" / "),
+          latestTime: formatMessageTreeLatestTime(latestCreatedAt),
+        };
+      });
+
+      const latestCreatedAt = symbolFeedbacks.reduce<string | null>((latest, feedback) => {
+        if (!feedback.created_at) {
+          return latest;
+        }
+        if (!latest) {
+          return feedback.created_at;
+        }
+        return feedback.created_at > latest ? feedback.created_at : latest;
+      }, null);
+
+      return {
+        symbol,
+        feedbacks: symbolFeedbacks,
+        heads,
+        latestTime: formatMessageTreeLatestTime(latestCreatedAt),
+      };
+    });
+  }, [feedbacks]);
+
   return (
-    <div className="message-list">
+    <div className="message-list feedback-tree-list">
       {feedbacks.length === 0 ? (
         <p className="empty">&#26242;&#26080;&#21453;&#39304;&#35760;&#24405;&#12290;</p>
-      ) : feedbacks.map((feedback) => (
-        <article
-          className={`message-item ${feedback.alert_type === "neckline_break" ? "confirmed" : ""} ${selectedId === feedback.id ? "selected" : ""}`}
-          key={feedback.id}
-          onClick={() => onSelect(feedback)}
-          role="button"
-          tabIndex={0}
-        >
-          <div className="message-main">
-            <strong>{feedback.symbol} / {feedback.timeframe}</strong>
-            <span>{patternLabel(feedback.pattern)} &middot; {trendLabel(feedback.signal_payload)}</span>
-            <small>{feedback.created_at ? formatAlertTime(feedback.created_at) : "--"}</small>
-            {feedback.feedback_note && <p className="feedback-note-preview">{feedback.feedback_note}</p>}
+      ) : groupedFeedbacks.map((symbolGroup) => (
+        <details className="message-tree-group feedback-symbol-group" key={symbolGroup.symbol} open>
+          <summary className="message-tree-summary feedback-symbol-summary">
+            <span className="message-tree-marker" aria-hidden="true" />
+            <div>
+              <strong>{symbolGroup.symbol}</strong>
+              <small>{symbolGroup.feedbacks.length} 条反馈 · {symbolGroup.heads.length} 个头部分类</small>
+            </div>
+            <span className="message-tree-summary-meta">
+              <span className="message-tree-latest-time">
+                <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <circle cx="8" cy="8" r="5.5" />
+                  <path d="M8 4.8v3.4l2.3 1.4" />
+                </svg>
+                {symbolGroup.latestTime}
+              </span>
+            </span>
+          </summary>
+          <div className="message-tree-children feedback-symbol-children">
+            {symbolGroup.heads.map((headGroup) => (
+              <details className="message-tree-group feedback-head-group" key={headGroup.key} open>
+                <summary className="message-tree-summary feedback-head-summary">
+                  <span className="message-tree-marker" aria-hidden="true" />
+                  <div>
+                    <strong>
+                      {patternLabel(headGroup.feedback.pattern)} 头部价格：{formatPrice(headGroup.feedback.signal_payload.head.price)}
+                    </strong>
+                    <small>{headGroup.feedbacks.length} 条反馈 · {headGroup.timeframes}</small>
+                  </div>
+                  <span className="message-tree-summary-meta">
+                    <span className="message-tree-latest-time">
+                      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                        <circle cx="8" cy="8" r="5.5" />
+                        <path d="M8 4.8v3.4l2.3 1.4" />
+                      </svg>
+                      {headGroup.latestTime}
+                    </span>
+                  </span>
+                </summary>
+                <div className="message-tree-children feedback-head-children">
+                  {headGroup.feedbacks.map((feedback) => (
+                    <article
+                      className={`message-item ${feedback.alert_type === "neckline_break" ? "confirmed" : ""} ${selectedId === feedback.id ? "selected" : ""}`}
+                      key={feedback.id}
+                      onClick={() => onSelect(feedback)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onSelect(feedback);
+                        }
+                      }}
+                    >
+                      <div className="message-main">
+                        <strong>{feedback.timeframe}</strong>
+                        <span>{trendLabel(feedback.signal_payload)}</span>
+                        <small>{feedback.created_at ? formatAlertTime(feedback.created_at) : "--"}</small>
+                        {feedback.feedback_note && <p className="feedback-note-preview">{feedback.feedback_note}</p>}
+                      </div>
+                      <b>{feedback.score}</b>
+                      <div className="message-card-actions">
+                        <button type="button" className="message-detail-button" onClick={(event) => { event.stopPropagation(); onSelect(feedback); }}>&#26597;&#30475;</button>
+                        <button type="button" className="message-detail-button muted-button" onClick={(event) => { event.stopPropagation(); onDelete(feedback.id); }}>&#21024;&#38500;</button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </details>
+            ))}
           </div>
-          <b>{feedback.score}</b>
-          <div className="message-card-actions">
-            <button type="button" className="message-detail-button" onClick={(event) => { event.stopPropagation(); onSelect(feedback); }}>&#26597;&#30475;</button>
-            <button type="button" className="message-detail-button muted-button" onClick={(event) => { event.stopPropagation(); onDelete(feedback.id); }}>&#21024;&#38500;</button>
-          </div>
-        </article>
+        </details>
       ))}
     </div>
   );
