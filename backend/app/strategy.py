@@ -27,7 +27,6 @@ class HeadShoulderTopConfig:
     pivot_right: int = 3
     min_shoulder_to_head_height_ratio: float = 0.3
     max_shoulder_diff_pct: float = 0.004
-    max_neck_diff_pct: float = 0.004
     min_right_leg_to_left_leg_ratio: float = 0.6
     max_right_leg_to_left_leg_ratio: float = 2.0
     enable_right_leg_ratio_filter: bool = True
@@ -1358,8 +1357,6 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
         return False, [f"左右肩差异过大，当前 {shoulder_diff * 100:.2f}%"], 0
 
     neck_diff = abs(p2.price - p4.price) / max(p2.price, p4.price)
-    if neck_diff > config.max_neck_diff_pct:
-        return False, [f"两个颈线低点差异过大，当前 {neck_diff * 100:.2f}%"], 0
 
     if p5.price < p1.price * config.min_right_shoulder_ratio_to_left:
         return False, ["右肩过低，更像直接下跌，不像标准头肩顶"], 0
@@ -1416,7 +1413,7 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
     return True, [
         "头部高于左右肩",
         f"左右肩高度接近，差异 {shoulder_diff * 100:.2f}%",
-        f"两个颈线低点接近，差异 {neck_diff * 100:.2f}%",
+        f"两个颈线低点差异 {neck_diff * 100:.2f}%",
         f"左肩高度占左颈到头部高度 {left_shoulder_height_ratio * 100:.2f}%",
         f"右肩高度占右颈到头部高度 {right_shoulder_height_ratio * 100:.2f}%",
         f"右颈到右肩K线数量为左肩到左颈的 {leg_ratio:.2f} 倍",
@@ -1459,8 +1456,6 @@ def validate_inverse_head_shoulders_structure(
         return False, [f"左右肩差异过大，当前 {shoulder_diff * 100:.2f}%"], 0
 
     neck_diff = abs(p2.price - p4.price) / max(p2.price, p4.price)
-    if neck_diff > config.max_neck_diff_pct:
-        return False, [f"两个颈线高点差异过大，当前 {neck_diff * 100:.2f}%"], 0
 
     max_right_shoulder_price = p1.price * (2 - config.min_right_shoulder_ratio_to_left)
     if p5.price > max_right_shoulder_price:
@@ -1519,7 +1514,7 @@ def validate_inverse_head_shoulders_structure(
     return True, [
         "头部低于左右肩",
         f"左右肩高度接近，差异 {shoulder_diff * 100:.2f}%",
-        f"两个颈线高点接近，差异 {neck_diff * 100:.2f}%",
+        f"两个颈线高点差异 {neck_diff * 100:.2f}%",
         f"左肩高度占左颈到头部高度 {left_shoulder_height_ratio * 100:.2f}%",
         f"右肩高度占右颈到头部高度 {right_shoulder_height_ratio * 100:.2f}%",
         f"右颈到右肩K线数量为左肩到左颈的 {leg_ratio:.2f} 倍",
