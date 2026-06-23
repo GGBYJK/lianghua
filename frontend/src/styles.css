@@ -6094,6 +6094,26 @@ button:disabled {
   height: 75%;
 }
 
+.page-monitor > .feedback-panel {
+  min-height: 0;
+  height: 100%;
+}
+
+.page-monitor .feedback-tabs-panel {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.page-monitor .monitor-message-list {
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
 .page-pool .pool-panel {
   overflow-y: auto;
   overflow-x: hidden;

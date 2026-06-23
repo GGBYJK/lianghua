@@ -179,7 +179,7 @@ def test_same_head_same_timeframe_alert_requires_higher_pattern_score() -> None:
     cursor = Cursor()
 
     assert not _alert_beats_existing_head_score(cursor, new_alert)
-    assert cursor.params == ("CZCE.SA609", "3m", "inverse_head_shoulders")
+    assert cursor.params == ("CZCE.SA609", "inverse_head_shoulders")
 
     new_alert["signal_payload"]["pattern_score"] = 83
     assert _alert_beats_existing_head_score(cursor, new_alert)
@@ -201,7 +201,7 @@ def test_same_head_pullback_alert_is_only_inserted_once() -> None:
         "alert_type": "inverse_head_shoulders_pullback",
         "signal_payload": {
             **existing_signal,
-            "pattern_score": 95,
+            "pattern_score": 90,
         },
     }
 
@@ -215,10 +215,44 @@ def test_same_head_pullback_alert_is_only_inserted_once() -> None:
     cursor = Cursor()
 
     assert not _alert_beats_existing_head_score(cursor, new_alert)
-    assert cursor.params == ("DCE.a2609", "3m", "inverse_head_shoulders")
+    assert cursor.params == ("DCE.a2609", "inverse_head_shoulders")
 
 
-def test_same_head_different_timeframe_does_not_share_pattern_score_gate() -> None:
+def test_pullback_alert_does_not_share_score_gate_with_normal_alert() -> None:
+    existing_signal = {
+        "symbol": "DCE.a2609",
+        "timeframe": "3m",
+        "pattern": "inverse_head_shoulders",
+        "alert_type": "right_shoulder_confirmed",
+        "head": {"time": "2026-06-22T09:51:00", "price": 4673},
+        "pattern_score": 95,
+    }
+    new_alert = {
+        "symbol": "DCE.a2609",
+        "timeframe": "3m",
+        "pattern": "inverse_head_shoulders",
+        "alert_type": "inverse_head_shoulders_pullback",
+        "signal_payload": {
+            **existing_signal,
+            "alert_type": "inverse_head_shoulders_pullback",
+            "pattern_score": 90,
+        },
+    }
+
+    class Cursor:
+        def execute(self, sql, params) -> None:
+            self.params = params
+
+        def fetchall(self):
+            return [{"signal_payload": json.dumps(existing_signal), "unique_key": "existing"}]
+
+    cursor = Cursor()
+
+    assert _alert_beats_existing_head_score(cursor, new_alert)
+    assert cursor.params == ("DCE.a2609", "inverse_head_shoulders")
+
+
+def test_same_head_different_timeframe_requires_higher_pattern_score() -> None:
     existing_signal = {
         "symbol": "CZCE.SA609",
         "timeframe": "3m",
@@ -246,8 +280,11 @@ def test_same_head_different_timeframe_does_not_share_pattern_score_gate() -> No
 
     cursor = Cursor()
 
+    assert not _alert_beats_existing_head_score(cursor, new_alert)
+    assert cursor.params == ("CZCE.SA609", "inverse_head_shoulders")
+
+    new_alert["signal_payload"]["pattern_score"] = 83
     assert _alert_beats_existing_head_score(cursor, new_alert)
-    assert cursor.params == ("CZCE.SA609", "5m", "inverse_head_shoulders")
 
 
 def test_same_head_score_gate_is_separate_per_pattern() -> None:
@@ -281,7 +318,7 @@ def test_same_head_score_gate_is_separate_per_pattern() -> None:
     cursor = Cursor()
 
     assert _alert_beats_existing_head_score(cursor, new_alert)
-    assert cursor.params == ("SHFE.sp2609", "3m", "inverse_head_shoulders")
+    assert cursor.params == ("SHFE.sp2609", "inverse_head_shoulders")
 
 
 def test_score_detail_detection_handles_new_and_legacy_payloads() -> None:

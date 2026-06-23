@@ -568,18 +568,24 @@ def _format_head_price(value: Any) -> str | None:
         return None
 
 
+def _is_pullback_alert_type(alert_type: str | None) -> bool:
+    return alert_type in {"head_shoulders_top_pullback", "inverse_head_shoulders_pullback"}
+
+
 def _alert_head_progression_key(alert: dict[str, Any]) -> str:
     signal = _signal_from_alert(alert)
     head = signal.get("head") if isinstance(signal.get("head"), dict) else {}
     head_price = _format_head_price(head.get("price"))
     head_identity = f"price:{head_price}" if head_price is not None else f"time:{head.get('time', '')}"
+    alert_type = signal.get("alert_type", alert.get("alert_type", ""))
+    timeframe = signal.get("timeframe", alert.get("timeframe", "")) if _is_pullback_alert_type(alert_type) else ""
     return "|".join(
         str(part)
         for part in [
             signal.get("symbol", alert.get("symbol", "")),
-            signal.get("timeframe", alert.get("timeframe", "")),
+            timeframe,
             signal.get("pattern", alert.get("pattern", "")),
-            signal.get("alert_type", alert.get("alert_type", "")),
+            alert_type if _is_pullback_alert_type(alert_type) else "",
             head_identity,
         ]
     )
@@ -587,10 +593,6 @@ def _alert_head_progression_key(alert: dict[str, Any]) -> str:
 
 def _storage_unique_key(alert: dict[str, Any]) -> str:
     return f"{alert['unique_key']}|pattern_score:{_alert_pattern_score(alert)}"
-
-
-def _is_pullback_alert_type(alert_type: str | None) -> bool:
-    return alert_type in {"head_shoulders_top_pullback", "inverse_head_shoulders_pullback"}
 
 
 def _signal_has_score_details(signal: Any) -> bool:
@@ -653,14 +655,12 @@ def _max_existing_pattern_score_for_head(cursor: Any, alert: dict[str, Any]) -> 
         FROM head_shoulders_alerts
         WHERE hidden_at IS NULL
           AND symbol = %s
-          AND timeframe = %s
           AND pattern = %s
         ORDER BY created_at DESC, id DESC
         LIMIT 300
         """,
         (
             alert["symbol"],
-            alert["timeframe"],
             alert["pattern"],
         ),
     )
