@@ -274,7 +274,7 @@ class TqSdkMarketService:
         subscription = subscriptions.get(key)
         if subscription is None or subscription.limit < limit:
             self._ensure_contract_listed(api, tq_symbol)
-            data_length = max(limit, int(os.getenv("TQ_MIN_DATA_LENGTH", "420")))
+            data_length = max(limit, int(os.getenv("TQ_MIN_DATA_LENGTH", "240")))
             previous_waiters = subscription.waiters if subscription and subscription.waiters else []
             subscription = TqKlineSubscription(
                 tq_symbol=tq_symbol,

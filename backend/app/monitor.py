@@ -412,71 +412,111 @@ def build_watch_pool_config_overrides(item: dict[str, Any]) -> dict[str, Any] | 
     return overrides or None
 
 
-async def scan_watch_pool_once(limit: int = 420) -> int:
+def watch_pool_scan_concurrency() -> int:
+    return max(1, int(os.getenv("WATCH_POOL_SCAN_CONCURRENCY", "3")))
+
+
+async def scan_watch_pool_item(item: dict[str, Any], limit: int) -> int:
     inserted = 0
-    items = list_enabled_watch_pool_items()
-    logger.info("manual watch pool scan started: enabled_items=%s limit=%s", len(items), limit)
+    logger.info(
+        "watch pool item scan started: id=%s name=%s symbol=%s timeframe=%s",
+        item["id"],
+        item.get("name"),
+        item["symbol"],
+        item["timeframe"],
+    )
+    df, hourly_df, daily_df = await asyncio.gather(
+        fetch_kline_from_market(symbol=item["symbol"], period=item["timeframe"], limit=limit),
+        fetch_kline_from_market(symbol=item["symbol"], period="1h", limit=max(80, min(limit, 240))),
+        fetch_kline_from_market(symbol=item["symbol"], period="1d", limit=max(80, min(limit, 240))),
+    )
+    signals, chart = scan_dataframe_payload(
+        df,
+        symbol=item["symbol"],
+        timeframe=item["timeframe"],
+        config_overrides=build_watch_pool_config_overrides(item),
+        hourly_df=hourly_df,
+        daily_df=daily_df,
+    )
+    for signal in signals:
+        if not should_emit_signal_for_item(signal, item):
+            logger.info(
+                "signal skipped before monitor start: watch_pool_id=%s symbol=%s timeframe=%s alert_type=%s",
+                item["id"],
+                signal.get("symbol"),
+                signal.get("timeframe"),
+                signal.get("alert_type"),
+            )
+            continue
+        alert = {
+            "watch_pool_id": item["id"],
+            "symbol": signal["symbol"],
+            "timeframe": signal["timeframe"],
+            "pattern": signal["pattern"],
+            "alert_type": signal.get("alert_type", "neckline_break"),
+            "score": signal["score"],
+            "message": signal["message"],
+            "unique_key": build_signal_unique_key(signal),
+            "signal_payload": signal,
+            "chart_payload": chart,
+        }
+        if insert_head_shoulders_alert_if_new(alert):
+            inserted += 1
+            if should_send_wechat_workbot_notification(signal):
+                await send_wechat_workbot_notification(signal, item)
+            else:
+                logger.info(
+                    "wechat notification skipped by score rule: watch_pool_id=%s symbol=%s timeframe=%s alert_type=%s score=%s pattern_score=%s",
+                    item["id"],
+                    signal.get("symbol"),
+                    signal.get("timeframe"),
+                    signal.get("alert_type"),
+                    signal.get("score"),
+                    signal.get("pattern_score"),
+                )
+        else:
+            logger.info(
+                "duplicate alert skipped for notification: watch_pool_id=%s unique_key=%s",
+                item["id"],
+                alert["unique_key"],
+            )
+    logger.info(
+        "watch pool item scan finished: id=%s symbol=%s timeframe=%s rows=%s signals=%s inserted_alerts=%s",
+        item["id"],
+        item["symbol"],
+        item["timeframe"],
+        len(df),
+        len(signals),
+        inserted,
+    )
+    return inserted
+
+
+async def scan_watch_pool_items_concurrently(items: list[dict[str, Any]], limit: int, concurrency: int) -> tuple[int, int]:
+    semaphore = asyncio.Semaphore(concurrency)
     scanned = 0
-    for item in items:
-        try:
-            scanned += 1
-            df, hourly_df, daily_df = await asyncio.gather(
-                fetch_kline_from_market(symbol=item["symbol"], period=item["timeframe"], limit=limit),
-                fetch_kline_from_market(symbol=item["symbol"], period="1h", limit=max(80, min(limit, 240))),
-                fetch_kline_from_market(symbol=item["symbol"], period="1d", limit=max(80, min(limit, 240))),
-            )
-            signals, chart = scan_dataframe_payload(
-                df,
-                symbol=item["symbol"],
-                timeframe=item["timeframe"],
-                config_overrides=build_watch_pool_config_overrides(item),
-                hourly_df=hourly_df,
-                daily_df=daily_df,
-            )
-            for signal in signals:
-                if not should_emit_signal_for_item(signal, item):
-                    logger.info(
-                        "signal skipped before monitor start: watch_pool_id=%s symbol=%s timeframe=%s alert_type=%s",
-                        item["id"],
-                        signal.get("symbol"),
-                        signal.get("timeframe"),
-                        signal.get("alert_type"),
-                    )
-                    continue
-                alert = {
-                    "watch_pool_id": item["id"],
-                    "symbol": signal["symbol"],
-                    "timeframe": signal["timeframe"],
-                    "pattern": signal["pattern"],
-                    "alert_type": signal.get("alert_type", "neckline_break"),
-                    "score": signal["score"],
-                    "message": signal["message"],
-                    "unique_key": build_signal_unique_key(signal),
-                    "signal_payload": signal,
-                    "chart_payload": chart,
-                }
-                if insert_head_shoulders_alert_if_new(alert):
-                    inserted += 1
-                    if should_send_wechat_workbot_notification(signal):
-                        await send_wechat_workbot_notification(signal, item)
-                    else:
-                        logger.info(
-                            "wechat notification skipped by score rule: watch_pool_id=%s symbol=%s timeframe=%s alert_type=%s score=%s pattern_score=%s",
-                            item["id"],
-                            signal.get("symbol"),
-                            signal.get("timeframe"),
-                            signal.get("alert_type"),
-                            signal.get("score"),
-                            signal.get("pattern_score"),
-                        )
-                else:
-                    logger.info(
-                        "duplicate alert skipped for notification: watch_pool_id=%s unique_key=%s",
-                        item["id"],
-                        alert["unique_key"],
-                    )
-        except (MarketApiError, WatchPoolStoreError, Exception) as exc:
-            logger.warning("watch pool scan failed: item=%s error=%s", item, exc)
+    inserted = 0
+
+    async def scan_with_limit(item: dict[str, Any]) -> int:
+        nonlocal scanned
+        async with semaphore:
+            try:
+                scanned += 1
+                return await scan_watch_pool_item(item, limit)
+            except (MarketApiError, WatchPoolStoreError, Exception) as exc:
+                logger.warning("watch pool scan failed: item=%s error=%s", item, exc)
+                return 0
+
+    results = await asyncio.gather(*(scan_with_limit(item) for item in items))
+    inserted = sum(results)
+    return scanned, inserted
+
+
+async def scan_watch_pool_once(limit: int = 240) -> int:
+    items = list_enabled_watch_pool_items()
+    concurrency = watch_pool_scan_concurrency()
+    logger.info("manual watch pool scan started: enabled_items=%s limit=%s concurrency=%s", len(items), limit, concurrency)
+    scanned, inserted = await scan_watch_pool_items_concurrently(items, limit, concurrency)
     logger.info(
         "manual watch pool scan finished: enabled_items=%s scanned=%s inserted_alerts=%s",
         len(items),
@@ -489,9 +529,16 @@ async def scan_watch_pool_once(limit: int = 420) -> int:
 async def monitor_watch_pool_loop(stop_event: asyncio.Event) -> None:
     last_scan_by_item: dict[str, float] = {}
     poll_seconds = max(5, int(os.getenv("WATCH_POOL_POLL_SECONDS", "10")))
-    kline_limit = max(30, int(os.getenv("WATCH_POOL_KLINE_LIMIT", "420")))
+    kline_limit = max(30, int(os.getenv("WATCH_POOL_KLINE_LIMIT", "240")))
+    concurrency = watch_pool_scan_concurrency()
     loop = asyncio.get_running_loop()
-    logger.info("watch pool monitor started: poll_seconds=%s kline_limit=%s timezone=%s", poll_seconds, kline_limit, WATCH_POOL_TIMEZONE)
+    logger.info(
+        "watch pool monitor started: poll_seconds=%s kline_limit=%s concurrency=%s timezone=%s",
+        poll_seconds,
+        kline_limit,
+        concurrency,
+        WATCH_POOL_TIMEZONE,
+    )
 
     while not stop_event.is_set():
         enabled_count = 0
@@ -504,6 +551,7 @@ async def monitor_watch_pool_loop(stop_event: asyncio.Event) -> None:
             now = loop.time()
             items = list_enabled_watch_pool_items()
             enabled_count = len(items)
+            due_items: list[dict[str, Any]] = []
             for item in items:
                 if not is_in_trading_session(trading_sessions=item.get("trading_sessions")):
                     skipped_outside_session += 1
@@ -515,84 +563,8 @@ async def monitor_watch_pool_loop(stop_event: asyncio.Event) -> None:
                     continue
                 due_count += 1
                 last_scan_by_item[item["id"]] = now
-                try:
-                    scanned_count += 1
-                    logger.info(
-                        "watch pool item scan started: id=%s name=%s symbol=%s timeframe=%s interval_seconds=%s",
-                        item["id"],
-                        item.get("name"),
-                        item["symbol"],
-                        item["timeframe"],
-                        interval,
-                    )
-                    df, hourly_df, daily_df = await asyncio.gather(
-                        fetch_kline_from_market(symbol=item["symbol"], period=item["timeframe"], limit=kline_limit),
-                        fetch_kline_from_market(symbol=item["symbol"], period="1h", limit=max(80, min(kline_limit, 240))),
-                        fetch_kline_from_market(symbol=item["symbol"], period="1d", limit=max(80, min(kline_limit, 240))),
-                    )
-                    signals, chart = scan_dataframe_payload(
-                        df,
-                        symbol=item["symbol"],
-                        timeframe=item["timeframe"],
-                        config_overrides=build_watch_pool_config_overrides(item),
-                        hourly_df=hourly_df,
-                        daily_df=daily_df,
-                    )
-                    inserted_for_item = 0
-                    for signal in signals:
-                        if not should_emit_signal_for_item(signal, item):
-                            logger.info(
-                                "signal skipped before monitor start: watch_pool_id=%s symbol=%s timeframe=%s alert_type=%s",
-                                item["id"],
-                                signal.get("symbol"),
-                                signal.get("timeframe"),
-                                signal.get("alert_type"),
-                            )
-                            continue
-                        alert = {
-                            "watch_pool_id": item["id"],
-                            "symbol": signal["symbol"],
-                            "timeframe": signal["timeframe"],
-                            "pattern": signal["pattern"],
-                            "alert_type": signal.get("alert_type", "neckline_break"),
-                            "score": signal["score"],
-                            "message": signal["message"],
-                            "unique_key": build_signal_unique_key(signal),
-                            "signal_payload": signal,
-                            "chart_payload": chart,
-                        }
-                        if insert_head_shoulders_alert_if_new(alert):
-                            inserted_for_item += 1
-                            inserted_count += 1
-                            if should_send_wechat_workbot_notification(signal):
-                                await send_wechat_workbot_notification(signal, item)
-                            else:
-                                logger.info(
-                                    "wechat notification skipped by score rule: watch_pool_id=%s symbol=%s timeframe=%s alert_type=%s score=%s pattern_score=%s",
-                                    item["id"],
-                                    signal.get("symbol"),
-                                    signal.get("timeframe"),
-                                    signal.get("alert_type"),
-                                    signal.get("score"),
-                                    signal.get("pattern_score"),
-                                )
-                        else:
-                            logger.info(
-                                "duplicate alert skipped for notification: watch_pool_id=%s unique_key=%s",
-                                item["id"],
-                                alert["unique_key"],
-                            )
-                    logger.info(
-                        "watch pool item scan finished: id=%s symbol=%s timeframe=%s rows=%s signals=%s inserted_alerts=%s",
-                        item["id"],
-                        item["symbol"],
-                        item["timeframe"],
-                        len(df),
-                        len(signals),
-                        inserted_for_item,
-                    )
-                except (MarketApiError, WatchPoolStoreError, Exception) as exc:
-                    logger.warning("watch pool item scan failed: item=%s error=%s", item, exc)
+                due_items.append(item)
+            scanned_count, inserted_count = await scan_watch_pool_items_concurrently(due_items, kline_limit, concurrency)
         except (WatchPoolStoreError, Exception) as exc:
             logger.warning("watch pool loop failed: %s", exc)
         logger.info(

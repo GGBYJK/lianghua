@@ -265,7 +265,7 @@ function App() {
   const [selectedSignalKeys, setSelectedSignalKeys] = useState<Set<string>>(new Set());
   const [focusedSignalKey, setFocusedSignalKey] = useState<string | null>(null);
   const [marketSettings, setMarketSettings] = useState<MarketSettings | null>(null);
-  const [marketLimit, setMarketLimit] = useState(420);
+  const [marketLimit, setMarketLimit] = useState(240);
   const [marketLastFetch, setMarketLastFetch] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [watchPool, setWatchPool] = useState<WatchPoolItem[]>([]);

@@ -468,7 +468,7 @@ def update_contracts(payload: ContractCenterUpdateRequest) -> ContractCenterUpda
 
 
 @app.post("/api/alerts/scan-once")
-async def scan_alerts_once(limit: int = 420) -> dict[str, Any]:
+async def scan_alerts_once(limit: int = 240) -> dict[str, Any]:
     try:
         inserted = await scan_watch_pool_once(limit=limit)
         return {"inserted": inserted}

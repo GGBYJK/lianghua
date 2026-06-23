@@ -304,7 +304,7 @@ export async function updateContracts(params: {
   return response.json();
 }
 
-export async function scanWatchPoolOnce(limit = 420): Promise<{ inserted: number }> {
+export async function scanWatchPoolOnce(limit = 240): Promise<{ inserted: number }> {
   const url = new URL("/api/alerts/scan-once", API_BASE);
   url.searchParams.set("limit", String(limit));
   const response = await fetch(url, { method: "POST" });
