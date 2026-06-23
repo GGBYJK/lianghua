@@ -176,11 +176,44 @@ def format_signal_time(value: str | None) -> str:
     return parsed.astimezone(WATCH_POOL_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def format_compact_signal_time(value: str | None) -> str:
+def format_wechat_signal_time(value: str | None) -> str:
     parsed = parse_signal_time(value)
     if parsed is None:
         return "-"
-    return parsed.astimezone(WATCH_POOL_TIMEZONE).strftime("%Y%m%d %H:%M")
+    return parsed.astimezone(WATCH_POOL_TIMEZONE).strftime("%Y%m%d   %H:%M")
+
+
+def format_wechat_score(value: Any) -> str:
+    if value is None:
+        return "-"
+    try:
+        return str(int(value))
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def format_wechat_score_pair(signal: dict[str, Any]) -> str:
+    pattern_score = signal.get("pattern_score")
+    trend_score = signal.get("score")
+    if pattern_score is not None and trend_score is not None:
+        return f"{format_wechat_score(pattern_score)}+{format_wechat_score(trend_score)}"
+    if pattern_score is not None:
+        return format_wechat_score(pattern_score)
+    return format_wechat_score(trend_score)
+
+
+def format_wechat_price(value: Any) -> str:
+    if value is None:
+        return "-"
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def signal_pattern_metrics(signal: dict[str, Any]) -> dict[str, Any]:
+    metrics = signal.get("pattern_metrics")
+    return metrics if isinstance(metrics, dict) else {}
 
 
 def signal_notification_time(signal: dict[str, Any]) -> str | None:
@@ -192,18 +225,14 @@ def signal_notification_time(signal: dict[str, Any]) -> str | None:
 
 
 def build_wechat_workbot_content(signal: dict[str, Any], item: dict[str, Any]) -> str:
-    colon = ZH["colon"]
-    comma = "\uff0c"
-    score = signal.get("score")
-    return (
-        f"{ZH['new_pattern']}{colon}"
-        f"{signal.get('symbol')}{comma}"
-        f"{signal.get('timeframe')}{comma}"
-        f"{compact_pattern_label(signal.get('pattern'))}{comma}"
-        f"{format_compact_signal_time(signal_notification_time(signal))}{comma}"
-        f"{score}\u5206{comma}"
-        f"{trend_label_from_signal(signal)}"
-    )
+    metrics = signal_pattern_metrics(signal)
+    return "\n".join([
+        f"{compact_pattern_label(signal.get('pattern'))}：{signal.get('symbol')}  {signal.get('timeframe')}",
+        f"时间：{format_wechat_signal_time(signal_notification_time(signal))}",
+        f"评分：{format_wechat_score_pair(signal)}   {trend_label_from_signal(signal)}",
+        f"止损价：{format_wechat_price(metrics.get('stop'))}",
+        f"目标价：{format_wechat_price(metrics.get('target'))}",
+    ])
 
 
 def _int_signal_value(signal: dict[str, Any], key: str) -> int | None:

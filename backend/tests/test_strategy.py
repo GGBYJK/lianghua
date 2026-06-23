@@ -258,12 +258,20 @@ def test_tqsdk_utc_timestamp_displays_as_beijing_time_in_wechat_message() -> Non
         "pattern": "head_shoulders_top",
         "alert_type": "right_shoulder_confirmed",
         "score": 80,
+        "pattern_score": 77,
+        "pattern_metrics": {"stop": 2010.25, "target": 1988.75},
         "right_shoulder": {"time": normalized["datetime"].iloc[0].isoformat(), "price": 3329},
     }
 
     content = build_wechat_workbot_content(signal, {"name": "c0"})
 
-    assert content == "新形态：c0，1m，头肩顶，20260428 11:40，80分，强空头趋势"
+    assert content == (
+        "头肩顶：c0  1m\n"
+        "时间：20260428   11:40\n"
+        "评分：77+80   强空头趋势\n"
+        "止损价：2010.25\n"
+        "目标价：1988.75"
+    )
 
 
 def test_tqsdk_contract_query_filters_target_exchanges() -> None:

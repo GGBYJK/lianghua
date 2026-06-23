@@ -659,9 +659,15 @@ def test_wechat_workbot_content_includes_core_signal_fields() -> None:
         "pattern": "inverse_head_shoulders",
         "alert_type": "right_shoulder_confirmed",
         "score": 29,
+        "pattern_score": 64,
+        "pattern_metrics": {"stop": 3316.5, "target": 3378.25},
         "right_shoulder": {"time": "2026-06-05T09:06:00", "price": 3329},
     }
     assert (
         build_wechat_workbot_content(signal, {"name": "SHFE.hc2610"})
-        == "新形态：SHFE.hc2610，3m，反向头肩，20260605 09:06，29分，空头趋势下震荡"
+        == "反向头肩：SHFE.hc2610  3m\n"
+        "时间：20260605   09:06\n"
+        "评分：64+29   空头趋势下震荡\n"
+        "止损价：3316.50\n"
+        "目标价：3378.25"
     )
