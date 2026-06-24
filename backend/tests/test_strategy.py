@@ -795,7 +795,7 @@ def test_pattern_score_scores_top_structure_thresholds_and_grade() -> None:
     structure_scores = {item["label"]: item["score"] for item in structure["items"]}
     neckline_scores = {item["label"]: item["score"] for item in neckline["items"]}
     assert sum(section["max"] for section in result["sections"]) == 100
-    assert structure["max"] == 24
+    assert structure["max"] == 32
     assert neckline["max"] == 16
     assert time_section["max"] == 14
     assert trade["max"] == 14
@@ -807,6 +807,8 @@ def test_pattern_score_scores_top_structure_thresholds_and_grade() -> None:
     assert structure_scores["左右肩高度接近"] == 8
     assert structure_scores["左肩有效高度"] == 2
     assert structure_scores["右肩有效高度"] == 4
+    assert structure_scores["肩颈价差对称"] == 1
+    assert structure_scores["头颈价差对称"] == 4
     assert neckline_scores["左右颈价格接近"] == 10
     labels = {item["label"] for section in result["sections"] for item in section["items"]}
     assert "五点顺序清晰" not in labels
@@ -814,11 +816,12 @@ def test_pattern_score_scores_top_structure_thresholds_and_grade() -> None:
     assert "颈线斜率合理" not in labels
     assert "右肩已被确认" not in labels
     assert "触发前未失效" not in labels
-    assert "收盘价触及半程" in labels
+    assert "收盘价触及半程" not in labels
+    assert "右肩动能弱于头部" not in labels
     trigger = next(section for section in result["sections"] if section["key"] == "trigger")
     trigger_scores = {item["label"]: item["score"] for item in trigger["items"]}
-    assert trigger["max"] == 7
-    assert trigger_scores["收盘价触及半程"] == 4
+    assert trigger["max"] == 3
+    assert trigger_scores["触发速度"] == 3
     assert result["metrics"]["ds_qtr"] == pytest.approx(1.0)
     assert result["metrics"]["dn_qtr"] == pytest.approx(0.25)
     assert result["raw_score"] >= result["final_score"]
@@ -905,7 +908,7 @@ def test_pattern_score_inverse_uses_mirrored_direction_and_volume_proxy() -> Non
     structure_scores = {item["label"]: item["score"] for item in structure["items"]}
     assert structure_scores["头部突出度"] == 4
     assert result["metrics"]["rr"] > 0
-    assert "波动率代理" in momentum["items"][2]["detail"]
+    assert "波动率代理" in momentum["items"][1]["detail"]
 
 
 def test_pattern_quality_threshold_blocks_scores_below_sixty() -> None:

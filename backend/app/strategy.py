@@ -580,6 +580,29 @@ def _safe_ratio(numerator: float, denominator: float) -> float | None:
     return numerator / denominator
 
 
+def _symmetry_ratio(first: float, second: float) -> float | None:
+    first = abs(first)
+    second = abs(second)
+    higher = max(first, second)
+    if higher <= 0:
+        return None
+    return min(first, second) / higher
+
+
+def _symmetry_score(ratio: float | None) -> int:
+    if ratio is None or not math.isfinite(ratio):
+        return 0
+    if ratio >= 0.9:
+        return 4
+    if ratio >= 0.8:
+        return 3
+    if ratio >= 0.65:
+        return 2
+    if ratio >= 0.5:
+        return 1
+    return 0
+
+
 def _pattern_grade(score: int) -> str:
     if score >= 85:
         return "A"
@@ -702,6 +725,8 @@ def _pattern_structure_items(
     right_numerator = right_neck.price - right_shoulder.price if inverse else right_shoulder.price - right_neck.price
     left_height_ratio = _safe_ratio(left_numerator, left_denominator) if left_denominator > 0 and left_numerator >= 0 else None
     right_height_ratio = _safe_ratio(right_numerator, right_denominator) if right_denominator > 0 and right_numerator >= 0 else None
+    shoulder_neck_symmetry = _symmetry_ratio(left_numerator, right_numerator)
+    head_neck_symmetry = _symmetry_ratio(left_denominator, right_denominator)
 
     def shoulder_height_score(ratio: float | None) -> int:
         if ratio is None:
@@ -734,6 +759,8 @@ def _pattern_structure_items(
         _pattern_item("左右肩高度接近", shoulder_score, 10, f"DS={ds:.4f}，DS/QTR={ds_qtr if ds_qtr is not None else 0:.2f}"),
         _pattern_item("左肩有效高度", shoulder_height_score(left_height_ratio), 4, f"左肩到左颈高度占头部到左颈高度 {left_height_ratio if left_height_ratio is not None else 0:.2f}"),
         _pattern_item("右肩有效高度", shoulder_height_score(right_height_ratio), 4, f"右颈到右肩高度占头部到右颈高度 {right_height_ratio if right_height_ratio is not None else 0:.2f}"),
+        _pattern_item("肩颈价差对称", _symmetry_score(shoulder_neck_symmetry), 4, f"左肩-左颈={abs(left_numerator):.4f}，右肩-右颈={abs(right_numerator):.4f}，对称比={shoulder_neck_symmetry if shoulder_neck_symmetry is not None else 0:.2f}"),
+        _pattern_item("头颈价差对称", _symmetry_score(head_neck_symmetry), 4, f"头部-左颈={abs(left_denominator):.4f}，头部-右颈={abs(right_denominator):.4f}，对称比={head_neck_symmetry if head_neck_symmetry is not None else 0:.2f}"),
         _pattern_item("中间杂峰/杂谷较少", noise_score, 2, f"启发式：{same_kind} 方向破坏性杂点数量 {noise}"),
     ]
 
@@ -833,7 +860,7 @@ def _pattern_momentum_items(
     right_shoulder: PivotPoint,
     inverse: bool,
     trigger_index: int,
-) -> tuple[list[dict[str, Any]], bool]:
+) -> list[dict[str, Any]]:
     left_macd = _macd_value(df, left_shoulder.index)
     head_macd = _macd_value(df, head.index)
     if left_macd is None or head_macd is None:
@@ -843,13 +870,6 @@ def _pattern_momentum_items(
         exhausted = head_macd > left_macd if inverse else head_macd < left_macd
         exhaustion_score = 5 if exhausted else 0
         exhaustion_detail = f"MACD 启发式背离：LS={left_macd:.4f}，H={head_macd:.4f}"
-
-    head_leg = abs(head.price - left_neck.price) / max(1, head.index - left_neck.index)
-    right_leg = abs(right_shoulder.price - right_neck.price) / max(1, right_shoulder.index - right_neck.index)
-    right_weaker = right_leg < head_leg
-    right_clearly_stronger = right_leg > head_leg * 1.15
-    right_weaker_score = 4 if right_weaker else 0
-    right_weaker_detail = f"头部推进速度 {head_leg:.4f}/bar，右肩推进速度 {right_leg:.4f}/bar"
 
     volume_series = df["volume"] if "volume" in df.columns else pd.Series(dtype=float)
     volume_reliable = (
@@ -891,18 +911,15 @@ def _pattern_momentum_items(
 
     return [
         _pattern_item("头部出现动能衰竭", exhaustion_score, 5, exhaustion_detail),
-        _pattern_item("右肩动能弱于头部", right_weaker_score, 4, right_weaker_detail),
         _pattern_item("右肩成交量收缩", volume_score, 3, volume_detail),
         _pattern_item("右肩至半程方向动能", trigger_momentum_score, 3, trigger_momentum_detail),
-    ], right_clearly_stronger
+    ]
 
 
 def _pattern_trigger_items(
     right_shoulder: PivotPoint,
     inverse: bool,
     trigger_index: int,
-    trigger_price: float,
-    midpoint: float,
 ) -> tuple[list[dict[str, Any]], int]:
     trigger_speed_bars = max(0, trigger_index - right_shoulder.index)
     if trigger_speed_bars <= 5:
@@ -913,9 +930,7 @@ def _pattern_trigger_items(
         speed_score = 1
     else:
         speed_score = 0
-    reached = trigger_price >= midpoint if inverse else trigger_price <= midpoint
     return [
-        _pattern_item("收盘价触及半程", 4 if reached else 0, 4, f"收盘触发价 {trigger_price:.4f}，半程价 {midpoint:.4f}"),
         _pattern_item("触发速度", speed_score, 3, f"RS 后 {trigger_speed_bars} 根K线触发"),
     ], trigger_speed_bars
 
@@ -1019,11 +1034,11 @@ def calculate_pattern_score(
     )
     neckline_items = _pattern_neckline_items(df, left_neck, right_neck, right_shoulder, inverse, qtr, qtr_anomaly)
     time_items, ts, tn = _pattern_time_items(left_shoulder, left_neck, head, right_neck, right_shoulder)
-    momentum_items, _ = _pattern_momentum_items(
+    momentum_items = _pattern_momentum_items(
         df, left_shoulder, left_neck, head, right_neck, right_shoulder, inverse, trigger_index
     )
     trigger_items, trigger_speed_bars = _pattern_trigger_items(
-        right_shoulder, inverse, trigger_index, trigger_price, midpoint
+        right_shoulder, inverse, trigger_index
     )
     trade_items, trade_metrics = _pattern_trade_value_items(
         df, left_neck, head, right_neck, right_shoulder, inverse, qtr, qtr_anomaly, trigger_index, trigger_price
@@ -1031,11 +1046,11 @@ def calculate_pattern_score(
 
     sections = [
         _pattern_section("trend", "趋势背景", 10, trend_items),
-        _pattern_section("structure", "三峰/三谷结构", 24, structure_items),
+        _pattern_section("structure", "三峰/三谷结构", 32, structure_items),
         _pattern_section("neckline", "颈线质量", 16, neckline_items),
         _pattern_section("time", "时间对称性", 14, time_items),
-        _pattern_section("momentum", "量能/动能配合", 15, momentum_items),
-        _pattern_section("trigger", "右肩与半程触发质量", 7, trigger_items),
+        _pattern_section("momentum", "量能/动能配合", 11, momentum_items),
+        _pattern_section("trigger", "右肩与半程触发质量", 3, trigger_items),
         _pattern_section("trade_value", "即时交易价值", 14, trade_items),
     ]
     raw_score = int(sum(section["score"] for section in sections))
