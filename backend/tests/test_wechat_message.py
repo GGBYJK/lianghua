@@ -46,3 +46,29 @@ def test_wechat_workbot_content_matches_requested_top_format() -> None:
         "止损价：3120.66\n"
         "目标价：3103.46"
     )
+
+
+def test_wechat_workbot_content_uses_short_pullback_labels() -> None:
+    base_signal = {
+        "symbol": "DCE.b2609",
+        "timeframe": "5m",
+        "score": 80,
+        "pattern_score": 77,
+        "trend_label": "空头趋势",
+        "retest_time": "2026-06-22T22:55:00",
+        "pattern_metrics": {"stop": 3120.66, "target": 3103.46},
+    }
+
+    top_content = build_wechat_workbot_content({
+        **base_signal,
+        "pattern": "head_shoulders_top",
+        "alert_type": "head_shoulders_top_pullback",
+    }, {"name": "DCE.b2609"})
+    inverse_content = build_wechat_workbot_content({
+        **base_signal,
+        "pattern": "inverse_head_shoulders",
+        "alert_type": "inverse_head_shoulders_pullback",
+    }, {"name": "DCE.b2609"})
+
+    assert top_content.splitlines()[0] == "头肩反抽：DCE.b2609  5m"
+    assert inverse_content.splitlines()[0] == "反向反抽：DCE.b2609  5m"

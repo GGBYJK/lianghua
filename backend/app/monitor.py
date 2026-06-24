@@ -86,8 +86,8 @@ ZH = {
     "inverse_pattern_short": "\u53cd\u5411\u5934\u80a9",
     "right_shoulder_confirmed": "\u53f3\u80a9\u534a\u7a0b\u89e6\u53d1",
     "neckline_break": "\u8dcc\u7834\u9888\u7ebf\u786e\u8ba4",
-    "head_shoulders_top_pullback": "\u5934\u80a9\u9876\u53cd\u62bd",
-    "inverse_head_shoulders_pullback": "\u53cd\u5411\u5934\u80a9\u9876\u53cd\u62bd",
+    "head_shoulders_top_pullback": "\u5934\u80a9\u53cd\u62bd",
+    "inverse_head_shoulders_pullback": "\u53cd\u5411\u53cd\u62bd",
     "shape_alert": "\u5f62\u6001\u63d0\u9192",
     "new_alert": "\u76d1\u63a7\u5230\u65b0\u7684\u5f62\u6001\u63d0\u9192",
     "new_pattern": "\u65b0\u5f62\u6001",
@@ -216,6 +216,13 @@ def signal_pattern_metrics(signal: dict[str, Any]) -> dict[str, Any]:
     return metrics if isinstance(metrics, dict) else {}
 
 
+def wechat_signal_label(signal: dict[str, Any]) -> str:
+    alert_type = signal.get("alert_type")
+    if alert_type in WECHAT_PULLBACK_ALERT_TYPES:
+        return alert_type_label(alert_type)
+    return compact_pattern_label(signal.get("pattern"))
+
+
 def signal_notification_time(signal: dict[str, Any]) -> str | None:
     return (
         signal.get("retest_time")
@@ -227,7 +234,7 @@ def signal_notification_time(signal: dict[str, Any]) -> str | None:
 def build_wechat_workbot_content(signal: dict[str, Any], item: dict[str, Any]) -> str:
     metrics = signal_pattern_metrics(signal)
     return "\n".join([
-        f"{compact_pattern_label(signal.get('pattern'))}：{signal.get('symbol')}  {signal.get('timeframe')}",
+        f"{wechat_signal_label(signal)}：{signal.get('symbol')}  {signal.get('timeframe')}",
         f"时间：{format_wechat_signal_time(signal_notification_time(signal))}",
         f"评分：{format_wechat_score_pair(signal)}   {trend_label_from_signal(signal)}",
         f"止损价：{format_wechat_price(metrics.get('stop'))}",
