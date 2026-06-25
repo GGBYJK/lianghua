@@ -63,9 +63,9 @@ const futuresSymbolOptions = [
   { symbol: "UR2609", name: "尿素2609" },
 ];
 
-const MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache_v7";
+const MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache_v8";
 const LEGACY_MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache";
-const MARKET_SCAN_CACHE_VERSION = 7;
+const MARKET_SCAN_CACHE_VERSION = 8;
 const MANUAL_MARKET_SCAN_OVERRIDES = {
   max_signal_age_bars: 0,
 };
@@ -370,11 +370,12 @@ function App() {
   }
 
   function applyScanResponse(response: ScanResponse) {
-    setResult(response);
+    const normalized = normalizeScanResponseTradeMetrics(response);
+    setResult(normalized);
     setSelectedSignalKeys(new Set());
     setFocusedSignalKey(null);
-    setCursor(response.rows);
-    setLatestBar(response.chart.candles[response.chart.candles.length - 1] ?? null);
+    setCursor(normalized.rows);
+    setLatestBar(normalized.chart.candles[normalized.chart.candles.length - 1] ?? null);
   }
 
   function saveMarketScanCache(response: ScanResponse, limit: number) {
@@ -382,7 +383,7 @@ function App() {
       version: MARKET_SCAN_CACHE_VERSION,
       savedAt: new Date().toISOString(),
       limit,
-      result: response,
+      result: normalizeScanResponseTradeMetrics(response),
     };
     try {
       window.localStorage.setItem(MARKET_SCAN_CACHE_KEY, JSON.stringify(cached));
@@ -2346,7 +2347,8 @@ function PatternPriceGrid({ signal }: { signal: Signal }) {
 }
 
 function metricNumber(signal: Signal, key: string): number | null {
-  const value = signal.pattern_metrics?.[key];
+  const metrics = normalizedSignalTradeMetrics(signal);
+  const value = metrics[key];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
@@ -3432,6 +3434,66 @@ function PatternTag({ pattern, label }: { pattern: Signal["pattern"]; label?: st
 
 function isPullbackAlertType(alertType: Signal["alert_type"]) {
   return alertType === "head_shoulders_top_pullback" || alertType === "inverse_head_shoulders_pullback";
+}
+
+function normalizedSignalTradeMetrics(signal: Signal): Record<string, unknown> {
+  const metrics = { ...(signal.pattern_metrics ?? {}) };
+  if (!isPullbackAlertType(signal.alert_type) || typeof signal.qtr !== "number" || !Number.isFinite(signal.qtr) || signal.qtr <= 0) {
+    return metrics;
+  }
+  const entryPrice = typeof signal.retest_price === "number" && Number.isFinite(signal.retest_price)
+    ? signal.retest_price
+    : typeof metrics.trigger_price === "number" && Number.isFinite(metrics.trigger_price)
+      ? metrics.trigger_price
+      : null;
+  if (entryPrice == null) {
+    return metrics;
+  }
+  if (signal.alert_type === "inverse_head_shoulders_pullback") {
+    const stop = signal.right_neck.price + signal.qtr / 2;
+    const target = signal.head.price - signal.qtr;
+    const risk = stop - entryPrice;
+    const reward = entryPrice - target;
+    return {
+      ...metrics,
+      trigger_price: entryPrice,
+      stop,
+      target,
+      risk: risk > 0 ? risk : null,
+      reward: reward > 0 ? reward : null,
+      rr: risk > 0 && reward > 0 ? reward / risk : 0,
+    };
+  }
+  const stop = signal.right_neck.price - signal.qtr / 2;
+  const target = signal.head.price + signal.qtr;
+  const risk = entryPrice - stop;
+  const reward = target - entryPrice;
+  return {
+    ...metrics,
+    trigger_price: entryPrice,
+    stop,
+    target,
+    risk: risk > 0 ? risk : null,
+    reward: reward > 0 ? reward : null,
+    rr: risk > 0 && reward > 0 ? reward / risk : 0,
+  };
+}
+
+function normalizeSignalTradeMetrics(signal: Signal): Signal {
+  if (!isPullbackAlertType(signal.alert_type)) {
+    return signal;
+  }
+  return {
+    ...signal,
+    pattern_metrics: normalizedSignalTradeMetrics(signal),
+  };
+}
+
+function normalizeScanResponseTradeMetrics(response: ScanResponse): ScanResponse {
+  return {
+    ...response,
+    signals: response.signals.map(normalizeSignalTradeMetrics),
+  };
 }
 
 function signalCategoryKey(signal: Pick<Signal, "alert_type">) {

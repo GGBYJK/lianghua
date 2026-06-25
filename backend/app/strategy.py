@@ -1008,6 +1008,51 @@ def _pattern_trade_value_items(
     }
 
 
+def _pullback_trade_metrics(
+    base_metrics: dict[str, Any],
+    *,
+    head: PivotPoint,
+    right_neck: PivotPoint,
+    inverse: bool,
+    qtr: float,
+    entry_price: float,
+) -> dict[str, Any]:
+    metrics = dict(base_metrics)
+    qtr_anomaly = qtr <= 0 or not math.isfinite(qtr)
+    if qtr_anomaly:
+        metrics.update({
+            "trigger_price": entry_price,
+            "stop": None,
+            "target": None,
+            "risk": None,
+            "reward": None,
+            "rr": 0.0,
+        })
+        return metrics
+
+    if inverse:
+        stop = right_neck.price + qtr / 2
+        target = head.price - qtr
+        risk = stop - entry_price
+        reward = entry_price - target
+    else:
+        stop = right_neck.price - qtr / 2
+        target = head.price + qtr
+        risk = entry_price - stop
+        reward = target - entry_price
+
+    rr = reward / risk if risk > 0 and reward > 0 else 0.0
+    metrics.update({
+        "trigger_price": entry_price,
+        "stop": stop,
+        "target": target,
+        "risk": risk if risk > 0 else None,
+        "reward": reward if reward > 0 else None,
+        "rr": rr,
+    })
+    return metrics
+
+
 def calculate_pattern_score(
     df: pd.DataFrame,
     *,
@@ -1899,6 +1944,14 @@ def scan_head_shoulders_top(
             )
             if pullback_triggered and break_time is not None and break_price is not None and pullback_time is not None and pullback_price is not None:
                 neckline_at_break = calculate_neckline_price(p2, p4, break_index or p5.index)
+                pullback_metrics = _pullback_trade_metrics(
+                    pattern_result["metrics"],
+                    head=p3,
+                    right_neck=p4,
+                    inverse=False,
+                    qtr=qtr,
+                    entry_price=pullback_price,
+                )
                 signals.append(HeadShoulderTopSignal(
                     symbol=symbol,
                     timeframe=timeframe,
@@ -1928,7 +1981,7 @@ def scan_head_shoulders_top(
                     pattern_grade=pattern_result["grade"],
                     pattern_caps=pattern_result["caps"],
                     pattern_sections=pattern_result["sections"],
-                    pattern_metrics=pattern_result["metrics"],
+                    pattern_metrics=pullback_metrics,
                     message=(
                         f"{symbol} {timeframe} 头肩顶反抽，趋势评分 {total_score}，"
                         f"形态评分 {pattern_result['final_score']}。跌破价 {break_price:.2f}，"
@@ -2106,6 +2159,14 @@ def scan_inverse_head_shoulders(
             )
             if pullback_triggered and break_time is not None and break_price is not None and pullback_time is not None and pullback_price is not None:
                 neckline_at_break = calculate_neckline_price(p2, p4, break_index or p5.index)
+                pullback_metrics = _pullback_trade_metrics(
+                    pattern_result["metrics"],
+                    head=p3,
+                    right_neck=p4,
+                    inverse=True,
+                    qtr=qtr,
+                    entry_price=pullback_price,
+                )
                 signals.append(HeadShoulderTopSignal(
                     symbol=symbol,
                     timeframe=timeframe,
@@ -2135,7 +2196,7 @@ def scan_inverse_head_shoulders(
                     pattern_grade=pattern_result["grade"],
                     pattern_caps=pattern_result["caps"],
                     pattern_sections=pattern_result["sections"],
-                    pattern_metrics=pattern_result["metrics"],
+                    pattern_metrics=pullback_metrics,
                     message=(
                         f"{symbol} {timeframe} 反向头肩顶反抽，趋势评分 {total_score}，"
                         f"形态评分 {pattern_result['final_score']}。突破价 {break_price:.2f}，"

@@ -911,6 +911,44 @@ def test_pattern_score_inverse_uses_mirrored_direction_and_volume_proxy() -> Non
     assert "波动率代理" in momentum["items"][1]["detail"]
 
 
+def test_top_pullback_metrics_use_right_neck_and_head_qtr_formula() -> None:
+    times = pd.date_range("2026-06-22 09:00:00", periods=3, freq="min")
+    metrics = strategy_module._pullback_trade_metrics(
+        {"trigger_price": 90.0, "stop": 99.0, "target": 80.0},
+        head=PivotPoint(1, times[1], 110.0, "high"),
+        right_neck=PivotPoint(2, times[2], 94.0, "low"),
+        inverse=False,
+        qtr=4.0,
+        entry_price=100.0,
+    )
+
+    assert metrics["trigger_price"] == 100.0
+    assert metrics["stop"] == pytest.approx(92.0)
+    assert metrics["target"] == pytest.approx(114.0)
+    assert metrics["risk"] == pytest.approx(8.0)
+    assert metrics["reward"] == pytest.approx(14.0)
+    assert metrics["rr"] == pytest.approx(14.0 / 8.0)
+
+
+def test_inverse_pullback_metrics_use_right_neck_and_head_qtr_formula() -> None:
+    times = pd.date_range("2026-06-22 09:00:00", periods=3, freq="min")
+    metrics = strategy_module._pullback_trade_metrics(
+        {"trigger_price": 120.0, "stop": 101.0, "target": 130.0},
+        head=PivotPoint(1, times[1], 90.0, "low"),
+        right_neck=PivotPoint(2, times[2], 106.0, "high"),
+        inverse=True,
+        qtr=4.0,
+        entry_price=100.0,
+    )
+
+    assert metrics["trigger_price"] == 100.0
+    assert metrics["stop"] == pytest.approx(108.0)
+    assert metrics["target"] == pytest.approx(86.0)
+    assert metrics["risk"] == pytest.approx(8.0)
+    assert metrics["reward"] == pytest.approx(14.0)
+    assert metrics["rr"] == pytest.approx(14.0 / 8.0)
+
+
 def test_pattern_quality_threshold_blocks_scores_below_sixty() -> None:
     config = HeadShoulderTopConfig()
 
