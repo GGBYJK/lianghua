@@ -1193,6 +1193,76 @@ def test_top_scan_accepts_two_bar_shoulder_neck_spans() -> None:
     assert same_setup_signals[0].right_shoulder.index == 9
 
 
+def test_top_scan_emits_multiple_right_shoulders_for_same_setup(monkeypatch) -> None:
+    times = pd.date_range("2026-06-25 13:30:00", periods=18, freq="3min")
+    setup = (
+        PivotPoint(0, times[0], 4648.0, "high"),
+        PivotPoint(2, times[2], 4634.0, "low"),
+        PivotPoint(6, times[6], 4656.0, "high"),
+        PivotPoint(10, times[10], 4636.0, "low"),
+    )
+    first_candidate = (*setup, PivotPoint(12, times[12], 4644.0, "high"))
+    later_candidate = (*setup, PivotPoint(16, times[16], 4648.0, "high"))
+    df = pd.DataFrame({
+        "datetime": times,
+        "open": [4642.0] * len(times),
+        "high": [4644.0] * len(times),
+        "low": [4638.0] * len(times),
+        "close": [4642.0] * len(times),
+        "volume": [1000] * len(times),
+    })
+
+    monkeypatch.setattr(strategy_module, "find_structure_pivots_for_timeframe", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        strategy_module,
+        "iter_timeframe_pattern_candidates",
+        lambda *_args, **_kwargs: [first_candidate, later_candidate],
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "validate_head_shoulders_structure",
+        lambda *_args, **_kwargs: (True, [], 0),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "validate_candle_close_constraints",
+        lambda *_args, **_kwargs: (True, ""),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "check_right_shoulder_midpoint_trigger",
+        lambda _df, _right_neck, right_shoulder, _config, *, inverse: (
+            True,
+            right_shoulder.index + 1,
+            times[right_shoulder.index + 1],
+            4638.0 if right_shoulder.index == 12 else 4640.0,
+            4640.0,
+        ),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "calculate_pattern_score",
+        lambda *_args, **_kwargs: {
+            "final_score": 80,
+            "raw_score": 80,
+            "grade": "A",
+            "caps": [],
+            "sections": [],
+            "metrics": {},
+        },
+    )
+
+    signals = scan_head_shoulders_top(
+        df,
+        "SHFE.sp2609",
+        "3m",
+        HeadShoulderTopConfig(enable_score=False),
+    )
+
+    assert [signal.right_shoulder.index for signal in signals] == [12, 16]
+    assert [signal.retest_time for signal in signals] == [times[13], times[17]]
+
+
 def test_short_timeframe_candidates_use_five_bar_structure_and_three_bar_right_shoulder() -> None:
     times = pd.date_range("2026-01-01 09:00:00", periods=36, freq="min")
     rows = []
