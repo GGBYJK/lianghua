@@ -2432,13 +2432,31 @@ def candle_display_time(value: Any, timeframe: str) -> Any:
     K 线的结束时间（例如 5 分钟线 09:00–09:05 显示为 09:05）。无法识别的周期保持
     原时间，避免对未知周期误判。
     """
-    duration = TIMEFRAME_DURATION_SECONDS.get(str(timeframe).strip().lower())
-    if duration is None:
-        return value
+    normalized_timeframe = str(timeframe).strip().lower()
     try:
-        return pd.Timestamp(value) + pd.Timedelta(seconds=duration)
+        ts = pd.Timestamp(value)
     except (TypeError, ValueError):
         return value
+    if normalized_timeframe in {"60m", "1h"}:
+        minutes = ts.hour * 60 + ts.minute
+        if minutes == 21 * 60:
+            return ts + pd.Timedelta(hours=1)
+        if minutes == 22 * 60:
+            return ts + pd.Timedelta(hours=1)
+        if minutes == 9 * 60:
+            return ts + pd.Timedelta(hours=1)
+        if minutes == 10 * 60:
+            return ts + pd.Timedelta(hours=1, minutes=15)
+        if minutes == 11 * 60 + 15:
+            return ts + pd.Timedelta(hours=3)
+        if minutes == 14 * 60 + 15:
+            return ts + pd.Timedelta(minutes=45)
+    if normalized_timeframe in {"1d", "day"}:
+        return ts
+    duration = TIMEFRAME_DURATION_SECONDS.get(normalized_timeframe)
+    if duration is None:
+        return value
+    return ts + pd.Timedelta(seconds=duration)
 
 
 def prepare_chart_payload(
