@@ -8,6 +8,7 @@ export type PivotPoint = {
 export type Candle = {
   index: number;
   time: string;
+  display_time?: string;
   open: number;
   high: number;
   low: number;

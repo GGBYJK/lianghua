@@ -20,7 +20,7 @@ from .csv_loader import read_csv_bytes
 from .market_client import MarketApiError, fetch_kline_from_market, fetch_market_symbols, fetch_tqsdk_contracts, get_market_settings, shutdown_market_clients
 from .monitor import monitor_watch_pool_loop, scan_watch_pool_once
 from .schemas import AlertFeedbackCreate, AlertFeedbackResponse, ContractCenterItemResponse, ContractCenterRefreshResponse, ContractCenterUpdateRequest, ContractCenterUpdateResponse, DefaultConfigResponse, HeadShouldersAlertResponse, HeadShouldersAlertSummaryResponse, HealthResponse, ScanResponse, WatchPoolImportResponse, WatchPoolItemCreate, WatchPoolItemResponse, WatchPoolItemUpdate
-from .strategy import HeadShoulderTopSignal, add_macd_columns, add_ma_columns, find_pivots, prepare_chart_payload, scan_head_shoulders
+from .strategy import HeadShoulderTopSignal, add_macd_columns, add_ma_columns, candle_display_time, find_pivots, prepare_chart_payload, scan_head_shoulders
 from .watch_pool_import import ImportIssue, parse_watch_pool_excel
 from .watch_pool_store import (
     WatchPoolStoreError,
@@ -203,7 +203,7 @@ def build_scan_response(
     signals = filter_scan_signals_by_head_score_progression(signals)
     enriched_df = add_macd_columns(add_ma_columns(df, config), config)
     pivots = find_pivots(enriched_df, left=config.pivot_left, right=config.pivot_right)
-    chart = prepare_chart_payload(enriched_df, pivots, signals, config)
+    chart = prepare_chart_payload(enriched_df, pivots, signals, config, timeframe=timeframe)
 
     return ScanResponse(
         symbol=symbol,
@@ -580,6 +580,7 @@ def next_simulation_bar(session_id: str, bars: int = 1) -> dict[str, Any]:
         latest_bar = {
             "index": session.cursor - 1,
             "time": row["datetime"].isoformat(),
+            "display_time": candle_display_time(row["datetime"], session.timeframe).isoformat(),
             "open": float(row["open"]),
             "high": float(row["high"]),
             "low": float(row["low"]),

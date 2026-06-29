@@ -400,7 +400,7 @@ def scan_dataframe_payload(
     signals = scan_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config, hourly_df=hourly_df, daily_df=daily_df)
     enriched_df = add_macd_columns(add_ma_columns(df, config), config)
     pivots = find_structure_pivots_for_timeframe(enriched_df, timeframe, config)
-    chart = prepare_chart_payload(enriched_df, pivots, signals, config)
+    chart = prepare_chart_payload(enriched_df, pivots, signals, config, timeframe=timeframe)
     return [signal.to_dict() for signal in signals], chart
 
 

@@ -2408,11 +2408,45 @@ def scan_head_shoulders(
     return signals
 
 
+TIMEFRAME_DURATION_SECONDS: dict[str, int] = {
+    "1m": 60,
+    "3m": 180,
+    "5m": 300,
+    "15m": 900,
+    "30m": 1800,
+    "60m": 3600,
+    "1h": 3600,
+    "2h": 7200,
+    "4h": 14400,
+    "1d": 86400,
+    "day": 86400,
+    "1w": 604800,
+    "week": 604800,
+}
+
+
+def candle_display_time(value: Any, timeframe: str) -> Any:
+    """Return the end (close) time of a candle for display.
+
+    行情数据源返回的 ``datetime`` 是每根 K 线的开盘时间；前端更直观的展示是该根
+    K 线的结束时间（例如 5 分钟线 09:00–09:05 显示为 09:05）。无法识别的周期保持
+    原时间，避免对未知周期误判。
+    """
+    duration = TIMEFRAME_DURATION_SECONDS.get(str(timeframe).strip().lower())
+    if duration is None:
+        return value
+    try:
+        return pd.Timestamp(value) + pd.Timedelta(seconds=duration)
+    except (TypeError, ValueError):
+        return value
+
+
 def prepare_chart_payload(
     df: pd.DataFrame,
     pivots: list[PivotPoint],
     signals: list[HeadShoulderTopSignal],
     config: HeadShoulderTopConfig,
+    timeframe: str = "",
 ) -> dict[str, Any]:
     ma_columns = [f"ma{period}" for period in config.ma_periods if f"ma{period}" in df.columns]
 
@@ -2423,6 +2457,7 @@ def prepare_chart_payload(
         {
             "index": int(i),
             "time": row["datetime"].isoformat(),
+            "display_time": candle_display_time(row["datetime"], timeframe).isoformat(),
             "open": float(row["open"]),
             "high": float(row["high"]),
             "low": float(row["low"]),

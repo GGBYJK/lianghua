@@ -887,7 +887,7 @@ function App() {
           <strong>{progress}%</strong>
         </div>
         <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
-        {latestBar && <p>最新K线：{formatTime(latestBar.time)}，收盘 {formatPrice(latestBar.close)}，成交量 {latestBar.volume}</p>}
+        {latestBar && <p>最新K线：{formatTime(latestBar.display_time ?? latestBar.time)}，收盘 {formatPrice(latestBar.close)}，成交量 {latestBar.volume}</p>}
       </div>
     </aside>
   );
@@ -2782,7 +2782,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
       devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
       useDirtyRect: true,
     });
-    const categories = candles.map((candle) => formatShortTime(candle.time));
+    const categories = candles.map((candle) => formatShortTime(candle.display_time ?? candle.time));
     const ohlc = candles.map((candle) => [candle.open, candle.close, candle.low, candle.high]);
     const volumes = candles.map((candle) => ({
       value: candle.volume,
@@ -3281,7 +3281,7 @@ function KlineChart({ candles, pivots, necklines, signals }: {
         {timeTicks.map((candle) => (
           <g key={`time-${candle.index}`}>
             <line x1={x(candle.index)} x2={x(candle.index)} y1={height - pad + 4} y2={height - pad + 9} className="axis-tick" />
-            <text x={x(candle.index)} y={height - 8} className="time-tick">{formatShortTime(candle.time)}</text>
+            <text x={x(candle.index)} y={height - 8} className="time-tick">{formatShortTime(candle.display_time ?? candle.time)}</text>
           </g>
         ))}
         {candles.map((candle) => {
@@ -3560,7 +3560,7 @@ function formatChartTooltip(params: unknown, candles: Candle[]) {
     .map(([key, value]) => `<div><span style="color:#7a7a7a">${key.toUpperCase()}</span> ${formatPrice(Number(value))}</div>`)
     .join("");
   return [
-    `<div style="font-weight:700;margin-bottom:6px">${formatTime(candle.time)}</div>`,
+    `<div style="font-weight:700;margin-bottom:6px">${formatTime(candle.display_time ?? candle.time)}</div>`,
     `<div>开 ${formatPrice(candle.open)} &nbsp; 高 ${formatPrice(candle.high)}</div>`,
     `<div>低 ${formatPrice(candle.low)} &nbsp; 收 ${formatPrice(candle.close)}</div>`,
     `<div>量 ${formatCompactVolume(candle.volume)}</div>`,
