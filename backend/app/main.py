@@ -490,7 +490,15 @@ async def scan_market(
             fetch_kline_from_market(symbol=symbol, period="1h", limit=max(80, min(limit, 240))),
             fetch_kline_from_market(symbol=symbol, period="1d", limit=max(80, min(limit, 240))),
         )
-        return build_scan_response(df, symbol=symbol, timeframe=timeframe, overrides=overrides, hourly_df=hourly_df, daily_df=daily_df)
+        return await asyncio.to_thread(
+            build_scan_response,
+            df,
+            symbol=symbol,
+            timeframe=timeframe,
+            overrides=overrides,
+            hourly_df=hourly_df,
+            daily_df=daily_df,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except MarketApiError as exc:
@@ -517,7 +525,7 @@ async def scan_csv(
     try:
         overrides = parse_overrides(config_overrides)
         df = read_csv_bytes(await file.read())
-        return build_scan_response(df, symbol=symbol, timeframe=timeframe, overrides=overrides)
+        return await asyncio.to_thread(build_scan_response, df, symbol=symbol, timeframe=timeframe, overrides=overrides)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

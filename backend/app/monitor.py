@@ -437,7 +437,8 @@ async def scan_watch_pool_item(item: dict[str, Any], limit: int) -> int:
         fetch_kline_from_market(symbol=item["symbol"], period="1h", limit=max(80, min(limit, 240))),
         fetch_kline_from_market(symbol=item["symbol"], period="1d", limit=max(80, min(limit, 240))),
     )
-    signals, chart = scan_dataframe_payload(
+    signals, chart = await asyncio.to_thread(
+        scan_dataframe_payload,
         df,
         symbol=item["symbol"],
         timeframe=item["timeframe"],

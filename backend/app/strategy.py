@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 import math
-from typing import Any
+from typing import Any, Iterator
 
 import pandas as pd
 
@@ -1172,9 +1172,17 @@ def passes_one_minute_head_neck_bar_limit(
 def iter_pattern_candidates(
     pivots: list[PivotPoint],
     kinds: list[str],
-) -> list[tuple[PivotPoint, PivotPoint, PivotPoint, PivotPoint, PivotPoint]]:
-    candidates: list[tuple[PivotPoint, PivotPoint, PivotPoint, PivotPoint, PivotPoint]] = []
-    seen: set[tuple[int, int, int, int, int]] = set()
+    *,
+    timeframe: str | None = None,
+    config: HeadShoulderTopConfig | None = None,
+    data_length: int | None = None,
+) -> Iterator[tuple[PivotPoint, PivotPoint, PivotPoint, PivotPoint, PivotPoint]]:
+    max_head_neck_bars = MAX_HEAD_NECK_BARS_BY_TIMEFRAME.get(timeframe or "")
+    min_right_shoulder_index = (
+        max(0, data_length - config.max_signal_age_bars)
+        if config is not None and data_length is not None and config.max_signal_age_bars > 0
+        else None
+    )
 
     def span_preserves_swing(start_pos: int, end_pos: int, start: PivotPoint, end: PivotPoint) -> bool:
         skipped = pivots[start_pos + 1 : end_pos]
@@ -1185,6 +1193,64 @@ def iter_pattern_candidates(
         if start.kind == "low" and end.kind == "high":
             return all(point.price >= start.price if point.kind == "low" else point.price <= end.price for point in skipped)
         return False
+
+    def passes_cheap_candidate_filters(
+        left_shoulder: PivotPoint,
+        left_neck: PivotPoint,
+        head: PivotPoint,
+        right_neck: PivotPoint,
+        right_shoulder: PivotPoint,
+    ) -> bool:
+        if config is None:
+            return True
+        is_top_pattern = kinds[0] == "high"
+        if min_right_shoulder_index is not None and right_shoulder.index < min_right_shoulder_index:
+            return False
+        left_leg_bars = left_neck.index - left_shoulder.index
+        right_leg_bars = right_shoulder.index - right_neck.index
+        if left_leg_bars <= 1 or right_leg_bars <= 1:
+            return False
+        if max_head_neck_bars is not None and (
+            head.index - left_neck.index > max_head_neck_bars
+            or right_neck.index - head.index > max_head_neck_bars
+        ):
+            return False
+        if config.enable_right_leg_ratio_filter:
+            leg_ratio = right_leg_bars / left_leg_bars
+            if leg_ratio < config.min_right_leg_to_left_leg_ratio or leg_ratio > config.max_right_leg_to_left_leg_ratio:
+                return False
+        shoulder_base = max(abs(left_shoulder.price), abs(right_shoulder.price), 1.0)
+        if abs(left_shoulder.price - right_shoulder.price) / shoulder_base > config.max_shoulder_diff_pct:
+            return False
+        if is_top_pattern:
+            if head.price < max(left_shoulder.price, right_shoulder.price):
+                return False
+            if config.require_head_beyond_shoulders_and_necks and head.price <= max(left_shoulder.price, left_neck.price, right_neck.price, right_shoulder.price):
+                return False
+            if config.right_shoulder_must_below_head and right_shoulder.price >= head.price:
+                return False
+            if right_shoulder.price < left_shoulder.price * config.min_right_shoulder_ratio_to_left:
+                return False
+            if config.require_shoulders_between_opposite_neck_and_head and not (
+                right_neck.price <= left_shoulder.price <= head.price
+                and left_neck.price <= right_shoulder.price <= head.price
+            ):
+                return False
+        else:
+            if head.price > min(left_shoulder.price, right_shoulder.price):
+                return False
+            if config.require_head_beyond_shoulders_and_necks and head.price >= min(left_shoulder.price, left_neck.price, right_neck.price, right_shoulder.price):
+                return False
+            if config.right_shoulder_must_below_head and right_shoulder.price <= head.price:
+                return False
+            if right_shoulder.price > left_shoulder.price * (2 - config.min_right_shoulder_ratio_to_left):
+                return False
+            if config.require_shoulders_between_opposite_neck_and_head and not (
+                head.price <= left_shoulder.price <= right_neck.price
+                and head.price <= right_shoulder.price <= left_neck.price
+            ):
+                return False
+        return True
 
     for left_shoulder_index in range(len(pivots) - 4):
         left_shoulder = pivots[left_shoulder_index]
@@ -1198,35 +1264,59 @@ def iter_pattern_candidates(
 
             for head_index in range(left_neck_index + 1, len(pivots) - 2):
                 head = pivots[head_index]
+                if max_head_neck_bars is not None and head.index - left_neck.index > max_head_neck_bars:
+                    break
                 if head.kind != kinds[2] or not span_preserves_swing(left_neck_index, head_index, left_neck, head):
                     continue
+                if config is not None:
+                    if kinds[0] == "high" and head.price < left_shoulder.price:
+                        continue
+                    if kinds[0] == "low" and head.price > left_shoulder.price:
+                        continue
                 for right_neck_index in range(head_index + 1, len(pivots) - 1):
                     right_neck = pivots[right_neck_index]
+                    if max_head_neck_bars is not None and right_neck.index - head.index > max_head_neck_bars:
+                        break
                     if right_neck.kind != kinds[3] or not span_preserves_swing(head_index, right_neck_index, head, right_neck):
                         continue
+                    if config is not None and config.require_head_beyond_shoulders_and_necks:
+                        if kinds[0] == "high" and head.price <= right_neck.price:
+                            continue
+                        if kinds[0] == "low" and head.price >= right_neck.price:
+                            continue
                     for right_shoulder_index in range(right_neck_index + 1, len(pivots)):
                         right_shoulder = pivots[right_shoulder_index]
+                        if min_right_shoulder_index is not None and right_shoulder.index < min_right_shoulder_index:
+                            continue
+                        if config is not None and config.enable_right_leg_ratio_filter:
+                            left_leg_bars = left_neck.index - left_shoulder.index
+                            if left_leg_bars > 0 and right_shoulder.index - right_neck.index > left_leg_bars * config.max_right_leg_to_left_leg_ratio:
+                                break
                         if (
                             right_shoulder.kind != kinds[4]
                             or not span_preserves_swing(right_neck_index, right_shoulder_index, right_neck, right_shoulder)
                         ):
                             continue
-                        key = (left_shoulder.index, left_neck.index, head.index, right_neck.index, right_shoulder.index)
-                        if key in seen:
+                        if not passes_cheap_candidate_filters(left_shoulder, left_neck, head, right_neck, right_shoulder):
                             continue
-                        seen.add(key)
-                        candidates.append((left_shoulder, left_neck, head, right_neck, right_shoulder))
-
-    return candidates
+                        yield left_shoulder, left_neck, head, right_neck, right_shoulder
 
 
 def iter_pattern_candidates_with_right_shoulder_pivots(
     structure_pivots: list[PivotPoint],
     right_shoulder_pivots: list[PivotPoint],
     kinds: list[str],
-) -> list[tuple[PivotPoint, PivotPoint, PivotPoint, PivotPoint, PivotPoint]]:
-    candidates: list[tuple[PivotPoint, PivotPoint, PivotPoint, PivotPoint, PivotPoint]] = []
-    seen: set[tuple[int, int, int, int, int]] = set()
+    *,
+    timeframe: str | None = None,
+    config: HeadShoulderTopConfig | None = None,
+    data_length: int | None = None,
+) -> Iterator[tuple[PivotPoint, PivotPoint, PivotPoint, PivotPoint, PivotPoint]]:
+    max_head_neck_bars = MAX_HEAD_NECK_BARS_BY_TIMEFRAME.get(timeframe or "")
+    min_right_shoulder_index = (
+        max(0, data_length - config.max_signal_age_bars)
+        if config is not None and data_length is not None and config.max_signal_age_bars > 0
+        else None
+    )
 
     def structure_span_preserves_swing(start_pos: int, end_pos: int, start: PivotPoint, end: PivotPoint) -> bool:
         skipped = structure_pivots[start_pos + 1 : end_pos]
@@ -1239,6 +1329,65 @@ def iter_pattern_candidates_with_right_shoulder_pivots(
         return False
 
     right_shoulder_candidates = [point for point in right_shoulder_pivots if point.kind == kinds[4]]
+
+    def passes_cheap_candidate_filters(
+        left_shoulder: PivotPoint,
+        left_neck: PivotPoint,
+        head: PivotPoint,
+        right_neck: PivotPoint,
+        right_shoulder: PivotPoint,
+    ) -> bool:
+        if config is None:
+            return True
+        is_top_pattern = kinds[0] == "high"
+        if min_right_shoulder_index is not None and right_shoulder.index < min_right_shoulder_index:
+            return False
+        left_leg_bars = left_neck.index - left_shoulder.index
+        right_leg_bars = right_shoulder.index - right_neck.index
+        if left_leg_bars <= 1 or right_leg_bars <= 1:
+            return False
+        if max_head_neck_bars is not None and (
+            head.index - left_neck.index > max_head_neck_bars
+            or right_neck.index - head.index > max_head_neck_bars
+        ):
+            return False
+        if config.enable_right_leg_ratio_filter:
+            leg_ratio = right_leg_bars / left_leg_bars
+            if leg_ratio < config.min_right_leg_to_left_leg_ratio or leg_ratio > config.max_right_leg_to_left_leg_ratio:
+                return False
+        shoulder_base = max(abs(left_shoulder.price), abs(right_shoulder.price), 1.0)
+        if abs(left_shoulder.price - right_shoulder.price) / shoulder_base > config.max_shoulder_diff_pct:
+            return False
+        if is_top_pattern:
+            if head.price < max(left_shoulder.price, right_shoulder.price):
+                return False
+            if config.require_head_beyond_shoulders_and_necks and head.price <= max(left_shoulder.price, left_neck.price, right_neck.price, right_shoulder.price):
+                return False
+            if config.right_shoulder_must_below_head and right_shoulder.price >= head.price:
+                return False
+            if right_shoulder.price < left_shoulder.price * config.min_right_shoulder_ratio_to_left:
+                return False
+            if config.require_shoulders_between_opposite_neck_and_head and not (
+                right_neck.price <= left_shoulder.price <= head.price
+                and left_neck.price <= right_shoulder.price <= head.price
+            ):
+                return False
+        else:
+            if head.price > min(left_shoulder.price, right_shoulder.price):
+                return False
+            if config.require_head_beyond_shoulders_and_necks and head.price >= min(left_shoulder.price, left_neck.price, right_neck.price, right_shoulder.price):
+                return False
+            if config.right_shoulder_must_below_head and right_shoulder.price <= head.price:
+                return False
+            if right_shoulder.price > left_shoulder.price * (2 - config.min_right_shoulder_ratio_to_left):
+                return False
+            if config.require_shoulders_between_opposite_neck_and_head and not (
+                head.price <= left_shoulder.price <= right_neck.price
+                and head.price <= right_shoulder.price <= left_neck.price
+            ):
+                return False
+        return True
+
     for left_shoulder_index in range(len(structure_pivots) - 3):
         left_shoulder = structure_pivots[left_shoulder_index]
         if left_shoulder.kind != kinds[0]:
@@ -1254,32 +1403,48 @@ def iter_pattern_candidates_with_right_shoulder_pivots(
 
             for head_index in range(left_neck_index + 1, len(structure_pivots) - 1):
                 head = structure_pivots[head_index]
+                if max_head_neck_bars is not None and head.index - left_neck.index > max_head_neck_bars:
+                    break
                 if (
                     head.kind != kinds[2]
                     or not structure_span_preserves_swing(left_neck_index, head_index, left_neck, head)
                 ):
                     continue
+                if config is not None:
+                    if kinds[0] == "high" and head.price < left_shoulder.price:
+                        continue
+                    if kinds[0] == "low" and head.price > left_shoulder.price:
+                        continue
 
                 for right_neck_index in range(head_index + 1, len(structure_pivots)):
                     right_neck = structure_pivots[right_neck_index]
+                    if max_head_neck_bars is not None and right_neck.index - head.index > max_head_neck_bars:
+                        break
                     if (
                         right_neck.kind != kinds[3]
                         or not structure_span_preserves_swing(head_index, right_neck_index, head, right_neck)
                     ):
                         continue
+                    if config is not None and config.require_head_beyond_shoulders_and_necks:
+                        if kinds[0] == "high" and head.price <= right_neck.price:
+                            continue
+                        if kinds[0] == "low" and head.price >= right_neck.price:
+                            continue
 
                     for right_shoulder in right_shoulder_candidates:
                         if right_shoulder.index <= right_neck.index:
                             continue
+                        if min_right_shoulder_index is not None and right_shoulder.index < min_right_shoulder_index:
+                            continue
+                        if config is not None and config.enable_right_leg_ratio_filter:
+                            left_leg_bars = left_neck.index - left_shoulder.index
+                            if left_leg_bars > 0 and right_shoulder.index - right_neck.index > left_leg_bars * config.max_right_leg_to_left_leg_ratio:
+                                break
                         if right_neck.kind == right_shoulder.kind:
                             continue
-                        key = (left_shoulder.index, left_neck.index, head.index, right_neck.index, right_shoulder.index)
-                        if key in seen:
+                        if not passes_cheap_candidate_filters(left_shoulder, left_neck, head, right_neck, right_shoulder):
                             continue
-                        seen.add(key)
-                        candidates.append((left_shoulder, left_neck, head, right_neck, right_shoulder))
-
-    return candidates
+                        yield left_shoulder, left_neck, head, right_neck, right_shoulder
 
 
 def find_structure_pivots_for_timeframe(
@@ -1298,16 +1463,31 @@ def iter_timeframe_pattern_candidates(
     config: HeadShoulderTopConfig,
     kinds: list[str],
     structure_pivots: list[PivotPoint] | None = None,
-) -> list[tuple[PivotPoint, PivotPoint, PivotPoint, PivotPoint, PivotPoint]]:
+    prevalidate: bool = False,
+) -> Iterator[tuple[PivotPoint, PivotPoint, PivotPoint, PivotPoint, PivotPoint]]:
     structure_pivots = structure_pivots if structure_pivots is not None else find_structure_pivots_for_timeframe(df, timeframe, config)
+    filter_config = config if prevalidate else None
     if timeframe not in MIXED_PIVOT_CONFIRMATION_TIMEFRAMES:
-        return iter_pattern_candidates(structure_pivots, kinds)
+        return iter_pattern_candidates(
+            structure_pivots,
+            kinds,
+            timeframe=timeframe,
+            config=filter_config,
+            data_length=len(df),
+        )
     right_shoulder_pivots = find_pivots(
         df,
         left=RIGHT_SHOULDER_PIVOT_WINDOW,
         right=RIGHT_SHOULDER_PIVOT_WINDOW,
     )
-    return iter_pattern_candidates_with_right_shoulder_pivots(structure_pivots, right_shoulder_pivots, kinds)
+    return iter_pattern_candidates_with_right_shoulder_pivots(
+        structure_pivots,
+        right_shoulder_pivots,
+        kinds,
+        timeframe=timeframe,
+        config=filter_config,
+        data_length=len(df),
+    )
 
 
 def validate_candle_close_constraints(
@@ -1839,6 +2019,7 @@ def scan_head_shoulders_top(
         config,
         ["high", "low", "high", "low", "high"],
         structure_pivots=pivots,
+        prevalidate=True,
     ):
         if not passes_head_neck_bar_limit(timeframe, p2, p3, p4):
             continue
@@ -2049,6 +2230,7 @@ def scan_inverse_head_shoulders(
         config,
         ["low", "high", "low", "high", "low"],
         structure_pivots=pivots,
+        prevalidate=True,
     ):
         if not passes_head_neck_bar_limit(timeframe, p2, p3, p4):
             continue
