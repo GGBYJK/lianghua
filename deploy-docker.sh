@@ -35,8 +35,26 @@ if grep -q "your-aliyun-market-kline-url\|your-app-code" .env; then
   exit 1
 fi
 
+# How many image versions to keep per service (current + previous N-1)
+KEEP_VERSIONS=2
+
 echo "Building and starting containers..."
 "${COMPOSE[@]}" up -d --build
+
+# Tag the freshly built images with today's date for rollback, then remove
+# older date-tagged images so only the most recent KEEP_VERSIONS remain.
+TAG="$(date +%Y%m%d-%H%M)"
+for svc in backend frontend; do
+  docker tag "lianghua-${svc}:latest" "lianghua-${svc}:${TAG}"
+  docker images "lianghua-${svc}" --format '{{.Tag}}' \
+    | grep -E '^[0-9]{8}-[0-9]{4}$' \
+    | sort -r \
+    | tail -n +$((KEEP_VERSIONS + 1)) \
+    | sed "s#^#lianghua-${svc}:#" \
+    | xargs -r docker rmi
+done
+docker image prune -f
+echo "Tagged images as ${TAG}; kept last ${KEEP_VERSIONS} versions."
 
 echo
 echo "Container status:"
