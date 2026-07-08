@@ -117,7 +117,7 @@ http://server-ip:8080/
 If the build fails while pulling base images, for example:
 
 ```text
-failed to resolve source metadata for docker.io/library/python:3.11-slim
+failed to resolve source metadata for docker.io/library/python:3.12-slim
 i/o timeout
 ```
 
@@ -142,9 +142,9 @@ docker info | grep -A 10 "Registry Mirrors"
 Then test pulling the base images:
 
 ```bash
-docker pull python:3.11-slim
+docker pull python:3.12-slim
 docker pull node:22-alpine
-docker pull nginx:1.27-alpine
+docker pull m.daocloud.io/docker.io/nginx:1.27-perl
 ```
 
 After the pulls succeed, rerun:
