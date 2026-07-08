@@ -125,14 +125,14 @@ async def fetch_kline_from_tqsdk_market(symbol: str, period: str, limit: int = 1
 def _fetch_kline_from_tqsdk_market_sync(symbol: str, period: str, limit: int = 120) -> pd.DataFrame:
     tq_symbol = normalize_tqsdk_symbol(symbol)
     normalized_period = period.strip().lower()
-    if should_use_exchange_session_bars() and normalized_period in {"60m", "1h"}:
-        base_limit = max(limit * 16, int(os.getenv("TQ_EXCHANGE_HOURLY_BASE_LIMIT", "420")))
+    if should_aggregate_exchange_hourly_period(normalized_period):
+        base_limit = exchange_aggregation_base_limit(normalized_period, limit)
         base_df = get_tqsdk_service().get_kline(tq_symbol=tq_symbol, duration_seconds=300, limit=base_limit)
-        return aggregate_exchange_hourly_bars(base_df).tail(limit).reset_index(drop=True)
-    if should_aggregate_daily_from_intraday() and normalized_period in {"1d", "day"}:
-        base_limit = max(limit * 90, int(os.getenv("TQ_EXCHANGE_DAILY_BASE_LIMIT", "9000")))
+        return aggregate_exchange_period_from_intraday(normalized_period, base_df, limit)
+    if should_aggregate_exchange_daily_period(normalized_period):
+        base_limit = exchange_aggregation_base_limit(normalized_period, limit)
         base_df = get_tqsdk_service().get_kline(tq_symbol=tq_symbol, duration_seconds=300, limit=base_limit)
-        return aggregate_exchange_daily_bars(base_df).tail(limit).reset_index(drop=True)
+        return aggregate_exchange_period_from_intraday(normalized_period, base_df, limit)
     duration_seconds = normalize_tqsdk_period(period)
     return get_tqsdk_service().get_kline(tq_symbol=tq_symbol, duration_seconds=duration_seconds, limit=limit)
 
@@ -393,6 +393,38 @@ def should_aggregate_daily_from_intraday() -> bool:
     return os.getenv("TQ_AGGREGATE_DAILY_FROM_INTRADAY", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
+def exchange_hourly_base_limit(limit: int) -> int:
+    return max(limit * 16, int(os.getenv("TQ_EXCHANGE_HOURLY_BASE_LIMIT", "420")))
+
+
+def exchange_daily_base_limit(limit: int) -> int:
+    return max(limit * 90, int(os.getenv("TQ_EXCHANGE_DAILY_BASE_LIMIT", "9000")))
+
+
+def should_aggregate_exchange_hourly_period(period: str) -> bool:
+    return should_use_exchange_session_bars() and period.strip().lower() in {"60m", "1h"}
+
+
+def should_aggregate_exchange_daily_period(period: str) -> bool:
+    return should_aggregate_daily_from_intraday() and period.strip().lower() in {"1d", "day"}
+
+
+def exchange_aggregation_base_limit(period: str, limit: int) -> int:
+    if should_aggregate_exchange_hourly_period(period):
+        return exchange_hourly_base_limit(limit)
+    if should_aggregate_exchange_daily_period(period):
+        return exchange_daily_base_limit(limit)
+    return limit
+
+
+def aggregate_exchange_period_from_intraday(period: str, base_df: pd.DataFrame, limit: int) -> pd.DataFrame:
+    if should_aggregate_exchange_hourly_period(period):
+        return aggregate_exchange_hourly_bars(base_df).tail(limit).reset_index(drop=True)
+    if should_aggregate_exchange_daily_period(period):
+        return aggregate_exchange_daily_bars(base_df).tail(limit).reset_index(drop=True)
+    raise MarketApiError(f"Unsupported exchange aggregation period: {period}")
+
+
 def aggregate_exchange_hourly_bars(df: pd.DataFrame) -> pd.DataFrame:
     normalized = normalize_aggregation_source_dataframe(df)
     normalized["_bucket"] = normalized["datetime"].apply(exchange_hour_bucket_start)
@@ -422,16 +454,15 @@ def normalize_aggregation_source_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 def exchange_hour_bucket_start(value: Any) -> pd.Timestamp | None:
     ts = pd.Timestamp(value).tz_localize(None)
     minutes = ts.hour * 60 + ts.minute
+    if not is_exchange_trading_minute(minutes):
+        return None
     trading_date = ts.normalize()
     if minutes >= 21 * 60:
-        return trading_date + pd.Timedelta(hours=21 if minutes < 22 * 60 else 22)
-    if minutes < 2 * 60 + 30:
-        previous_trading_date = (ts - pd.Timedelta(days=1)).normalize()
-        if minutes < 60:
-            return previous_trading_date + pd.Timedelta(hours=23)
-        if minutes < 2 * 60:
-            return trading_date + pd.Timedelta(hours=1)
-        return trading_date + pd.Timedelta(hours=2)
+        if minutes < 22 * 60:
+            return trading_date + pd.Timedelta(hours=21)
+        if minutes < 23 * 60:
+            return trading_date + pd.Timedelta(hours=22)
+        return None
     if 9 * 60 <= minutes < 10 * 60:
         return trading_date + pd.Timedelta(hours=9)
     if 10 * 60 <= minutes < 11 * 60 + 15:
@@ -446,13 +477,22 @@ def exchange_hour_bucket_start(value: Any) -> pd.Timestamp | None:
 def exchange_trading_day_start(value: Any) -> pd.Timestamp | None:
     ts = pd.Timestamp(value).tz_localize(None)
     minutes = ts.hour * 60 + ts.minute
-    if minutes >= 21 * 60:
+    if not is_exchange_trading_minute(minutes):
+        return None
+    if 21 * 60 <= minutes < 23 * 60:
         return roll_forward_weekend((ts + pd.Timedelta(days=1)).normalize())
-    if minutes < 2 * 60 + 30:
-        return roll_forward_weekend(ts.normalize())
     if 9 * 60 <= minutes < 15 * 60:
         return ts.normalize()
     return None
+
+
+def is_exchange_trading_minute(minutes: int) -> bool:
+    return (
+        9 * 60 <= minutes < 10 * 60 + 15
+        or 10 * 60 + 30 <= minutes < 11 * 60 + 30
+        or 13 * 60 + 30 <= minutes < 15 * 60
+        or 21 * 60 <= minutes < 23 * 60
+    )
 
 
 def roll_forward_weekend(value: pd.Timestamp) -> pd.Timestamp:
@@ -692,10 +732,19 @@ async def fetch_kline_from_aliyun_market(symbol: str, period: str, limit: int = 
 
 
 def _fetch_kline_from_aliyun_market_sync(symbol: str, period: str, limit: int = 120) -> pd.DataFrame:
+    normalized_period = period.strip().lower()
+    if should_aggregate_exchange_hourly_period(normalized_period) or should_aggregate_exchange_daily_period(normalized_period):
+        base_df = _fetch_kline_from_aliyun_market_sync(
+            symbol,
+            "5m",
+            exchange_aggregation_base_limit(normalized_period, limit),
+        )
+        return aggregate_exchange_period_from_intraday(normalized_period, base_df, limit)
+
     url, appcode = ensure_aliyun_configured()
     params = {
         os.getenv("ALIYUN_MARKET_SYMBOL_PARAM", "symbol"): symbol,
-        os.getenv("ALIYUN_MARKET_PERIOD_PARAM", "period"): normalize_aliyun_period(period),
+        os.getenv("ALIYUN_MARKET_PERIOD_PARAM", "period"): normalize_aliyun_period(normalized_period),
         os.getenv("ALIYUN_MARKET_LIMIT_PARAM", "limit"): str(limit),
     }
     extra_params = os.getenv("ALIYUN_MARKET_EXTRA_PARAMS")
@@ -809,9 +858,21 @@ async def fetch_kline_from_tushare_market(symbol: str, period: str, limit: int =
 def _fetch_kline_from_tushare_market_sync(symbol: str, period: str, limit: int = 120) -> pd.DataFrame:
     pro = get_tushare_pro()
     ts_code = normalize_tushare_symbol(symbol)
+    normalized_period = period.strip().lower()
     try:
-        if period in {"1m", "3m", "5m", "15m", "30m", "60m", "1h"}:
-            df = fetch_tushare_minute_kline(pro, ts_code, period, limit)
+        if should_aggregate_exchange_hourly_period(normalized_period) or should_aggregate_exchange_daily_period(normalized_period):
+            df = fetch_tushare_minute_kline(
+                pro,
+                ts_code,
+                "5m",
+                exchange_aggregation_base_limit(normalized_period, limit),
+            )
+            if df is not None and not df.empty:
+                base_df = tushare_dataframe_to_kline(df)
+                return aggregate_exchange_period_from_intraday(normalized_period, base_df, limit)
+            raise MarketApiError("Tushare 分钟K线没有返回数据，无法按交易所时段重聚合 1h/1d")
+        elif normalized_period in {"1m", "3m", "5m", "15m", "30m"}:
+            df = fetch_tushare_minute_kline(pro, ts_code, normalized_period, limit)
             if df is not None and not df.empty:
                 return tushare_dataframe_to_kline(df)
             if os.getenv("TUSHARE_FALLBACK_DAILY", "true").lower() not in {"1", "true", "yes"}:
@@ -927,6 +988,15 @@ async def fetch_kline_from_infoway_market(symbol: str, period: str, limit: int =
 
 
 def _fetch_kline_from_infoway_market_sync(symbol: str, period: str, limit: int = 120) -> pd.DataFrame:
+    normalized_period = period.strip().lower()
+    if should_aggregate_exchange_hourly_period(normalized_period) or should_aggregate_exchange_daily_period(normalized_period):
+        base_df = _fetch_kline_from_infoway_market_sync(
+            symbol,
+            "5m",
+            exchange_aggregation_base_limit(normalized_period, limit),
+        )
+        return aggregate_exchange_period_from_intraday(normalized_period, base_df, limit)
+
     api_key = ensure_infoway_configured()
     try:
         from infoway import InfowayClient
@@ -944,7 +1014,7 @@ def _fetch_kline_from_infoway_market_sync(symbol: str, period: str, limit: int =
             market_client = getattr(client, module_name, None)
             if market_client is None or not hasattr(market_client, "get_kline"):
                 raise MarketApiError(f"Infoway 不支持的行情模块：{module_name}")
-            payload = market_client.get_kline(symbol, kline_type=normalize_period(period), count=limit)
+            payload = market_client.get_kline(symbol, kline_type=normalize_period(normalized_period), count=limit)
     except InfowayAuthError as exc:
         raise MarketApiError("Infoway API Key 无效或无权限") from exc
     except InfowayTimeoutError as exc:

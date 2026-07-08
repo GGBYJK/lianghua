@@ -26,6 +26,7 @@ from app.market_client import (
     query_tqsdk_contracts_from_api,
     normalize_tushare_symbol,
     normalize_tushare_symbol_row,
+    _fetch_kline_from_aliyun_market_sync,
     tqsdk_dataframe_to_kline,
     aggregate_exchange_hourly_bars,
     aggregate_exchange_daily_bars,
@@ -60,6 +61,7 @@ from app.strategy import (
     calculate_ma_trend_score,
     calculate_combined_trend_score,
     trend_label_from_score,
+    candle_display_time,
 )
 from app.monitor import build_signal_unique_key
 from app.monitor import build_wechat_workbot_content
@@ -242,6 +244,16 @@ def test_tqsdk_period_mapping_symbol_hints_and_dataframe() -> None:
     assert normalized["datetime"].iloc[0].isoformat() == "2026-04-28T11:40:00"
 
 
+def test_exchange_hourly_and_daily_display_time_uses_session_close() -> None:
+    assert candle_display_time(pd.Timestamp("2026-06-26 09:00"), "1h").isoformat() == "2026-06-26T10:00:00"
+    assert candle_display_time(pd.Timestamp("2026-06-26 10:00"), "1h").isoformat() == "2026-06-26T11:15:00"
+    assert candle_display_time(pd.Timestamp("2026-06-26 11:15"), "1h").isoformat() == "2026-06-26T14:15:00"
+    assert candle_display_time(pd.Timestamp("2026-06-26 14:15"), "1h").isoformat() == "2026-06-26T15:00:00"
+    assert candle_display_time(pd.Timestamp("2026-06-25 21:00"), "1h").isoformat() == "2026-06-25T22:00:00"
+    assert candle_display_time(pd.Timestamp("2026-06-25 22:00"), "1h").isoformat() == "2026-06-25T23:00:00"
+    assert candle_display_time(pd.Timestamp("2026-06-26"), "1d").isoformat() == "2026-06-26T00:00:00"
+
+
 def test_tqsdk_utc_timestamp_displays_as_beijing_time_in_wechat_message() -> None:
     df = pd.DataFrame({
         "datetime": [1777347600000000000],
@@ -305,12 +317,15 @@ def test_exchange_hourly_bars_use_futures_session_boundaries() -> None:
         "2026-06-02 21:55",
         "2026-06-02 22:00",
         "2026-06-02 22:55",
+        "2026-06-02 23:05",
         "2026-06-03 09:00",
         "2026-06-03 09:55",
         "2026-06-03 10:00",
+        "2026-06-03 10:20",
         "2026-06-03 10:55",
         "2026-06-03 11:10",
         "2026-06-03 11:15",
+        "2026-06-03 11:45",
         "2026-06-03 13:55",
         "2026-06-03 14:10",
         "2026-06-03 14:15",
@@ -338,8 +353,8 @@ def test_exchange_hourly_bars_use_futures_session_boundaries() -> None:
         "2026-06-03T11:15:00",
         "2026-06-03T14:15:00",
     ]
-    assert list(hourly["open"]) == [101, 103, 105, 107, 110, 113]
-    assert list(hourly["close"]) == [102, 104, 106, 109, 112, 114]
+    assert list(hourly["open"]) == [101, 103, 106, 108, 112, 116]
+    assert list(hourly["close"]) == [102, 104, 107, 111, 115, 117]
     assert list(hourly["volume"]) == [2, 2, 2, 3, 3, 2]
 
 
@@ -350,15 +365,18 @@ def test_exchange_daily_bars_treat_night_session_as_next_trading_day() -> None:
                 [
                     "2026-06-02 21:00",
                     "2026-06-02 22:55",
+                    "2026-06-02 23:05",
                     "2026-06-03 09:00",
+                    "2026-06-03 10:20",
+                    "2026-06-03 11:45",
                     "2026-06-03 14:55",
                 ]
             ),
-            "open": [10, 11, 12, 13],
-            "high": [12, 13, 14, 15],
-            "low": [9, 10, 11, 12],
-            "close": [11, 12, 13, 14],
-            "volume": [1, 2, 3, 4],
+            "open": [10, 11, 99, 12, 98, 97, 13],
+            "high": [12, 13, 199, 14, 198, 197, 15],
+            "low": [9, 10, 0, 11, 1, 2, 12],
+            "close": [11, 12, 99, 13, 98, 97, 14],
+            "volume": [1, 2, 100, 3, 100, 100, 4],
         }
     )
 
@@ -367,6 +385,120 @@ def test_exchange_daily_bars_treat_night_session_as_next_trading_day() -> None:
     assert len(daily) == 1
     assert daily["datetime"].iloc[0].isoformat() == "2026-06-03T00:00:00"
     assert daily["open"].iloc[0] == 10
+    assert daily["close"].iloc[0] == 14
+    assert daily["volume"].iloc[0] == 10
+
+
+def test_exchange_daily_bars_use_previous_night_for_trade_date() -> None:
+    df = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(
+                [
+                    "2026-06-25 20:55",
+                    "2026-06-25 21:00",
+                    "2026-06-25 22:55",
+                    "2026-06-25 23:05",
+                    "2026-06-26 09:00",
+                    "2026-06-26 10:20",
+                    "2026-06-26 10:30",
+                    "2026-06-26 11:25",
+                    "2026-06-26 11:45",
+                    "2026-06-26 13:30",
+                    "2026-06-26 14:55",
+                    "2026-06-26 15:00",
+                ]
+            ),
+            "open": [99, 10, 11, 99, 12, 99, 13, 14, 99, 15, 16, 99],
+            "high": [199, 12, 13, 199, 14, 199, 15, 16, 199, 17, 18, 199],
+            "low": [0, 9, 10, 0, 11, 0, 12, 13, 0, 14, 15, 0],
+            "close": [99, 11, 12, 99, 13, 99, 14, 15, 99, 16, 17, 99],
+            "volume": [100, 1, 2, 100, 3, 100, 4, 5, 100, 6, 7, 100],
+        }
+    )
+
+    daily = aggregate_exchange_daily_bars(df)
+
+    assert len(daily) == 1
+    assert daily["datetime"].iloc[0].isoformat() == "2026-06-26T00:00:00"
+    assert daily["open"].iloc[0] == 10
+    assert daily["high"].iloc[0] == 18
+    assert daily["low"].iloc[0] == 9
+    assert daily["close"].iloc[0] == 17
+    assert daily["volume"].iloc[0] == 28
+
+
+def test_aliyun_one_hour_uses_exchange_session_aggregation(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str, int]] = []
+
+    def fake_fetch(symbol: str, period: str, limit: int = 120) -> pd.DataFrame:
+        calls.append((symbol, period, limit))
+        return pd.DataFrame(
+            {
+                "datetime": pd.to_datetime(
+                    [
+                        "2026-06-25 21:00",
+                        "2026-06-25 21:55",
+                        "2026-06-25 22:00",
+                        "2026-06-25 22:55",
+                        "2026-06-26 09:00",
+                        "2026-06-26 09:55",
+                    ]
+                ),
+                "open": [10, 11, 12, 13, 14, 15],
+                "high": [11, 12, 13, 14, 15, 16],
+                "low": [9, 10, 11, 12, 13, 14],
+                "close": [11, 12, 13, 14, 15, 16],
+                "volume": [1, 2, 3, 4, 5, 6],
+            }
+        )
+
+    monkeypatch.setattr("app.market_client._fetch_kline_from_aliyun_market_sync", fake_fetch)
+
+    hourly = _fetch_kline_from_aliyun_market_sync("DCE.c2609", "1h", 3)
+
+    assert calls == [("DCE.c2609", "5m", 420)]
+    assert [item.isoformat() for item in hourly["datetime"]] == [
+        "2026-06-25T21:00:00",
+        "2026-06-25T22:00:00",
+        "2026-06-26T09:00:00",
+    ]
+    assert list(hourly["volume"]) == [3, 7, 11]
+
+
+def test_aliyun_daily_uses_exchange_trading_day_aggregation(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str, int]] = []
+
+    def fake_fetch(symbol: str, period: str, limit: int = 120) -> pd.DataFrame:
+        calls.append((symbol, period, limit))
+        return pd.DataFrame(
+            {
+                "datetime": pd.to_datetime(
+                    [
+                        "2026-06-25 21:00",
+                        "2026-06-25 22:55",
+                        "2026-06-25 23:05",
+                        "2026-06-26 09:00",
+                        "2026-06-26 14:55",
+                    ]
+                ),
+                "open": [10, 11, 99, 12, 13],
+                "high": [12, 13, 199, 14, 15],
+                "low": [9, 10, 0, 11, 12],
+                "close": [11, 12, 99, 13, 14],
+                "volume": [1, 2, 100, 3, 4],
+            }
+        )
+
+    monkeypatch.setattr("app.market_client._fetch_kline_from_aliyun_market_sync", fake_fetch)
+
+    daily = _fetch_kline_from_aliyun_market_sync("DCE.c2609", "1d", 1)
+
+    assert calls == [("DCE.c2609", "5m", 9000)]
+    assert len(daily) == 1
+    assert daily["datetime"].iloc[0].isoformat() == "2026-06-26T00:00:00"
+    assert daily["open"].iloc[0] == 10
+    assert daily["high"].iloc[0] == 15
+    assert daily["low"].iloc[0] == 9
     assert daily["close"].iloc[0] == 14
     assert daily["volume"].iloc[0] == 10
 
