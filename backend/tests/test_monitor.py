@@ -20,6 +20,7 @@ from app.watch_pool_store import (
     _alert_structure_exists,
     _deduplicate_alert_summaries,
     _refresh_existing_alert_score_if_missing,
+    _signal_has_current_pattern_score_schema,
     _signal_has_score_details,
     _isoformat_utc,
 )
@@ -327,6 +328,39 @@ def test_score_detail_detection_handles_new_and_legacy_payloads() -> None:
     assert not _signal_has_score_details({"reasons": ["头部高于左右肩", "右肩已确认"]})
 
 
+def test_current_pattern_score_schema_detection_rejects_legacy_trigger_section() -> None:
+    current_signal = {
+        "pattern_sections": [
+            {"key": "trend", "max": 9, "items": []},
+            {
+                "key": "time",
+                "max": 20,
+                "items": [{"label": "肩颈段时间比例 SNTR", "max": 6}],
+            },
+            {
+                "key": "trade_value",
+                "max": 12,
+                "items": [{"label": "预期盈亏比 RR", "max": 6}],
+            },
+        ],
+    }
+    legacy_signal = {
+        "pattern_sections": [
+            {"key": "trend", "max": 10, "items": []},
+            {"key": "time", "max": 14, "items": []},
+            {"key": "trigger", "max": 3, "items": [{"label": "触发速度", "max": 3}]},
+            {
+                "key": "trade_value",
+                "max": 14,
+                "items": [{"label": "预期盈亏比 RR", "max": 8}],
+            },
+        ],
+    }
+
+    assert _signal_has_current_pattern_score_schema(current_signal)
+    assert not _signal_has_current_pattern_score_schema(legacy_signal)
+
+
 def test_existing_unscored_alert_is_refreshed_without_duplicate_insert() -> None:
     executed: list[tuple[str, tuple[object, ...]]] = []
     existing = {
@@ -350,6 +384,52 @@ def test_existing_unscored_alert_is_refreshed_without_duplicate_insert() -> None
     assert "UPDATE head_shoulders_alerts" in executed[0][0]
     assert executed[0][1][0] == 82
     assert executed[0][1][-1] == 9
+
+
+def test_existing_legacy_pattern_score_alert_is_refreshed() -> None:
+    executed: list[tuple[str, tuple[object, ...]]] = []
+    existing = {
+        "id": 10,
+        "signal_payload": json.dumps({
+            "pattern_sections": [
+                {"key": "trend", "max": 10, "items": []},
+                {"key": "time", "max": 14, "items": []},
+                {"key": "trigger", "max": 3, "items": [{"label": "触发速度", "max": 3}]},
+                {"key": "trade_value", "max": 14, "items": [{"label": "预期盈亏比 RR", "max": 8}]},
+            ],
+        }, ensure_ascii=False),
+    }
+    alert = {
+        "score": 80,
+        "message": "current schema",
+        "signal_payload": {
+            "pattern_sections": [
+                {"key": "trend", "max": 9, "items": []},
+                {
+                    "key": "time",
+                    "max": 20,
+                    "items": [{"label": "肩颈段时间比例 SNTR", "max": 6}],
+                },
+                {
+                    "key": "trade_value",
+                    "max": 12,
+                    "items": [{"label": "预期盈亏比 RR", "max": 6}],
+                },
+            ],
+        },
+        "chart_payload": {"candles": []},
+    }
+
+    class Cursor:
+        def execute(self, sql, params) -> None:
+            executed.append((sql, params))
+
+    _refresh_existing_alert_score_if_missing(Cursor(), existing, alert)
+
+    assert len(executed) == 1
+    assert "UPDATE head_shoulders_alerts" in executed[0][0]
+    assert executed[0][1][0] == 80
+    assert executed[0][1][-1] == 10
 
 
 def test_app_lifespan_starts_and_stops_watch_pool_monitor(monkeypatch) -> None:

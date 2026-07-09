@@ -3505,7 +3505,27 @@ function signalCategoryLabel(signal: Pick<Signal, "alert_type" | "pattern">) {
 }
 
 function isMonitorAlertVisible(alert: HeadShouldersAlertSummary) {
-  return (alert.signal_payload.pattern_score ?? -Infinity) >= MIN_MONITOR_PATTERN_SCORE;
+  return (alert.signal_payload.pattern_score ?? -Infinity) >= MIN_MONITOR_PATTERN_SCORE
+    && hasCurrentPatternScoreSchema(alert.signal_payload);
+}
+
+function hasCurrentPatternScoreSchema(signal: Signal) {
+  const sections = signal.pattern_sections ?? [];
+  const sectionByKey = new Map(sections.map((section) => [section.key, section]));
+  if (sectionByKey.has("trigger")) {
+    return false;
+  }
+  if (sectionByKey.get("trend")?.max !== 9) {
+    return false;
+  }
+  if (sectionByKey.get("time")?.max !== 20) {
+    return false;
+  }
+  if (sectionByKey.get("trade_value")?.max !== 12) {
+    return false;
+  }
+  const metrics = signal.pattern_metrics ?? {};
+  return typeof metrics.sntr === "number";
 }
 
 function monitorHeadCategoryKey(alert: Pick<HeadShouldersAlertSummary, "alert_type">) {

@@ -618,6 +618,55 @@ def _signal_has_score_details(signal: Any) -> bool:
     )
 
 
+def _signal_has_current_pattern_score_schema(signal: Any) -> bool:
+    if isinstance(signal, str):
+        try:
+            signal = json.loads(signal)
+        except json.JSONDecodeError:
+            return False
+    if not isinstance(signal, dict):
+        return False
+    sections = signal.get("pattern_sections")
+    if not isinstance(sections, list):
+        return False
+    section_by_key = {
+        section.get("key"): section
+        for section in sections
+        if isinstance(section, dict)
+    }
+    if "trigger" in section_by_key:
+        return False
+    expected_max_scores = {
+        "trend": 9,
+        "time": 20,
+        "trade_value": 12,
+    }
+    for key, max_score in expected_max_scores.items():
+        section = section_by_key.get(key)
+        if not isinstance(section, dict) or section.get("max") != max_score:
+            return False
+    time_items = section_by_key["time"].get("items")
+    if not isinstance(time_items, list):
+        return False
+    has_shoulder_neck_time = any(
+        isinstance(item, dict)
+        and item.get("label") == "肩颈段时间比例 SNTR"
+        and item.get("max") == 6
+        for item in time_items
+    )
+    if not has_shoulder_neck_time:
+        return False
+    trade_items = section_by_key["trade_value"].get("items")
+    if not isinstance(trade_items, list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and item.get("label") == "预期盈亏比 RR"
+        and item.get("max") == 6
+        for item in trade_items
+    )
+
+
 def _matching_alert_structure(cursor: Any, alert: dict[str, Any]) -> dict[str, Any] | None:
     target_key = build_alert_structure_key(alert)
     cursor.execute(
@@ -682,9 +731,17 @@ def _alert_beats_existing_head_score(cursor: Any, alert: dict[str, Any]) -> bool
 
 
 def _refresh_existing_alert_score_if_missing(cursor: Any, existing: dict[str, Any], alert: dict[str, Any]) -> None:
-    if _signal_has_score_details(existing.get("signal_payload")):
-        return
-    if not _signal_has_score_details(alert.get("signal_payload")):
+    existing_signal = existing.get("signal_payload")
+    alert_signal = alert.get("signal_payload")
+    needs_score_detail_refresh = (
+        _signal_has_score_details(alert_signal)
+        and not _signal_has_score_details(existing_signal)
+    )
+    needs_pattern_schema_refresh = (
+        _signal_has_current_pattern_score_schema(alert_signal)
+        and not _signal_has_current_pattern_score_schema(existing_signal)
+    )
+    if not needs_score_detail_refresh and not needs_pattern_schema_refresh:
         return
     cursor.execute(
         """
