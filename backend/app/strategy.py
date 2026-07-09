@@ -656,10 +656,8 @@ def _local_trend_score(
 
     span = max(0, head.index - max(0, left_shoulder.index - lookback))
     if span >= 12:
-        duration_score = 3
-    elif span >= 6:
         duration_score = 2
-    elif span >= 3:
+    elif span >= 6:
         duration_score = 1
     else:
         duration_score = 0
@@ -694,7 +692,7 @@ def _local_trend_score(
 
     return [
         _pattern_item("前置趋势明确", clear_score, 5, clear_detail),
-        _pattern_item("趋势具有持续性", duration_score, 3, duration_detail),
+        _pattern_item("趋势具有持续性", duration_score, 2, duration_detail),
         _pattern_item("关键位置配合", key_score, 2, key_detail),
     ], trend_clear
 
@@ -816,19 +814,32 @@ def _pattern_time_items(
     head: PivotPoint,
     right_neck: PivotPoint,
     right_shoulder: PivotPoint,
-) -> tuple[list[dict[str, Any]], float, float]:
+) -> tuple[list[dict[str, Any]], float, float, float]:
     left_span = max(1, head.index - left_shoulder.index)
     right_span = max(1, right_shoulder.index - head.index)
     ts = max(left_span, right_span) / min(left_span, right_span)
     left_neck_span = max(1, head.index - left_neck.index)
     right_neck_span = max(1, right_neck.index - head.index)
     tn = max(left_neck_span, right_neck_span) / min(left_neck_span, right_neck_span)
+    left_shoulder_neck_span = max(1, left_neck.index - left_shoulder.index)
+    right_neck_shoulder_span = max(1, right_shoulder.index - right_neck.index)
+    sntr = max(left_shoulder_neck_span, right_neck_shoulder_span) / min(
+        left_shoulder_neck_span,
+        right_neck_shoulder_span,
+    )
     ts_score = _score_by_thresholds(ts, [(1.5, 8), (2.0, 7), (2.5, 4), (3.0, 1)])
     tn_score = _score_by_thresholds(tn, [(1.5, 6), (2.0, 4), (3.0, 2)])
+    sntr_score = _score_by_thresholds(sntr, [(1.3, 6), (1.6, 5), (2.0, 3), (2.5, 1)])
     return [
         _pattern_item("肩部时间比例 TS", ts_score, 8, f"TS={ts:.2f}，左右跨度 {left_span}/{right_span} 根"),
         _pattern_item("颈点时间比例 TN", tn_score, 6, f"TN={tn:.2f}，左右跨度 {left_neck_span}/{right_neck_span} 根"),
-    ], ts, tn
+        _pattern_item(
+            "肩颈段时间比例 SNTR",
+            sntr_score,
+            6,
+            f"SNTR={sntr:.2f}，左肩到左颈/右颈到右肩跨度 {left_shoulder_neck_span}/{right_neck_shoulder_span} 根",
+        ),
+    ], ts, tn, sntr
 
 
 def _macd_value(df: pd.DataFrame, index: int) -> float | None:
@@ -916,25 +927,6 @@ def _pattern_momentum_items(
     ]
 
 
-def _pattern_trigger_items(
-    right_shoulder: PivotPoint,
-    inverse: bool,
-    trigger_index: int,
-) -> tuple[list[dict[str, Any]], int]:
-    trigger_speed_bars = max(0, trigger_index - right_shoulder.index)
-    if trigger_speed_bars <= 5:
-        speed_score = 3
-    elif trigger_speed_bars <= 10:
-        speed_score = 2
-    elif trigger_speed_bars <= 20:
-        speed_score = 1
-    else:
-        speed_score = 0
-    return [
-        _pattern_item("触发速度", speed_score, 3, f"RS 后 {trigger_speed_bars} 根K线触发"),
-    ], trigger_speed_bars
-
-
 def _pattern_trade_value_items(
     df: pd.DataFrame,
     left_neck: PivotPoint,
@@ -967,7 +959,7 @@ def _pattern_trade_value_items(
 
     rr_base_score = _score_by_min_thresholds(rr, [(3.0, 6), (2.0, 5), (1.5, 3), (1.2, 1)])
     ph_base_score = _score_by_min_thresholds(ph_qtr, [(4.0, 2), (2.5, 1)])
-    rr_score = _scale_score(rr_base_score, 6, 8)
+    rr_score = rr_base_score
     ph_score = _scale_score(ph_base_score, 2, 4)
 
     obstacles = 0
@@ -988,7 +980,7 @@ def _pattern_trade_value_items(
         _pattern_item(
             "预期盈亏比 RR",
             rr_score,
-            8,
+            6,
             f"RR={rr:.2f}，触发价={trigger_price:.4f}，止损价={stop if stop is not None else 0:.4f}，"
             f"目标价={target if target is not None else 0:.4f}，Risk={risk if risk is not None else 0:.4f}，"
             f"Reward={reward if reward is not None else 0:.4f}",
@@ -1078,25 +1070,21 @@ def calculate_pattern_score(
         df, left_shoulder, left_neck, head, right_neck, right_shoulder, inverse, qtr, qtr_anomaly
     )
     neckline_items = _pattern_neckline_items(df, left_neck, right_neck, right_shoulder, inverse, qtr, qtr_anomaly)
-    time_items, ts, tn = _pattern_time_items(left_shoulder, left_neck, head, right_neck, right_shoulder)
+    time_items, ts, tn, sntr = _pattern_time_items(left_shoulder, left_neck, head, right_neck, right_shoulder)
     momentum_items = _pattern_momentum_items(
         df, left_shoulder, left_neck, head, right_neck, right_shoulder, inverse, trigger_index
-    )
-    trigger_items, trigger_speed_bars = _pattern_trigger_items(
-        right_shoulder, inverse, trigger_index
     )
     trade_items, trade_metrics = _pattern_trade_value_items(
         df, left_neck, head, right_neck, right_shoulder, inverse, qtr, qtr_anomaly, trigger_index, trigger_price
     )
 
     sections = [
-        _pattern_section("trend", "趋势背景", 10, trend_items),
+        _pattern_section("trend", "趋势背景", 9, trend_items),
         _pattern_section("structure", "三峰/三谷结构", 32, structure_items),
         _pattern_section("neckline", "颈线质量", 16, neckline_items),
-        _pattern_section("time", "时间对称性", 14, time_items),
+        _pattern_section("time", "时间对称性", 20, time_items),
         _pattern_section("momentum", "量能/动能配合", 11, momentum_items),
-        _pattern_section("trigger", "右肩与半程触发质量", 3, trigger_items),
-        _pattern_section("trade_value", "即时交易价值", 14, trade_items),
+        _pattern_section("trade_value", "即时交易价值", 12, trade_items),
     ]
     raw_score = int(sum(section["score"] for section in sections))
 
@@ -1116,12 +1104,12 @@ def calculate_pattern_score(
         "dn_qtr": dn_qtr,
         "ts": ts,
         "tn": tn,
+        "sntr": sntr,
         "qtr": qtr,
         "qtr_anomaly": qtr_anomaly,
         "trigger_index": trigger_index,
         "trigger_price": trigger_price,
         "midpoint": midpoint,
-        "trigger_speed_bars": trigger_speed_bars,
         **trade_metrics,
     }
 

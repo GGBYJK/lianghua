@@ -63,9 +63,9 @@ const futuresSymbolOptions = [
   { symbol: "UR2609", name: "尿素2609" },
 ];
 
-const MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache_v8";
+const MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache_v9";
 const LEGACY_MARKET_SCAN_CACHE_KEY = "lh_demo_market_scan_cache";
-const MARKET_SCAN_CACHE_VERSION = 8;
+const MARKET_SCAN_CACHE_VERSION = 9;
 const MANUAL_MARKET_SCAN_OVERRIDES = {
   max_signal_age_bars: 0,
 };

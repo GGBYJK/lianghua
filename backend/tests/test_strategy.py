@@ -926,11 +926,14 @@ def test_pattern_score_scores_top_structure_thresholds_and_grade() -> None:
     trade = next(section for section in result["sections"] if section["key"] == "trade_value")
     structure_scores = {item["label"]: item["score"] for item in structure["items"]}
     neckline_scores = {item["label"]: item["score"] for item in neckline["items"]}
+    time_scores = {item["label"]: item["score"] for item in time_section["items"]}
     assert sum(section["max"] for section in result["sections"]) == 100
+    assert next(section for section in result["sections"] if section["key"] == "trend")["max"] == 9
     assert structure["max"] == 32
     assert neckline["max"] == 16
-    assert time_section["max"] == 14
-    assert trade["max"] == 14
+    assert time_section["max"] == 20
+    assert trade["max"] == 12
+    assert trade["items"][0]["max"] == 6
     rr_detail = trade["items"][0]["detail"]
     assert "触发价=" in rr_detail
     assert "止损价=" in rr_detail
@@ -942,6 +945,7 @@ def test_pattern_score_scores_top_structure_thresholds_and_grade() -> None:
     assert structure_scores["肩颈价差对称"] == 1
     assert structure_scores["头颈价差对称"] == 4
     assert neckline_scores["左右颈价格接近"] == 10
+    assert time_scores["肩颈段时间比例 SNTR"] == 6
     labels = {item["label"] for section in result["sections"] for item in section["items"]}
     assert "五点顺序清晰" not in labels
     assert "右肩未破坏头部" not in labels
@@ -950,12 +954,11 @@ def test_pattern_score_scores_top_structure_thresholds_and_grade() -> None:
     assert "触发前未失效" not in labels
     assert "收盘价触及半程" not in labels
     assert "右肩动能弱于头部" not in labels
-    trigger = next(section for section in result["sections"] if section["key"] == "trigger")
-    trigger_scores = {item["label"]: item["score"] for item in trigger["items"]}
-    assert trigger["max"] == 3
-    assert trigger_scores["触发速度"] == 3
+    assert "触发速度" not in labels
+    assert all(section["key"] != "trigger" for section in result["sections"])
     assert result["metrics"]["ds_qtr"] == pytest.approx(1.0)
     assert result["metrics"]["dn_qtr"] == pytest.approx(0.25)
+    assert result["metrics"]["sntr"] == pytest.approx(1.0)
     assert result["raw_score"] >= result["final_score"]
     assert result["grade"] in {"A", "B", "C", "D", "忽略"}
 
