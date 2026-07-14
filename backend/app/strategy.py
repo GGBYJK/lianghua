@@ -1129,6 +1129,69 @@ def _pattern_quality_allows_alert(pattern_result: dict[str, Any], config: HeadSh
     return int(pattern_result["final_score"]) >= config.min_pattern_score_to_alert
 
 
+def _has_close_crossed_ma60_between_left_shoulder_and_trigger(
+    df: pd.DataFrame,
+    *,
+    left_shoulder: PivotPoint,
+    trigger_index: int,
+    inverse: bool,
+) -> bool:
+    if "ma60" not in df.columns:
+        return False
+    start_index = max(0, left_shoulder.index)
+    end_index = min(len(df) - 1, trigger_index)
+    if end_index < start_index:
+        return False
+    window = df.loc[start_index:end_index, ["close", "ma60"]].dropna()
+    if window.empty:
+        return False
+    close = window["close"].astype(float)
+    ma60 = window["ma60"].astype(float)
+    return bool((close > ma60).any()) if inverse else bool((close < ma60).any())
+
+
+def _apply_ma60_pattern_penalty(
+    pattern_result: dict[str, Any],
+    df: pd.DataFrame,
+    *,
+    left_shoulder: PivotPoint,
+    trigger_index: int,
+    inverse: bool,
+) -> tuple[dict[str, Any], str | None]:
+    crossed = _has_close_crossed_ma60_between_left_shoulder_and_trigger(
+        df,
+        left_shoulder=left_shoulder,
+        trigger_index=trigger_index,
+        inverse=inverse,
+    )
+    metrics = {
+        **pattern_result.get("metrics", {}),
+        "ma60_cross_check": {
+            "start_index": left_shoulder.index,
+            "end_index": trigger_index,
+            "direction": "close_above_ma60" if inverse else "close_below_ma60",
+            "observed": crossed,
+            "penalty": 0 if crossed else 10,
+        },
+    }
+    if crossed:
+        return {**pattern_result, "metrics": metrics}, None
+
+    original_score = int(pattern_result["final_score"])
+    final_score = max(0, original_score - 10)
+    penalized = {
+        **pattern_result,
+        "final_score": final_score,
+        "grade": _pattern_grade(final_score),
+        "metrics": {
+            **metrics,
+            "ma60_penalty_original_score": original_score,
+        },
+    }
+    direction = "涨破" if inverse else "跌破"
+    return penalized, f"左肩到信号触发区间未出现收盘价{direction} MA60，形态质量评分 -10"
+
+
 def passes_head_neck_bar_limit(
     timeframe: str,
     left_neck: "PivotPoint",
@@ -2059,40 +2122,47 @@ def scan_head_shoulders_top(
             trigger_price=trigger_price,
             midpoint=midpoint_price,
         )
-        if not _pattern_quality_allows_alert(pattern_result, config):
-            continue
-
-        signals.append(HeadShoulderTopSignal(
-            symbol=symbol,
-            timeframe=timeframe,
-            pattern="head_shoulders_top",
-            alert_type="right_shoulder_confirmed",
+        alert_pattern_result, ma60_penalty_reason = _apply_ma60_pattern_penalty(
+            pattern_result,
+            df,
             left_shoulder=p1,
-            left_neck=p2,
-            head=p3,
-            right_neck=p4,
-            right_shoulder=p5,
-            neckline_price=neckline_price,
-            confirmed=False,
-            score=total_score,
-            qtr=qtr,
-            trend_label=trend_label_from_score(total_score, bullish=False),
-            reasons=reasons + [
-                f"右肩形成后价格回落至右颈与右肩半程价 {midpoint_price:.2f}"
-            ],
-            retest_time=trigger_time,
-            retest_price=trigger_price,
-            pattern_score=pattern_result["final_score"],
-            pattern_raw_score=pattern_result["raw_score"],
-            pattern_grade=pattern_result["grade"],
-            pattern_caps=pattern_result["caps"],
-            pattern_sections=pattern_result["sections"],
-            pattern_metrics=pattern_result["metrics"],
-            message=(
-                f"{symbol} {timeframe} 头肩顶右肩半程触发，当前评分 {total_score}。"
-                f"触发价 {trigger_price:.2f}，半程价 {midpoint_price:.2f}。"
-            ),
-        ))
+            trigger_index=trigger_index,
+            inverse=False,
+        )
+        if _pattern_quality_allows_alert(alert_pattern_result, config):
+            signals.append(HeadShoulderTopSignal(
+                symbol=symbol,
+                timeframe=timeframe,
+                pattern="head_shoulders_top",
+                alert_type="right_shoulder_confirmed",
+                left_shoulder=p1,
+                left_neck=p2,
+                head=p3,
+                right_neck=p4,
+                right_shoulder=p5,
+                neckline_price=neckline_price,
+                confirmed=False,
+                score=total_score,
+                qtr=qtr,
+                trend_label=trend_label_from_score(total_score, bullish=False),
+                reasons=[
+                    *reasons,
+                    f"右肩形成后价格回落至右颈与右肩半程价 {midpoint_price:.2f}",
+                    *([ma60_penalty_reason] if ma60_penalty_reason is not None else []),
+                ],
+                retest_time=trigger_time,
+                retest_price=trigger_price,
+                pattern_score=alert_pattern_result["final_score"],
+                pattern_raw_score=alert_pattern_result["raw_score"],
+                pattern_grade=alert_pattern_result["grade"],
+                pattern_caps=alert_pattern_result["caps"],
+                pattern_sections=alert_pattern_result["sections"],
+                pattern_metrics=alert_pattern_result["metrics"],
+                message=(
+                    f"{symbol} {timeframe} 头肩顶右肩半程触发，当前评分 {total_score}。"
+                    f"触发价 {trigger_price:.2f}，半程价 {midpoint_price:.2f}。"
+                ),
+            ))
 
         if should_emit_pullback_alert(total_score, pattern_result):
             (
@@ -2275,40 +2345,47 @@ def scan_inverse_head_shoulders(
             trigger_price=trigger_price,
             midpoint=midpoint_price,
         )
-        if not _pattern_quality_allows_alert(pattern_result, config):
-            continue
-
-        signals.append(HeadShoulderTopSignal(
-            symbol=symbol,
-            timeframe=timeframe,
-            pattern="inverse_head_shoulders",
-            alert_type="right_shoulder_confirmed",
+        alert_pattern_result, ma60_penalty_reason = _apply_ma60_pattern_penalty(
+            pattern_result,
+            df,
             left_shoulder=p1,
-            left_neck=p2,
-            head=p3,
-            right_neck=p4,
-            right_shoulder=p5,
-            neckline_price=neckline_price,
-            confirmed=False,
-            score=total_score,
-            qtr=qtr,
-            trend_label=trend_label_from_score(total_score, bullish=True),
-            reasons=reasons + [
-                f"右肩形成后价格上升至右颈与右肩半程价 {midpoint_price:.2f}"
-            ],
-            retest_time=trigger_time,
-            retest_price=trigger_price,
-            pattern_score=pattern_result["final_score"],
-            pattern_raw_score=pattern_result["raw_score"],
-            pattern_grade=pattern_result["grade"],
-            pattern_caps=pattern_result["caps"],
-            pattern_sections=pattern_result["sections"],
-            pattern_metrics=pattern_result["metrics"],
-            message=(
-                f"{symbol} {timeframe} 反向头肩右肩半程触发，评分 {total_score}。"
-                f"触发价 {trigger_price:.2f}，半程价 {midpoint_price:.2f}。"
-            ),
-        ))
+            trigger_index=trigger_index,
+            inverse=True,
+        )
+        if _pattern_quality_allows_alert(alert_pattern_result, config):
+            signals.append(HeadShoulderTopSignal(
+                symbol=symbol,
+                timeframe=timeframe,
+                pattern="inverse_head_shoulders",
+                alert_type="right_shoulder_confirmed",
+                left_shoulder=p1,
+                left_neck=p2,
+                head=p3,
+                right_neck=p4,
+                right_shoulder=p5,
+                neckline_price=neckline_price,
+                confirmed=False,
+                score=total_score,
+                qtr=qtr,
+                trend_label=trend_label_from_score(total_score, bullish=True),
+                reasons=[
+                    *reasons,
+                    f"右肩形成后价格上升至右颈与右肩半程价 {midpoint_price:.2f}",
+                    *([ma60_penalty_reason] if ma60_penalty_reason is not None else []),
+                ],
+                retest_time=trigger_time,
+                retest_price=trigger_price,
+                pattern_score=alert_pattern_result["final_score"],
+                pattern_raw_score=alert_pattern_result["raw_score"],
+                pattern_grade=alert_pattern_result["grade"],
+                pattern_caps=alert_pattern_result["caps"],
+                pattern_sections=alert_pattern_result["sections"],
+                pattern_metrics=alert_pattern_result["metrics"],
+                message=(
+                    f"{symbol} {timeframe} 反向头肩右肩半程触发，评分 {total_score}。"
+                    f"触发价 {trigger_price:.2f}，半程价 {midpoint_price:.2f}。"
+                ),
+            ))
 
         if should_emit_pullback_alert(total_score, pattern_result):
             (

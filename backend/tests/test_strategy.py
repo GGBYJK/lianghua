@@ -1398,6 +1398,134 @@ def test_top_scan_emits_multiple_right_shoulders_for_same_setup(monkeypatch) -> 
     assert [signal.retest_time for signal in signals] == [times[13], times[17]]
 
 
+def test_top_ma60_penalty_deducts_right_shoulder_signal_but_pullback_uses_original_score(monkeypatch) -> None:
+    times = pd.date_range("2026-06-01 09:00:00", periods=80, freq="min")
+    df = pd.DataFrame({
+        "datetime": times,
+        "open": [100.0] * len(times),
+        "high": [101.0] * len(times),
+        "low": [99.0] * len(times),
+        "close": [100.0] * len(times),
+        "volume": [1000] * len(times),
+    })
+    candidate = (
+        PivotPoint(60, times[60], 110.0, "high"),
+        PivotPoint(61, times[61], 95.0, "low"),
+        PivotPoint(62, times[62], 118.0, "high"),
+        PivotPoint(63, times[63], 96.0, "low"),
+        PivotPoint(64, times[64], 109.0, "high"),
+    )
+
+    monkeypatch.setattr(strategy_module, "find_structure_pivots_for_timeframe", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(strategy_module, "iter_timeframe_pattern_candidates", lambda *_args, **_kwargs: [candidate])
+    monkeypatch.setattr(strategy_module, "passes_head_neck_bar_limit", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "validate_head_shoulders_structure", lambda *_args, **_kwargs: (True, [], 0))
+    monkeypatch.setattr(strategy_module, "validate_candle_close_constraints", lambda *_args, **_kwargs: (True, ""))
+    monkeypatch.setattr(strategy_module, "calculate_combined_trend_score", lambda *_args, **_kwargs: (0, []))
+    monkeypatch.setattr(
+        strategy_module,
+        "check_right_shoulder_midpoint_trigger",
+        lambda *_args, **_kwargs: (True, 65, times[65], 102.0, 102.5),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "calculate_pattern_score",
+        lambda *_args, **_kwargs: {
+            "final_score": 80,
+            "raw_score": 80,
+            "grade": "A",
+            "caps": [],
+            "sections": [],
+            "metrics": {},
+        },
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "check_neckline_break_then_pullback",
+        lambda *_args, **_kwargs: (True, 66, times[66], 94.0, 67, times[67], 103.0, 102.0),
+    )
+
+    signals = strategy_module.scan_head_shoulders_top(
+        df,
+        "TEST",
+        "3m",
+        HeadShoulderTopConfig(min_pattern_score_to_alert=70),
+    )
+
+    right_shoulder = next(signal for signal in signals if signal.alert_type == "right_shoulder_confirmed")
+    pullback = next(signal for signal in signals if signal.alert_type == "head_shoulders_top_pullback")
+    assert right_shoulder.pattern_score == 70
+    assert right_shoulder.pattern_metrics["ma60_cross_check"]["observed"] is False
+    assert right_shoulder.pattern_metrics["ma60_cross_check"]["penalty"] == 10
+    assert any("未出现收盘价跌破 MA60" in reason for reason in right_shoulder.reasons)
+    assert pullback.pattern_score == 80
+    assert "ma60_cross_check" not in pullback.pattern_metrics
+
+
+def test_inverse_ma60_penalty_deducts_right_shoulder_signal_but_pullback_uses_original_score(monkeypatch) -> None:
+    times = pd.date_range("2026-06-01 09:00:00", periods=80, freq="min")
+    df = pd.DataFrame({
+        "datetime": times,
+        "open": [100.0] * len(times),
+        "high": [101.0] * len(times),
+        "low": [99.0] * len(times),
+        "close": [100.0] * len(times),
+        "volume": [1000] * len(times),
+    })
+    candidate = (
+        PivotPoint(60, times[60], 90.0, "low"),
+        PivotPoint(61, times[61], 105.0, "high"),
+        PivotPoint(62, times[62], 82.0, "low"),
+        PivotPoint(63, times[63], 104.0, "high"),
+        PivotPoint(64, times[64], 91.0, "low"),
+    )
+
+    monkeypatch.setattr(strategy_module, "find_structure_pivots_for_timeframe", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(strategy_module, "iter_timeframe_pattern_candidates", lambda *_args, **_kwargs: [candidate])
+    monkeypatch.setattr(strategy_module, "passes_head_neck_bar_limit", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "validate_inverse_head_shoulders_structure", lambda *_args, **_kwargs: (True, [], 0))
+    monkeypatch.setattr(strategy_module, "validate_candle_close_constraints", lambda *_args, **_kwargs: (True, ""))
+    monkeypatch.setattr(strategy_module, "calculate_combined_trend_score", lambda *_args, **_kwargs: (0, []))
+    monkeypatch.setattr(
+        strategy_module,
+        "check_right_shoulder_midpoint_trigger",
+        lambda *_args, **_kwargs: (True, 65, times[65], 98.0, 97.5),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "calculate_pattern_score",
+        lambda *_args, **_kwargs: {
+            "final_score": 80,
+            "raw_score": 80,
+            "grade": "A",
+            "caps": [],
+            "sections": [],
+            "metrics": {},
+        },
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "check_neckline_break_then_pullback",
+        lambda *_args, **_kwargs: (True, 66, times[66], 106.0, 67, times[67], 97.0, 98.0),
+    )
+
+    signals = strategy_module.scan_inverse_head_shoulders(
+        df,
+        "TEST",
+        "1m",
+        HeadShoulderTopConfig(min_pattern_score_to_alert=70),
+    )
+
+    right_shoulder = next(signal for signal in signals if signal.alert_type == "right_shoulder_confirmed")
+    pullback = next(signal for signal in signals if signal.alert_type == "inverse_head_shoulders_pullback")
+    assert right_shoulder.pattern_score == 70
+    assert right_shoulder.pattern_metrics["ma60_cross_check"]["observed"] is False
+    assert right_shoulder.pattern_metrics["ma60_cross_check"]["penalty"] == 10
+    assert any("未出现收盘价涨破 MA60" in reason for reason in right_shoulder.reasons)
+    assert pullback.pattern_score == 80
+    assert "ma60_cross_check" not in pullback.pattern_metrics
+
+
 def test_short_timeframe_candidates_use_five_bar_structure_and_three_bar_right_shoulder() -> None:
     times = pd.date_range("2026-01-01 09:00:00", periods=36, freq="min")
     rows = []
