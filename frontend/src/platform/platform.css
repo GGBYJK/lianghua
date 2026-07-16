@@ -894,6 +894,25 @@ button, input, select { letter-spacing: 0; }
   background: #f8faf9;
 }
 
+.analysis-embedded .current-signal-group.high-quality-group > .message-tree-summary,
+.analysis-embedded .current-signal-group.pullback-group > .message-tree-summary {
+  background: #164b7c;
+}
+
+.analysis-embedded .current-signal-group.high-quality-group > .message-tree-summary .message-tree-marker::before,
+.analysis-embedded .current-signal-group.high-quality-group > .message-tree-summary strong,
+.analysis-embedded .current-signal-group.high-quality-group > .message-tree-summary .message-head-title > span:last-child,
+.analysis-embedded .current-signal-group.pullback-group > .message-tree-summary .message-tree-marker::before,
+.analysis-embedded .current-signal-group.pullback-group > .message-tree-summary strong,
+.analysis-embedded .current-signal-group.pullback-group > .message-tree-summary .message-head-title > span:last-child {
+  color: #f4f9ff;
+}
+
+.analysis-embedded .current-signal-group.high-quality-group > .message-tree-summary small,
+.analysis-embedded .current-signal-group.pullback-group > .message-tree-summary small {
+  color: #c9e1f7;
+}
+
 .analysis-embedded .message-head-title {
   gap: 5px;
   font-size: 15px;
@@ -928,6 +947,26 @@ button, input, select { letter-spacing: 0; }
 .analysis-embedded .monitor-message-list .message-item.confirmed {
   background: #fff;
   border-left-color: #b7791f;
+}
+
+.analysis-embedded .current-signal-list .message-item.high-quality {
+  background: #eaf4ff;
+  border-left-color: #3b82c4;
+}
+
+.analysis-embedded .current-signal-list .message-item.high-quality.selected {
+  background: #dceeff;
+  border-left-color: #256da8;
+}
+
+.analysis-embedded .current-signal-list .message-item.pullback {
+  background: #eaf4ff;
+  border-left-color: #3b82c4;
+}
+
+.analysis-embedded .current-signal-list .message-item.pullback.selected {
+  background: #dceeff;
+  border-left-color: #256da8;
 }
 
 .analysis-embedded .monitor-message-list .message-item.selected {

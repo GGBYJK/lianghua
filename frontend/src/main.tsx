@@ -2215,6 +2215,8 @@ function CurrentSignalFeed({
       key,
       signal: items[0],
       signals: items,
+      hasHighQualitySignal: items.some((signal) => signal.score >= 65 && (signal.pattern_score ?? -Infinity) >= 75),
+      hasPullbackSignal: items.some((signal) => isPullbackAlertType(signal.alert_type)),
     }));
   }, [signals]);
 
@@ -2224,7 +2226,7 @@ function CurrentSignalFeed({
         {signals.length === 0 ? (
           <p className="empty">当前图暂无头肩顶结果。左侧直接搜索识别到的结果会显示在这里。</p>
         ) : groupedSignals.map((group) => (
-          <details className="message-tree-group current-signal-group" key={group.key}>
+          <details className={`message-tree-group current-signal-group ${group.hasHighQualitySignal ? "high-quality-group" : ""} ${group.hasPullbackSignal ? "pullback-group" : ""}`} key={group.key}>
             <summary className="message-tree-summary">
               <div className="message-tree-copy">
                 <div className="message-tree-title-row">
@@ -2241,9 +2243,11 @@ function CurrentSignalFeed({
               {group.signals.map((signal) => {
                 const key = signalKey(signal);
                 const displayTime = signal.break_time ?? signal.retest_time ?? signal.right_shoulder.time;
+                const isHighQuality = signal.score >= 65 && (signal.pattern_score ?? -Infinity) >= 75;
+                const isPullback = isPullbackAlertType(signal.alert_type);
                 return (
                   <article
-                    className={`message-item ${signal.confirmed ? "confirmed" : ""} ${selectedKey === key ? "selected" : ""}`}
+                    className={`message-item ${signal.confirmed ? "confirmed" : ""} ${isHighQuality ? "high-quality" : ""} ${isPullback ? "pullback" : ""} ${selectedKey === key ? "selected" : ""}`}
                     key={key}
                     onClick={() => onFocus(signal)}
                     role="button"
