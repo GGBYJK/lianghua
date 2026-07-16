@@ -887,7 +887,7 @@ export function AnalysisApp({
         </label>
         <label>
           拉取K线数量
-          <InputNumber min={30} max={1000} value={marketLimit} onChange={(value) => setMarketLimit(Number(value) || 30)} />
+          <InputNumber min={30} max={8000} value={marketLimit} onChange={(value) => setMarketLimit(Number(value) || 30)} />
         </label>
       </div>
       <AntButton type="primary" className="primary-action" loading={loading} disabled={loading} onClick={() => void pollMarket()}>{loading ? "扫描中..." : activePage === "research" ? "回测" : "获取K线数据"}</AntButton>

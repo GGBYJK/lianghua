@@ -13,6 +13,8 @@ MAX_HEAD_NECK_BARS_BY_TIMEFRAME = {
     "5m": 60,
 }
 MIXED_PIVOT_CONFIRMATION_TIMEFRAMES = {"1m", "3m", "5m"}
+OPENING_SMOOTHING_TIMEFRAMES = {"1m", "3m", "5m"}
+OPENING_FIRST_BAR_TIMES = {(9, 0), (21, 0)}
 INVERSE_PRIOR_HIGH_TIMEFRAMES = {"3m", "5m"}
 STRUCTURE_PIVOT_WINDOW = 5
 RIGHT_SHOULDER_PIVOT_WINDOW = 3
@@ -160,13 +162,39 @@ def add_macd_columns(df: pd.DataFrame, config: HeadShoulderTopConfig) -> pd.Data
     return df
 
 
-def find_pivots(df: pd.DataFrame, left: int = 3, right: int = 3) -> list[PivotPoint]:
+def opening_first_bar_indices(df: pd.DataFrame, timeframe: str) -> set[int]:
+    """Return session-opening bars excluded only from pattern structure selection."""
+    if timeframe not in OPENING_SMOOTHING_TIMEFRAMES or "datetime" not in df:
+        return set()
+
+    datetimes = pd.to_datetime(df["datetime"])
+    return {
+        index
+        for index, timestamp in enumerate(datetimes)
+        if (timestamp.hour, timestamp.minute) in OPENING_FIRST_BAR_TIMES
+    }
+
+
+def find_pivots(
+    df: pd.DataFrame,
+    left: int = 3,
+    right: int = 3,
+    *,
+    excluded_indices: set[int] | None = None,
+) -> list[PivotPoint]:
+    excluded_indices = excluded_indices or set()
     pivots: list[PivotPoint] = []
     for i in range(left, len(df) - right):
+        if i in excluded_indices:
+            continue
+        left_indices = [index for index in range(i - left, i) if index not in excluded_indices]
+        right_indices = [index for index in range(i + 1, i + right + 1) if index not in excluded_indices]
+        if not left_indices or not right_indices:
+            continue
         high = df.loc[i, "high"]
         low = df.loc[i, "low"]
-        is_high = high >= df.loc[i - left : i - 1, "high"].max() and high >= df.loc[i + 1 : i + right, "high"].max()
-        is_low = low <= df.loc[i - left : i - 1, "low"].min() and low <= df.loc[i + 1 : i + right, "low"].min()
+        is_high = high >= df.loc[left_indices, "high"].max() and high >= df.loc[right_indices, "high"].max()
+        is_low = low <= df.loc[left_indices, "low"].min() and low <= df.loc[right_indices, "low"].min()
         if is_high:
             pivots.append(PivotPoint(index=i, time=df.loc[i, "datetime"], price=float(high), kind="high"))
         if is_low:
@@ -1503,9 +1531,20 @@ def find_structure_pivots_for_timeframe(
     timeframe: str,
     config: HeadShoulderTopConfig,
 ) -> list[PivotPoint]:
+    excluded_indices = opening_first_bar_indices(df, timeframe)
     if timeframe in MIXED_PIVOT_CONFIRMATION_TIMEFRAMES:
-        return compress_pivots(find_pivots(df, left=STRUCTURE_PIVOT_WINDOW, right=STRUCTURE_PIVOT_WINDOW))
-    return compress_pivots(find_pivots(df, left=config.pivot_left, right=config.pivot_right))
+        return compress_pivots(find_pivots(
+            df,
+            left=STRUCTURE_PIVOT_WINDOW,
+            right=STRUCTURE_PIVOT_WINDOW,
+            excluded_indices=excluded_indices,
+        ))
+    return compress_pivots(find_pivots(
+        df,
+        left=config.pivot_left,
+        right=config.pivot_right,
+        excluded_indices=excluded_indices,
+    ))
 
 
 def iter_timeframe_pattern_candidates(
@@ -1530,6 +1569,7 @@ def iter_timeframe_pattern_candidates(
         df,
         left=RIGHT_SHOULDER_PIVOT_WINDOW,
         right=RIGHT_SHOULDER_PIVOT_WINDOW,
+        excluded_indices=opening_first_bar_indices(df, timeframe),
     )
     return iter_pattern_candidates_with_right_shoulder_pivots(
         structure_pivots,
@@ -1546,15 +1586,26 @@ def validate_candle_close_constraints(
     points: list[PivotPoint],
     *,
     inverse: bool,
+    excluded_indices: set[int] | None = None,
 ) -> tuple[bool, str]:
     if len(points) != 5:
         return False, "Expected five pattern points"
 
+    excluded_indices = excluded_indices or set()
+
+    def closes_between(start_index: int, end_index: int) -> pd.Series:
+        indices = [
+            index
+            for index in range(start_index, end_index + 1)
+            if index not in excluded_indices
+        ]
+        return df.iloc[indices]["close"]
+
     left_shoulder, left_neck, head, right_neck, right_shoulder = points
-    left_leg_closes = df.iloc[left_shoulder.index : left_neck.index + 1]["close"]
-    left_head_closes = df.iloc[left_neck.index : head.index + 1]["close"]
-    right_head_closes = df.iloc[head.index : right_neck.index + 1]["close"]
-    right_leg_closes = df.iloc[right_neck.index : right_shoulder.index + 1]["close"]
+    left_leg_closes = closes_between(left_shoulder.index, left_neck.index)
+    left_head_closes = closes_between(left_neck.index, head.index)
+    right_head_closes = closes_between(head.index, right_neck.index)
+    right_leg_closes = closes_between(right_neck.index, right_shoulder.index)
 
     if inverse:
         if float(left_leg_closes.min()) < left_shoulder.price:
@@ -1611,9 +1662,16 @@ def inverse_prior_high_exceeds_left_neck(
     left_shoulder: PivotPoint,
     left_neck: PivotPoint,
     lookback: int = 20,
+    excluded_indices: set[int] | None = None,
 ) -> bool:
     start_index = max(0, left_shoulder.index - lookback)
-    prior_highs = df.iloc[start_index:left_shoulder.index]["high"]
+    excluded_indices = excluded_indices or set()
+    indices = [
+        index
+        for index in range(start_index, left_shoulder.index)
+        if index not in excluded_indices
+    ]
+    prior_highs = df.iloc[indices]["high"]
     return not prior_highs.empty and float(prior_highs.max()) > left_neck.price
 
 
@@ -2025,6 +2083,15 @@ def check_neckline_break_then_pullback(
     for i in range(start_index, end_index + 1):
         neckline_price = calculate_neckline_price(left_neck, right_neck, i)
         if break_index is None:
+            invalidation_price = float(df.loc[i, "low" if inverse else "high"])
+            invalidated = (
+                invalidation_price < right_shoulder.price
+                if inverse
+                else invalidation_price > right_shoulder.price
+            )
+            if invalidated:
+                return False, None, None, None, None, None, None, pullback_price
+
             candidate_break_price = float(df.loc[i, "high" if inverse else "low"])
             broke_neckline = candidate_break_price > neckline_price if inverse else candidate_break_price < neckline_price
             broke_neck_boundary = candidate_break_price > neck_boundary_price if inverse else candidate_break_price < neck_boundary_price
@@ -2062,6 +2129,7 @@ def scan_head_shoulders_top(
     df["datetime"] = pd.to_datetime(df["datetime"])
     df = add_macd_columns(add_ma_columns(df, config), config)
     pivots = find_structure_pivots_for_timeframe(df, timeframe, config)
+    excluded_structure_indices = opening_first_bar_indices(df, timeframe)
     signals: list[HeadShoulderTopSignal] = []
 
     for p1, p2, p3, p4, p5 in iter_timeframe_pattern_candidates(
@@ -2081,6 +2149,7 @@ def scan_head_shoulders_top(
             df,
             [p1, p2, p3, p4, p5],
             inverse=False,
+            excluded_indices=excluded_structure_indices,
         )
         if not closes_ok:
             continue
@@ -2280,6 +2349,7 @@ def scan_inverse_head_shoulders(
     df["datetime"] = pd.to_datetime(df["datetime"])
     df = add_macd_columns(add_ma_columns(df, config), config)
     pivots = find_structure_pivots_for_timeframe(df, timeframe, config)
+    excluded_structure_indices = opening_first_bar_indices(df, timeframe)
     signals: list[HeadShoulderTopSignal] = []
 
     for p1, p2, p3, p4, p5 in iter_timeframe_pattern_candidates(
@@ -2297,13 +2367,19 @@ def scan_inverse_head_shoulders(
             continue
         if (
             timeframe in INVERSE_PRIOR_HIGH_TIMEFRAMES
-            and not inverse_prior_high_exceeds_left_neck(df, p1, p2)
+            and not inverse_prior_high_exceeds_left_neck(
+                df,
+                p1,
+                p2,
+                excluded_indices=excluded_structure_indices,
+            )
         ):
             continue
         closes_ok, _ = validate_candle_close_constraints(
             df,
             [p1, p2, p3, p4, p5],
             inverse=True,
+            excluded_indices=excluded_structure_indices,
         )
         if not closes_ok:
             continue

@@ -898,6 +898,54 @@ def test_top_pullback_requires_break_below_both_necks() -> None:
     assert not result[0]
 
 
+def test_top_pullback_stops_when_price_exceeds_right_shoulder_before_neckline_break() -> None:
+    times = pd.date_range("2026-06-14 10:00:00", periods=7, freq="min")
+    df = pd.DataFrame({
+        "datetime": times,
+        "low": [100.0, 100.0, 100.0, 100.0, 98.0, 89.0, 94.0],
+        "high": [101.0, 101.0, 101.0, 101.0, 100.1, 92.0, 97.5],
+        "close": [100.0, 100.0, 100.0, 100.0, 99.0, 90.0, 95.0],
+    })
+    left_neck = PivotPoint(0, times[0], 90.0, "low")
+    right_neck = PivotPoint(2, times[2], 90.0, "low")
+    right_shoulder = PivotPoint(3, times[3], 100.0, "high")
+
+    result = check_neckline_break_then_pullback(
+        df,
+        left_neck,
+        right_neck,
+        right_shoulder,
+        inverse=False,
+    )
+
+    assert not result[0]
+    assert result[1] is None
+
+
+def test_inverse_pullback_stops_when_price_falls_below_right_shoulder_before_neckline_break() -> None:
+    times = pd.date_range("2026-06-14 10:30:00", periods=7, freq="min")
+    df = pd.DataFrame({
+        "datetime": times,
+        "low": [100.0, 100.0, 100.0, 100.0, 99.9, 107.0, 102.5],
+        "high": [101.0, 101.0, 101.0, 101.0, 102.0, 111.0, 106.0],
+        "close": [100.0, 100.0, 100.0, 100.0, 101.0, 110.0, 104.5],
+    })
+    left_neck = PivotPoint(0, times[0], 110.0, "high")
+    right_neck = PivotPoint(2, times[2], 110.0, "high")
+    right_shoulder = PivotPoint(3, times[3], 100.0, "low")
+
+    result = check_neckline_break_then_pullback(
+        df,
+        left_neck,
+        right_neck,
+        right_shoulder,
+        inverse=True,
+    )
+
+    assert not result[0]
+    assert result[1] is None
+
+
 def test_pattern_score_scores_top_structure_thresholds_and_grade() -> None:
     close = [90, 92, 94, 96, 100, 98, 95, 102, 111, 104, 96, 99, 104, 100, 96]
     df = _pattern_test_df(
@@ -2079,6 +2127,113 @@ def test_pivots_and_neckline() -> None:
     lows = [p for p in pivots if p.kind == "low"]
     price = calculate_neckline_price(lows[0], lows[1], lows[1].index)
     assert price == lows[1].price
+
+
+@pytest.mark.parametrize(("timeframe", "bar_minutes"), [("1m", 1), ("3m", 3), ("5m", 5)])
+@pytest.mark.parametrize("opening_hour", [9, 21])
+@pytest.mark.parametrize("kind", ["high", "low"])
+def test_session_opening_bar_is_excluded_from_minute_structure_pivots(
+    timeframe: str,
+    bar_minutes: int,
+    opening_hour: int,
+    kind: str,
+) -> None:
+    session_open = pd.Timestamp("2026-07-15").replace(hour=opening_hour)
+    times = pd.date_range(
+        session_open - pd.Timedelta(minutes=5 * bar_minutes),
+        periods=12,
+        freq=f"{bar_minutes}min",
+    )
+    if kind == "high":
+        highs = [10, 11, 12, 11, 12, 15, 14, 13, 12, 11, 10, 9]
+        lows = [price - 1 for price in highs]
+    else:
+        lows = [10, 9, 8, 9, 8, 5, 6, 7, 8, 9, 10, 11]
+        highs = [price + 1 for price in lows]
+    df = pd.DataFrame({
+        "datetime": times,
+        "open": [(high + low) / 2 for high, low in zip(highs, lows)],
+        "high": highs,
+        "low": lows,
+        "close": [(high + low) / 2 for high, low in zip(highs, lows)],
+        "volume": [100.0] * len(times),
+    })
+
+    raw_pivots = find_pivots(df, 5, 5)
+    smoothed_pivots = strategy_module.find_structure_pivots_for_timeframe(
+        df,
+        timeframe,
+        HeadShoulderTopConfig(),
+    )
+
+    assert any(point.index == 5 and point.kind == kind for point in raw_pivots)
+    assert not any(point.index == 5 for point in smoothed_pivots)
+    assert any(point.index == 6 and point.kind == kind for point in smoothed_pivots)
+
+
+def test_session_opening_bar_is_ignored_by_structure_close_constraints() -> None:
+    times = pd.date_range("2026-07-15 08:57:00", periods=10, freq="min")
+    closes = [95.0, 100.0, 90.0, 110.0, 105.0, 93.0, 92.0, 95.0, 99.0, 96.0]
+    df = pd.DataFrame({
+        "datetime": times,
+        "open": closes,
+        "high": [close + 0.5 for close in closes],
+        "low": [close - 0.5 for close in closes],
+        "close": closes,
+        "volume": [100.0] * len(times),
+    })
+    points = [
+        PivotPoint(1, times[1], 100.0, "high"),
+        PivotPoint(2, times[2], 90.0, "low"),
+        PivotPoint(4, times[4], 105.0, "high"),
+        PivotPoint(6, times[6], 92.0, "low"),
+        PivotPoint(8, times[8], 99.0, "high"),
+    ]
+
+    assert not validate_candle_close_constraints(df, points, inverse=False)[0]
+    assert validate_candle_close_constraints(
+        df,
+        points,
+        inverse=False,
+        excluded_indices=strategy_module.opening_first_bar_indices(df, "1m"),
+    )[0]
+
+
+@pytest.mark.parametrize("inverse", [False, True])
+def test_session_opening_bar_still_can_trigger_neckline_break(inverse: bool) -> None:
+    times = pd.date_range("2026-07-15 08:56:00", periods=6, freq="min")
+    if inverse:
+        df = pd.DataFrame({
+            "datetime": times,
+            "low": [100.0, 100.0, 100.0, 100.0, 105.0, 102.5],
+            "high": [101.0, 101.0, 101.0, 101.0, 111.0, 106.0],
+            "close": [100.0, 100.0, 100.0, 100.0, 110.0, 104.5],
+        })
+        left_neck = PivotPoint(0, times[0], 110.0, "high")
+        right_neck = PivotPoint(2, times[2], 110.0, "high")
+        right_shoulder = PivotPoint(3, times[3], 100.0, "low")
+    else:
+        df = pd.DataFrame({
+            "datetime": times,
+            "low": [100.0, 100.0, 100.0, 100.0, 89.0, 94.0],
+            "high": [101.0, 101.0, 101.0, 101.0, 95.0, 97.5],
+            "close": [100.0, 100.0, 100.0, 100.0, 90.0, 95.0],
+        })
+        left_neck = PivotPoint(0, times[0], 90.0, "low")
+        right_neck = PivotPoint(2, times[2], 90.0, "low")
+        right_shoulder = PivotPoint(3, times[3], 100.0, "high")
+
+    result = check_neckline_break_then_pullback(
+        df,
+        left_neck,
+        right_neck,
+        right_shoulder,
+        inverse=inverse,
+    )
+
+    assert result[0]
+    assert result[1] == 4
+    assert result[4] == 5
 
 
 def test_pattern_candidates_can_skip_minor_swings() -> None:
