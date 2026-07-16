@@ -4,6 +4,7 @@ import json
 import asyncio
 import logging
 import os
+import signal
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,9 +12,9 @@ from typing import Any
 from uuid import uuid4
 
 import pandas as pd
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from .config import load_head_shoulder_config
 from .csv_loader import read_csv_bytes
@@ -69,21 +70,114 @@ SAMPLE_DATA_PATH = ROOT_DIR / "sample_data" / "head_shoulders_sample.csv"
 WATCH_POOL_IMPORT_TEMPLATE_PATH = ROOT_DIR / "backend" / "demo.xlsx"
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _request_timeout_seconds() -> float | None:
+    raw_value = os.getenv("REQUEST_TIMEOUT_SECONDS", "30")
+    try:
+        timeout = float(raw_value)
+    except ValueError:
+        logger.warning("invalid REQUEST_TIMEOUT_SECONDS=%r; falling back to 30", raw_value)
+        timeout = 30.0
+    return timeout if timeout > 0 else None
+
+
+def _monitor_lock_path() -> Path:
+    configured = os.getenv("WATCH_POOL_MONITOR_LOCK_FILE")
+    if configured:
+        return Path(configured)
+    return ROOT_DIR / ".run" / "watch_pool_monitor.lock"
+
+
+def _acquire_monitor_lock() -> Any | None:
+    lock_path = _monitor_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_path.open("a+")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            lock_file.seek(0)
+            if not lock_file.read(1):
+                lock_file.write("0")
+                lock_file.flush()
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock_file.close()
+        return None
+
+    lock_file.seek(0)
+    lock_file.truncate()
+    lock_file.write(str(os.getpid()))
+    lock_file.flush()
+    return lock_file
+
+
+def _release_monitor_lock(lock_file: Any | None) -> None:
+    if lock_file is None:
+        return
+    with suppress(Exception):
+        lock_file.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    with suppress(Exception):
+        lock_file.close()
+
+
+def _schedule_worker_shutdown_after_timeout() -> None:
+    if not _env_bool("REQUEST_TIMEOUT_KILL_WORKER", default=False):
+        return
+
+    async def terminate_worker() -> None:
+        await asyncio.sleep(1)
+        logger.error("terminating worker process after request timeout: pid=%s", os.getpid())
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+        except Exception:
+            os._exit(1)
+
+    asyncio.create_task(terminate_worker())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     monitor_stop_event: asyncio.Event | None = None
     monitor_task: asyncio.Task[None] | None = None
+    monitor_lock: Any | None = None
     try:
         init_watch_pool_store()
     except WatchPoolStoreError as exc:
         # 数据库不可用时保留行情扫描能力；检测池接口会返回明确错误。
         logger.warning("watch pool store unavailable; background monitor disabled: %s", exc)
     else:
-        monitor_stop_event = asyncio.Event()
-        monitor_task = asyncio.create_task(
-            monitor_watch_pool_loop(monitor_stop_event),
-            name="watch-pool-monitor",
-        )
+        if _env_bool("WATCH_POOL_MONITOR_ENABLED", default=True):
+            monitor_lock = _acquire_monitor_lock()
+            if monitor_lock is None:
+                logger.info("watch pool monitor already running in another worker")
+            else:
+                monitor_stop_event = asyncio.Event()
+                monitor_task = asyncio.create_task(
+                    monitor_watch_pool_loop(monitor_stop_event),
+                    name="watch-pool-monitor",
+                )
+        else:
+            logger.info("watch pool monitor disabled by WATCH_POOL_MONITOR_ENABLED")
     try:
         yield
     finally:
@@ -96,11 +190,30 @@ async def lifespan(app: FastAPI):
                 monitor_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await monitor_task
+        _release_monitor_lock(monitor_lock)
         shutdown_market_clients()
 
 
 app = FastAPI(title="头肩顶识别服务", version="0.2.0", lifespan=lifespan)
 simulation_sessions: dict[str, SimulationSession] = {}
+
+
+@app.middleware("http")
+async def request_timeout_middleware(request: Request, call_next):
+    timeout = _request_timeout_seconds()
+    if timeout is None:
+        return await call_next(request)
+    try:
+        return await asyncio.wait_for(call_next(request), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.error("request timed out after %.1fs: %s %s", timeout, request.method, request.url.path)
+        _schedule_worker_shutdown_after_timeout()
+        return JSONResponse(
+            status_code=504,
+            content={"detail": f"Request timed out after {timeout:g} seconds"},
+            headers={"Connection": "close"},
+        )
+
 
 app.add_middleware(
     CORSMiddleware,

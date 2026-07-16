@@ -10,6 +10,15 @@ python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --port 8010
 ```
 
+Production on Linux/Docker uses Gunicorn with Uvicorn workers and a 30 second
+request timeout:
+
+```bash
+cd backend
+pip install -r requirements.txt
+gunicorn -c gunicorn.conf.py app.main:app
+```
+
 ## Frontend
 
 ```powershell
