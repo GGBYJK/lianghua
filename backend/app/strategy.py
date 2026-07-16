@@ -2025,6 +2025,15 @@ def check_neckline_break_then_pullback(
     for i in range(start_index, end_index + 1):
         neckline_price = calculate_neckline_price(left_neck, right_neck, i)
         if break_index is None:
+            invalidation_price = float(df.loc[i, "low" if inverse else "high"])
+            invalidated = (
+                invalidation_price < right_shoulder.price
+                if inverse
+                else invalidation_price > right_shoulder.price
+            )
+            if invalidated:
+                return False, None, None, None, None, None, None, pullback_price
+
             candidate_break_price = float(df.loc[i, "high" if inverse else "low"])
             broke_neckline = candidate_break_price > neckline_price if inverse else candidate_break_price < neckline_price
             broke_neck_boundary = candidate_break_price > neck_boundary_price if inverse else candidate_break_price < neck_boundary_price
