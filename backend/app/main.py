@@ -78,12 +78,12 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 def _request_timeout_seconds() -> float | None:
-    raw_value = os.getenv("REQUEST_TIMEOUT_SECONDS", "30")
+    raw_value = os.getenv("REQUEST_TIMEOUT_SECONDS", "90")
     try:
         timeout = float(raw_value)
     except ValueError:
-        logger.warning("invalid REQUEST_TIMEOUT_SECONDS=%r; falling back to 30", raw_value)
-        timeout = 30.0
+        logger.warning("invalid REQUEST_TIMEOUT_SECONDS=%r; falling back to 90", raw_value)
+        timeout = 90.0
     return timeout if timeout > 0 else None
 
 

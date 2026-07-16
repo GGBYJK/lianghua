@@ -25,7 +25,7 @@ bind = os.getenv("GUNICORN_BIND", f"0.0.0.0:{os.getenv('PORT', '8010')}")
 workers = _int_env("GUNICORN_WORKERS", multiprocessing.cpu_count() * 2 + 1)
 worker_class = os.getenv("GUNICORN_WORKER_CLASS", "uvicorn.workers.UvicornWorker")
 
-request_timeout = _int_env("REQUEST_TIMEOUT_SECONDS", 30)
+request_timeout = _int_env("REQUEST_TIMEOUT_SECONDS", 90)
 timeout = _int_env("GUNICORN_TIMEOUT", request_timeout)
 graceful_timeout = _int_env("GUNICORN_GRACEFUL_TIMEOUT", 30)
 keepalive = _int_env("GUNICORN_KEEPALIVE", 5)
