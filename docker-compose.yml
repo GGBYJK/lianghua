@@ -9,6 +9,15 @@ services:
     expose:
       - "8010"
 
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "app.worker"]
+    env_file:
+      - .env
+    restart: unless-stopped
+
   frontend:
     build:
       context: .

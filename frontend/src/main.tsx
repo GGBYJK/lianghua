@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { createRoot } from "react-dom/client";
 import { Button as AntButton, Checkbox, ConfigProvider, Input, InputNumber, Select } from "antd";
 import * as echarts from "echarts/core";
 import { BarChart, CandlestickChart, LineChart } from "echarts/charts";
@@ -85,36 +84,39 @@ const TIMEFRAME_OPTIONS = [
 ];
 const antTheme = {
   token: {
-    colorPrimary: "#0066cc",
-    colorInfo: "#0066cc",
-    colorText: "#1d1d1f",
-    colorTextSecondary: "#7a7a7a",
-    colorBorder: "#e0e0e0",
-    colorBgContainer: "#ffffff",
+    colorPrimary: "#0c7a5a",
+    colorInfo: "#1168a8",
+    colorSuccess: "#0c7a5a",
+    colorWarning: "#b7791f",
+    colorError: "#c23b32",
+    colorText: "#18211f",
+    colorTextSecondary: "#76817d",
+    colorBorder: "#d8dfdc",
+    colorBgContainer: "#f8faf9",
     colorBgElevated: "#ffffff",
-    borderRadius: 11,
-    borderRadiusLG: 18,
-    controlHeight: 44,
-    fontFamily: '"SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", sans-serif',
+    borderRadius: 4,
+    borderRadiusLG: 6,
+    controlHeight: 38,
+    fontFamily: '"Bahnschrift", "Noto Sans SC", sans-serif',
   },
   components: {
     Button: {
-      borderRadius: 999,
-      controlHeight: 44,
-      fontWeight: 400,
+      borderRadius: 4,
+      controlHeight: 38,
+      fontWeight: 600,
       primaryShadow: "none",
     },
     Input: {
-      borderRadius: 999,
-      activeShadow: "0 0 0 3px rgba(0, 113, 227, 0.14)",
+      borderRadius: 4,
+      activeShadow: "0 0 0 3px rgba(12, 122, 90, 0.12)",
     },
     InputNumber: {
-      borderRadius: 999,
-      activeShadow: "0 0 0 3px rgba(0, 113, 227, 0.14)",
+      borderRadius: 4,
+      activeShadow: "0 0 0 3px rgba(12, 122, 90, 0.12)",
     },
     Select: {
-      borderRadius: 999,
-      optionSelectedBg: "rgba(0, 102, 204, 0.08)",
+      borderRadius: 4,
+      optionSelectedBg: "rgba(12, 122, 90, 0.1)",
     },
   },
 };
@@ -253,7 +255,15 @@ function mapWatchPoolItem(item: ApiWatchPoolItem): WatchPoolItem {
   };
 }
 
-function App() {
+export function AnalysisApp({
+  page,
+  hidePageNavigation = false,
+  hideHeaderActions = false,
+}: {
+  page?: WorkspacePage;
+  hidePageNavigation?: boolean;
+  hideHeaderActions?: boolean;
+} = {}) {
   const [symbol, setSymbol] = useState("");
   const [timeframe, setTimeframe] = useState("5m");
   const [config, setConfig] = useState<Record<string, unknown>>({});
@@ -276,7 +286,8 @@ function App() {
   const [watchImportResult, setWatchImportResult] = useState<WatchPoolImportResult | null>(null);
   const [watchImporting, setWatchImporting] = useState(false);
   const [watchTogglePendingIds, setWatchTogglePendingIds] = useState<Set<string>>(new Set());
-  const [activePage, setActivePage] = useState<WorkspacePage>("monitor");
+  const [internalActivePage, setInternalActivePage] = useState<WorkspacePage>("monitor");
+  const activePage = page ?? internalActivePage;
   const [feedbackTab, setFeedbackTab] = useState<FeedbackTab>("alerts");
   const [monitorAlerts, setMonitorAlerts] = useState<HeadShouldersAlertSummary[]>([]);
   const [feedbacks, setFeedbacks] = useState<AlertFeedback[]>([]);
@@ -981,19 +992,25 @@ function App() {
   return (
     <ConfigProvider theme={antTheme}>
     <main className="app-shell">
-      <header className="terminal-header">
+      <header className={`terminal-header ${hidePageNavigation ? "page-navigation-hidden" : ""}`}>
         <div className="terminal-title">
           <strong>K线头肩形态检测</strong>
           <span>交易分析工作台</span>
         </div>
-        <nav className="top-page-nav" aria-label="页面导航">
-          <button type="button" className={activePage === "monitor" ? "active" : ""} onClick={() => setActivePage("monitor")}>实时监控信息</button>
-          <button type="button" className={activePage === "pool" ? "active" : ""} onClick={() => setActivePage("pool")}>品种检测池子</button>
-          <button type="button" className={activePage === "research" ? "active" : ""} onClick={() => setActivePage("research")}>回测研究</button>
-        </nav>
+        {!hidePageNavigation ? (
+          <nav className="top-page-nav" aria-label="页面导航">
+            <button type="button" className={activePage === "monitor" ? "active" : ""} onClick={() => setInternalActivePage("monitor")}>实时监控信息</button>
+            <button type="button" className={activePage === "pool" ? "active" : ""} onClick={() => setInternalActivePage("pool")}>品种检测池子</button>
+            <button type="button" className={activePage === "research" ? "active" : ""} onClick={() => setInternalActivePage("research")}>回测研究</button>
+          </nav>
+        ) : null}
         <div className="terminal-status">
-          <AntButton className="header-feedback-button" onClick={() => setFeedbackListOpen(true)}>&#21453;&#39304;&#21015;&#34920;</AntButton>
-          <AntButton className="header-feedback-button" onClick={() => void openContractCenter()}>合约中心</AntButton>
+          {!hideHeaderActions ? (
+            <>
+              <AntButton className="header-feedback-button" onClick={() => setFeedbackListOpen(true)}>&#21453;&#39304;&#21015;&#34920;</AntButton>
+              <AntButton className="header-feedback-button" onClick={() => void openContractCenter()}>合约中心</AntButton>
+            </>
+          ) : null}
           <span>{marketSettings?.provider ?? "Market"}</span>
           <span>{result?.symbol ?? symbol} / {result?.timeframe ?? timeframe}</span>
           <span>{marketLastFetch ?? "等待扫描"}</span>
@@ -1294,8 +1311,10 @@ const WatchPool = React.forwardRef<HTMLElement, {
         {groupedItems.map((group) => (
           <details className="pool-group" key={group.key}>
             <summary className="pool-group-head">
-              <span className="message-tree-marker" aria-hidden="true" />
-              <h3>{group.title}</h3>
+              <div className="pool-group-title-row">
+                <span className="message-tree-marker" aria-hidden="true" />
+                <h3>{group.title}</h3>
+              </div>
               <span>{group.items.length} 个</span>
             </summary>
             <div className="pool-group-body">
@@ -1762,9 +1781,11 @@ function MonitorAlertFeed({
               }}
             >
               <summary className="message-tree-summary monitor-symbol-summary">
-                <span className="message-tree-marker" aria-hidden="true" />
-                <div>
-                  <strong>{group.symbol}</strong>
+                <div className="message-tree-copy">
+                  <div className="message-tree-title-row">
+                    <span className="message-tree-marker" aria-hidden="true" />
+                    <strong>{group.symbol}</strong>
+                  </div>
                   <small>{group.alerts.length} 条监控消息 · {group.heads.length} 个头部分类</small>
                 </div>
                 <span className="message-tree-summary-meta">
@@ -1797,12 +1818,14 @@ function MonitorAlertFeed({
                 {group.heads.map((headGroup) => (
                   <details className="message-tree-group monitor-head-group" key={headGroup.key}>
                     <summary className="message-tree-summary monitor-head-summary">
-                      <span className="message-tree-marker" aria-hidden="true" />
-                      <div>
-                        <strong className="message-head-title">
-                          <PatternTag pattern={headGroup.alert.pattern} label={monitorHeadCategoryLabel(headGroup.alert)} />
-                          <span>头部价格：{formatPrice(headGroup.alert.signal_payload.head.price)}</span>
-                        </strong>
+                      <div className="message-tree-copy">
+                        <div className="message-tree-title-row">
+                          <span className="message-tree-marker" aria-hidden="true" />
+                          <strong className="message-head-title">
+                            <PatternTag pattern={headGroup.alert.pattern} label={monitorHeadCategoryLabel(headGroup.alert)} />
+                            <span>头部价格：{formatPrice(headGroup.alert.signal_payload.head.price)}</span>
+                          </strong>
+                        </div>
                         <small>{headGroup.alerts.length} 条监控消息 · {headGroup.timeframes}</small>
                       </div>
                       <span className="message-tree-summary-meta">
@@ -1962,9 +1985,11 @@ function FeedbackFeed({
       ) : groupedFeedbacks.map((symbolGroup) => (
         <details className="message-tree-group feedback-symbol-group" key={symbolGroup.symbol} open>
           <summary className="message-tree-summary feedback-symbol-summary">
-            <span className="message-tree-marker" aria-hidden="true" />
-            <div>
-              <strong>{symbolGroup.symbol}</strong>
+            <div className="message-tree-copy">
+              <div className="message-tree-title-row">
+                <span className="message-tree-marker" aria-hidden="true" />
+                <strong>{symbolGroup.symbol}</strong>
+              </div>
               <small>{symbolGroup.feedbacks.length} 条反馈 · {symbolGroup.heads.length} 个头部分类</small>
             </div>
             <span className="message-tree-summary-meta">
@@ -1981,12 +2006,14 @@ function FeedbackFeed({
             {symbolGroup.heads.map((headGroup) => (
               <details className="message-tree-group feedback-head-group" key={headGroup.key} open>
                 <summary className="message-tree-summary feedback-head-summary">
-                  <span className="message-tree-marker" aria-hidden="true" />
-                  <div>
-                    <strong className="message-head-title">
-                      <PatternTag pattern={headGroup.feedback.pattern} />
-                      <span>头部价格：{formatPrice(headGroup.feedback.signal_payload.head.price)}</span>
-                    </strong>
+                  <div className="message-tree-copy">
+                    <div className="message-tree-title-row">
+                      <span className="message-tree-marker" aria-hidden="true" />
+                      <strong className="message-head-title">
+                        <PatternTag pattern={headGroup.feedback.pattern} />
+                        <span>头部价格：{formatPrice(headGroup.feedback.signal_payload.head.price)}</span>
+                      </strong>
+                    </div>
                     <small>{headGroup.feedbacks.length} 条反馈 · {headGroup.timeframes}</small>
                   </div>
                   <span className="message-tree-summary-meta">
@@ -2199,12 +2226,14 @@ function CurrentSignalFeed({
         ) : groupedSignals.map((group) => (
           <details className="message-tree-group current-signal-group" key={group.key}>
             <summary className="message-tree-summary">
-              <span className="message-tree-marker" aria-hidden="true" />
-              <div>
-                <strong className="current-signal-group-title message-head-title">
-                  <PatternTag pattern={group.signal.pattern} label={signalCategoryLabel(group.signal)} />
-                  <span>头部价格：{formatPrice(group.signal.head.price)}</span>
-                </strong>
+              <div className="message-tree-copy">
+                <div className="message-tree-title-row">
+                  <span className="message-tree-marker" aria-hidden="true" />
+                  <strong className="current-signal-group-title message-head-title">
+                    <PatternTag pattern={group.signal.pattern} label={signalCategoryLabel(group.signal)} />
+                    <span>头部价格：{formatPrice(group.signal.head.price)}</span>
+                  </strong>
+                </div>
                 <small>{group.signals.length} 个形态选择</small>
               </div>
             </summary>
@@ -3794,5 +3823,3 @@ function translateResultText(text: string) {
     .replace("Confirmed", "已确认")
     .replace("Suspected", "疑似");
 }
-
-createRoot(document.getElementById("root")!).render(<App />);

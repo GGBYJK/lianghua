@@ -1,0 +1,126 @@
+import type {
+  AccountSummary,
+  ContractSpec,
+  LedgerEntry,
+  LoginResponse,
+  MarketQuote,
+  PaperOrder,
+  PlatformUser,
+  PositionLot,
+  TradeSignal,
+} from "./types";
+
+const API_BASE = import.meta.env.VITE_API_BASE || window.location.origin;
+const TOKEN_KEY = "paper-trading-access-token";
+let accessToken = window.localStorage.getItem(TOKEN_KEY) || "";
+let refreshPromise: Promise<boolean> | null = null;
+
+export function setAccessToken(token: string) {
+  accessToken = token;
+  if (token) window.localStorage.setItem(TOKEN_KEY, token);
+  else window.localStorage.removeItem(TOKEN_KEY);
+}
+
+export function hasAccessToken() {
+  return Boolean(accessToken);
+}
+
+async function refreshSession(): Promise<boolean> {
+  if (!refreshPromise) {
+    refreshPromise = fetch(`${API_BASE}/api/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+    }).then(async (response) => {
+      if (!response.ok) {
+        setAccessToken("");
+        return false;
+      }
+      const body = await response.json() as LoginResponse;
+      setAccessToken(body.access_token);
+      return true;
+    }).finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
+async function request<T>(path: string, options: RequestInit = {}, retry = true): Promise<T> {
+  const headers = new Headers(options.headers);
+  if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+  if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
+  const response = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: "include" });
+  if (response.status === 401 && retry && await refreshSession()) {
+    return request<T>(path, options, false);
+  }
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const body = await response.json();
+      detail = body.detail || detail;
+    } catch {
+      // Keep the HTTP status text when the server does not return JSON.
+    }
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+export async function login(username: string, password: string): Promise<LoginResponse> {
+  const result = await request<LoginResponse>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  }, false);
+  setAccessToken(result.access_token);
+  return result;
+}
+
+export async function restoreSession(): Promise<PlatformUser | null> {
+  if (!hasAccessToken() && !await refreshSession()) return null;
+  try {
+    return await request<PlatformUser>("/api/auth/me");
+  } catch {
+    setAccessToken("");
+    return null;
+  }
+}
+
+export async function logout() {
+  await request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }, false).catch(() => undefined);
+  setAccessToken("");
+}
+
+export const platformApi = {
+  account: () => request<AccountSummary>("/api/trading/account"),
+  signals: () => request<TradeSignal[]>("/api/trading/signals?limit=300"),
+  positions: () => request<PositionLot[]>("/api/trading/positions"),
+  orders: () => request<PaperOrder[]>("/api/trading/orders?limit=200"),
+  ledger: () => request<LedgerEntry[]>("/api/trading/ledger?limit=200"),
+  contracts: () => request<ContractSpec[]>("/api/trading/contracts"),
+  quotes: (symbols: string[]) => request<MarketQuote[]>(`/api/trading/quotes?symbols=${encodeURIComponent(symbols.join(","))}`),
+  users: () => request<PlatformUser[]>("/api/admin/users"),
+  openSignal: (signalId: string, payload: Record<string, unknown>) => request<PaperOrder>(`/api/trading/signals/${signalId}/open`, {
+    method: "POST", body: JSON.stringify(payload),
+  }),
+  openManual: (payload: Record<string, unknown>) => request<PaperOrder>("/api/trading/orders/open", {
+    method: "POST", body: JSON.stringify(payload),
+  }),
+  closePosition: (lotId: string, quantity: number) => request<PaperOrder>(`/api/trading/positions/${lotId}/close`, {
+    method: "POST", body: JSON.stringify({ quantity, idempotency_key: crypto.randomUUID() }),
+  }),
+  updateExitRules: (lotId: string, payload: Record<string, unknown>) => request<{ ok: boolean }>(`/api/trading/positions/${lotId}/exit-rules`, {
+    method: "PUT", body: JSON.stringify(payload),
+  }),
+  createUser: (payload: Record<string, unknown>) => request<PlatformUser>("/api/admin/users", {
+    method: "POST", body: JSON.stringify(payload),
+  }),
+  updateUser: (userId: number, payload: Record<string, unknown>) => request<PlatformUser>(`/api/admin/users/${userId}`, {
+    method: "PATCH", body: JSON.stringify(payload),
+  }),
+  adjustAccount: (userId: number, payload: Record<string, unknown>) => request<AccountSummary>(`/api/admin/users/${userId}/account-adjustment`, {
+    method: "POST", body: JSON.stringify(payload),
+  }),
+  saveContract: (symbol: string, payload: Record<string, unknown>) => request<ContractSpec>(`/api/admin/contracts/${encodeURIComponent(symbol)}`, {
+    method: "PUT", body: JSON.stringify(payload),
+  }),
+};

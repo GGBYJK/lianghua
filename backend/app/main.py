@@ -46,6 +46,8 @@ from .watch_pool_store import (
     enable_all_watch_pool_items,
     update_watch_pool_item,
 )
+from .trading_api import router as trading_router
+from .trading_db import init_trading_database
 
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -166,7 +168,11 @@ async def lifespan(app: FastAPI):
         # 数据库不可用时保留行情扫描能力；检测池接口会返回明确错误。
         logger.warning("watch pool store unavailable; background monitor disabled: %s", exc)
     else:
-        if _env_bool("WATCH_POOL_MONITOR_ENABLED", default=True):
+        try:
+            init_trading_database()
+        except Exception as exc:
+            logger.exception("trading database initialization failed: %s", exc)
+        if _env_bool("WATCH_POOL_MONITOR_IN_API", default=False):
             monitor_lock = _acquire_monitor_lock()
             if monitor_lock is None:
                 logger.info("watch pool monitor already running in another worker")
@@ -177,7 +183,7 @@ async def lifespan(app: FastAPI):
                     name="watch-pool-monitor",
                 )
         else:
-            logger.info("watch pool monitor disabled by WATCH_POOL_MONITOR_ENABLED")
+            logger.info("watch pool monitor delegated to standalone worker")
     try:
         yield
     finally:
@@ -196,6 +202,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="头肩顶识别服务", version="0.2.0", lifespan=lifespan)
 simulation_sessions: dict[str, SimulationSession] = {}
+app.include_router(trading_router)
 
 
 @app.middleware("http")

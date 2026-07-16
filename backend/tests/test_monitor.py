@@ -443,8 +443,12 @@ def test_app_lifespan_starts_and_stops_watch_pool_monitor(monkeypatch) -> None:
         events.append("stopped")
 
     monkeypatch.setattr(main, "init_watch_pool_store", lambda: events.append("init"))
+    monkeypatch.setattr(main, "init_trading_database", lambda: None)
     monkeypatch.setattr(main, "monitor_watch_pool_loop", fake_monitor)
     monkeypatch.setattr(main, "shutdown_market_clients", lambda: events.append("shutdown"))
+    monkeypatch.setattr(main, "_acquire_monitor_lock", lambda: object())
+    monkeypatch.setattr(main, "_release_monitor_lock", lambda lock: None)
+    monkeypatch.setenv("WATCH_POOL_MONITOR_IN_API", "true")
 
     with TestClient(main.app) as client:
         assert client.get("/api/health").status_code == 200

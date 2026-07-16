@@ -13,6 +13,8 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 COPY backend/app ./app
 COPY backend/gunicorn.conf.py ./gunicorn.conf.py
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/migrations ./migrations
 COPY config /app/config
 COPY sample_data /app/sample_data
 

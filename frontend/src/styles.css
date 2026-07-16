@@ -1,3 +1,6 @@
+/* Legacy workstation rules stay below the host platform's unlayered theme. */
+@scope (.analysis-embedded) {
+@layer analysis-legacy {
 :root {
   --bg: #f5f7f6;
   --panel: #ffffff;
@@ -640,7 +643,7 @@ button:disabled {
   color: var(--muted);
 }
 
-svg {
+.app-shell svg {
   display: block;
   width: 100%;
   height: auto;
@@ -2307,10 +2310,8 @@ body {
 .pool-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  grid-auto-rows: 200px;
   gap: 10px;
   max-height: none;
-  height: calc(100% - 57px);
   overflow: auto;
   padding: 12px;
 }
@@ -3724,12 +3725,12 @@ button:hover:not(:disabled) {
 .ant-input:not(textarea),
 .ant-input-number,
 .ant-select-single .ant-select-selector {
-  min-height: 44px !important;
-  border-radius: 999px !important;
+  min-height: 38px !important;
+  border-radius: 4px !important;
 }
 
 .ant-input-number-input {
-  height: 42px !important;
+  height: 36px !important;
   color: #1d1d1f !important;
 }
 
@@ -3937,10 +3938,10 @@ textarea.ant-input {
 .pool-symbol-combobox .ant-select-single .ant-select-selector {
   display: flex !important;
   align-items: center !important;
-  height: 44px !important;
-  min-height: 44px !important;
-  padding: 0 38px 0 16px !important;
-  border-radius: 999px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  padding: 0 32px 0 11px !important;
+  border-radius: 4px !important;
   overflow: hidden;
 }
 
@@ -6029,6 +6030,14 @@ button:disabled {
   gap: 18px;
 }
 
+.terminal-header.page-navigation-hidden {
+  grid-template-columns: minmax(180px, auto) minmax(0, 1fr);
+}
+
+.terminal-header.page-navigation-hidden .terminal-status {
+  justify-self: end;
+}
+
 .terminal-title,
 .terminal-status,
 .top-page-nav {
@@ -6384,4 +6393,8 @@ button:disabled {
     margin-left: 16px;
     margin-right: 16px;
   }
+}
+
+}
+
 }
