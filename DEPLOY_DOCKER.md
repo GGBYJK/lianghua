@@ -1,6 +1,11 @@
 # Docker Deployment
 
-This deployment runs the FastAPI backend in a Python 3.11 container and serves the Vite frontend from Nginx. The frontend proxies `/api/*` to the backend container, so the browser only needs to access one host and port.
+This deployment runs the FastAPI backend with Gunicorn + Uvicorn workers in a Python 3.12 container and serves the Vite frontend from Nginx. The frontend proxies `/api/*` to the backend container, so the browser only needs to access one host and port.
+
+The backend defaults to a 30 second per-request timeout. In Docker/Gunicorn,
+timed-out requests return `504`, the worker is terminated, and Gunicorn starts a
+fresh worker. The background watch-pool scanner is protected by a file lock so
+only one Gunicorn worker runs it.
 
 ## Server prerequisites
 

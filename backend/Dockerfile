@@ -12,9 +12,10 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app ./app
+COPY backend/gunicorn.conf.py ./gunicorn.conf.py
 COPY config /app/config
 COPY sample_data /app/sample_data
 
 EXPOSE 8010
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8010"]
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "app.main:app"]
