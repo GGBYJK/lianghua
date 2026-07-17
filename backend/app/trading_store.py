@@ -57,6 +57,14 @@ def _iso(value: Any) -> str | None:
     return value.astimezone(timezone.utc).isoformat()
 
 
+def with_utc_timestamps(item: dict[str, Any], *fields: str) -> dict[str, Any]:
+    result = dict(item)
+    for field in fields:
+        if field in result:
+            result[field] = _iso(result[field])
+    return result
+
+
 def _load_user(connection: Any, *, user_id: int | None = None, username: str | None = None) -> dict[str, Any] | None:
     condition = users.c.id == user_id if user_id is not None else users.c.username == username
     row = connection.execute(
@@ -274,12 +282,15 @@ def upsert_contract_spec(actor_user_id: int, payload: dict[str, Any]) -> dict[st
 def get_contract_spec(symbol: str) -> dict[str, Any] | None:
     with get_engine().connect() as connection:
         row = connection.execute(select(contract_specs).where(contract_specs.c.symbol == symbol.strip().lower())).mappings().first()
-        return dict(row) if row is not None else None
+        return with_utc_timestamps(dict(row), "updated_at") if row is not None else None
 
 
 def list_contract_specs() -> list[dict[str, Any]]:
     with get_engine().connect() as connection:
-        return [dict(row) for row in connection.execute(select(contract_specs).order_by(contract_specs.c.symbol)).mappings()]
+        return [
+            with_utc_timestamps(dict(row), "updated_at")
+            for row in connection.execute(select(contract_specs).order_by(contract_specs.c.symbol)).mappings()
+        ]
 
 
 def upsert_market_snapshot(symbol: str, price: Decimal, source: str, market_time: datetime | None = None) -> None:
@@ -297,7 +308,7 @@ def upsert_market_snapshot(symbol: str, price: Decimal, source: str, market_time
 def get_market_snapshot(symbol: str) -> dict[str, Any] | None:
     with get_engine().connect() as connection:
         row = connection.execute(select(market_snapshots).where(market_snapshots.c.symbol == symbol.strip().lower())).mappings().first()
-        return dict(row) if row is not None else None
+        return with_utc_timestamps(dict(row), "updated_at") if row is not None else None
 
 
 def list_market_snapshots(symbols: list[str]) -> list[dict[str, Any]]:
@@ -305,9 +316,12 @@ def list_market_snapshots(symbols: list[str]) -> list[dict[str, Any]]:
     if not normalized:
         return []
     with get_engine().connect() as connection:
-        return [dict(row) for row in connection.execute(
-            select(market_snapshots).where(market_snapshots.c.symbol.in_(normalized))
-        ).mappings()]
+        return [
+            with_utc_timestamps(dict(row), "updated_at")
+            for row in connection.execute(
+                select(market_snapshots).where(market_snapshots.c.symbol.in_(normalized))
+            ).mappings()
+        ]
 
 
 def _position_rows(connection: Any, account_id: int) -> list[dict[str, Any]]:
@@ -335,7 +349,7 @@ def _position_rows(connection: Any, account_id: int) -> list[dict[str, Any]]:
         item["last_price"] = latest
         item["stop_price"] = next((_decimal(rule["trigger_price"]) for rule in rules if rule["rule_type"] == "STOP_LOSS"), None)
         item["take_profit_price"] = next((_decimal(rule["trigger_price"]) for rule in rules if rule["rule_type"] == "TAKE_PROFIT"), None)
-        result.append(item)
+        result.append(with_utc_timestamps(item, "opened_at", "closed_at", "quote_updated_at"))
     return result
 
 
@@ -379,7 +393,7 @@ def list_orders(user_id: int, limit: int = 100) -> list[dict[str, Any]]:
         rows = connection.execute(
             select(orders).where(orders.c.user_id == user_id).order_by(desc(orders.c.created_at)).limit(limit)
         ).mappings()
-        return [dict(row) for row in rows]
+        return [with_utc_timestamps(dict(row), "created_at", "filled_at") for row in rows]
 
 
 def list_ledger(user_id: int, limit: int = 100) -> list[dict[str, Any]]:
@@ -390,7 +404,7 @@ def list_ledger(user_id: int, limit: int = 100) -> list[dict[str, Any]]:
         rows = connection.execute(
             select(account_ledger).where(account_ledger.c.account_id == account_id).order_by(desc(account_ledger.c.created_at)).limit(limit)
         ).mappings()
-        return [dict(row) for row in rows]
+        return [with_utc_timestamps(dict(row), "created_at") for row in rows]
 
 
 def list_audit_logs(limit: int = 200) -> list[dict[str, Any]]:
@@ -401,7 +415,7 @@ def list_audit_logs(limit: int = 200) -> list[dict[str, Any]]:
             .order_by(desc(audit_logs.c.created_at))
             .limit(limit)
         )
-        return [dict(row) for row in connection.execute(statement).mappings()]
+        return [with_utc_timestamps(dict(row), "created_at") for row in connection.execute(statement).mappings()]
 
 
 def account_id_for_user(connection: Any, user_id: int, *, for_update: bool = False) -> dict[str, Any] | None:

@@ -47,6 +47,7 @@ from .watch_pool_store import (
     update_watch_pool_item,
 )
 from .trading_api import router as trading_router
+from .backtest_api import router as backtest_router
 from .trading_db import init_trading_database
 
 
@@ -203,6 +204,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="头肩顶识别服务", version="0.2.0", lifespan=lifespan)
 simulation_sessions: dict[str, SimulationSession] = {}
 app.include_router(trading_router)
+app.include_router(backtest_router)
 
 
 @app.middleware("http")

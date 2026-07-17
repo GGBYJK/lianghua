@@ -127,3 +127,140 @@ export type MarketQuote = {
   market_time: string | null;
   updated_at: string | null;
 };
+
+export type BacktestRule = {
+  key: string;
+  label: string;
+  type: "PATTERN_TARGET" | "RR" | "QTR";
+  multiplier?: number | null;
+};
+
+export type BacktestRequest = {
+  name?: string;
+  symbols: string[];
+  timeframes: string[];
+  kline_count: number;
+  max_holding_bars: number;
+  patterns: Array<"head_shoulders_top" | "inverse_head_shoulders">;
+  alert_types: string[];
+  take_profit_rules: BacktestRule[];
+};
+
+export type BacktestSummary = {
+  id: number;
+  rule_key: string;
+  rule_label: string;
+  rule_type: BacktestRule["type"];
+  multiplier: Numeric | null;
+  sample_count: number;
+  wins: number;
+  losses: number;
+  breakevens: number;
+  incomplete: number;
+  take_profit_hits: number;
+  stop_hits: number;
+  time_exits: number;
+  win_rate: Numeric;
+  gross_pnl: Numeric | null;
+  net_pnl: Numeric | null;
+  avg_r: Numeric;
+  total_r: Numeric;
+  profit_factor: Numeric | null;
+  avg_holding_bars: Numeric;
+};
+
+export type BacktestMarket = {
+  id: string;
+  symbol: string;
+  timeframe: string;
+  row_count: number;
+  start_time: string | null;
+  end_time: string | null;
+};
+
+export type BacktestError = {
+  id: number;
+  symbol: string;
+  timeframe: string;
+  message: string;
+};
+
+export type BacktestRun = {
+  id: string;
+  name: string;
+  status: "QUEUED" | "RUNNING" | "COMPLETED" | "COMPLETED_WITH_ERRORS" | "FAILED" | "CANCELLED";
+  progress: number;
+  total_combinations: number;
+  completed_combinations: number;
+  signal_count: number;
+  order_count: number;
+  cancel_requested: boolean;
+  error_message: string | null;
+  request: BacktestRequest;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  summaries?: BacktestSummary[];
+  markets?: BacktestMarket[];
+  errors?: BacktestError[];
+};
+
+export type BacktestOrder = {
+  id: string;
+  series_id: string;
+  rule_key: string;
+  rule_label: string;
+  signal_key: string;
+  symbol: string;
+  timeframe: string;
+  pattern: "head_shoulders_top" | "inverse_head_shoulders";
+  alert_type: string;
+  direction: "LONG" | "SHORT";
+  score: number;
+  status: "INVALID" | "INCOMPLETE" | "CLOSED";
+  exit_reason: "TAKE_PROFIT" | "STOP_LOSS" | "TIME_EXIT" | null;
+  entry_time: string | null;
+  exit_time: string | null;
+  entry_price: Numeric | null;
+  stop_price: Numeric | null;
+  target_price: Numeric | null;
+  exit_price: Numeric | null;
+  gross_pnl: Numeric | null;
+  net_pnl: Numeric | null;
+  fees: Numeric | null;
+  slippage: Numeric | null;
+  r_multiple: Numeric | null;
+  holding_bars: number;
+  mfe_r: Numeric | null;
+  mae_r: Numeric | null;
+  cost_available: boolean;
+  signal: Record<string, unknown>;
+};
+
+export type BacktestOrdersResponse = {
+  items: BacktestOrder[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export type BacktestSeries = {
+  symbol: string;
+  timeframe: string;
+  chart: {
+    candles: Array<{
+      index: number;
+      time: string;
+      display_time?: string;
+      open: number;
+      high: number;
+      low: number;
+      close: number;
+      volume: number;
+      ma?: Record<string, number | null>;
+    }>;
+    pivots: Array<{ index: number; time: string; price: number; kind: "high" | "low" }>;
+    necklines: Array<{ from_index: number; to_index: number; from_price: number; to_price: number; confirmed: boolean }>;
+  };
+  signals: Array<Record<string, unknown>>;
+};

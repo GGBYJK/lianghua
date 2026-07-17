@@ -6,6 +6,7 @@ import { AxisPointerComponent, DataZoomComponent, GridComponent, LegendComponent
 import { CanvasRenderer } from "echarts/renderers";
 import { createAlertFeedback, createWatchPoolItem, deleteAlertFeedback, deleteWatchPoolItem, disableAllWatchPoolItems, downloadWatchPoolImportTemplate, enableAllWatchPoolItems, getDefaultConfig, getHeadShouldersAlert, getMarketSettings, hideHeadShouldersAlert, importWatchPoolExcel, listAlertFeedbacks, listContracts, listHeadShouldersAlerts, listWatchPool, refreshContracts, scanMarket, scanWatchPoolOnce, updateContracts, updateWatchPoolItem } from "./api";
 import type { AlertFeedback, Candle, ContractCenterItem, ContractCenterRefresh, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, Neckline, PivotPoint, ScanResponse, Signal, WatchPoolImportResult, WatchPoolItem as ApiWatchPoolItem } from "./types";
+import { parseApiTimestamp } from "./time";
 import "antd/dist/reset.css";
 import "./styles.css";
 
@@ -3710,16 +3711,7 @@ function formatMessageTreeLatestTime(value: string | null) {
 }
 
 function parseBackendTimestamp(value: string) {
-  const trimmed = value.trim();
-  if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(trimmed)) {
-    return null;
-  }
-  const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(trimmed);
-  if (!hasTimezone) {
-    return null;
-  }
-  const date = new Date(trimmed);
-  return Number.isNaN(date.getTime()) ? null : date;
+  return parseApiTimestamp(value);
 }
 
 function parseLocalTimestamp(value: string) {

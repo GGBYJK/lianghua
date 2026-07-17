@@ -8,6 +8,10 @@ import type {
   PlatformUser,
   PositionLot,
   TradeSignal,
+  BacktestOrdersResponse,
+  BacktestRequest,
+  BacktestRun,
+  BacktestSeries,
 } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || window.location.origin;
@@ -123,4 +127,34 @@ export const platformApi = {
   saveContract: (symbol: string, payload: Record<string, unknown>) => request<ContractSpec>(`/api/admin/contracts/${encodeURIComponent(symbol)}`, {
     method: "PUT", body: JSON.stringify(payload),
   }),
+  backtests: () => request<BacktestRun[]>("/api/backtests?limit=100"),
+  backtest: (runId: string) => request<BacktestRun>(`/api/backtests/${runId}`),
+  createBacktest: (payload: BacktestRequest) => request<BacktestRun>("/api/backtests", {
+    method: "POST", body: JSON.stringify(payload),
+  }),
+  backtestOrders: (runId: string, params: URLSearchParams) => request<BacktestOrdersResponse>(`/api/backtests/${runId}/orders?${params.toString()}`),
+  backtestSeries: (runId: string, symbol: string, timeframe: string) => request<BacktestSeries>(`/api/backtests/${runId}/series?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`),
+  cancelBacktest: (runId: string) => request<{ ok: boolean }>(`/api/backtests/${runId}/cancel`, { method: "POST" }),
+  deleteBacktest: (runId: string) => request<{ ok: boolean }>(`/api/backtests/${runId}`, { method: "DELETE" }),
 };
+
+export async function downloadBacktest(runId: string) {
+  let response = await fetch(`${API_BASE}/api/backtests/${runId}/export`, {
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    credentials: "include",
+  });
+  if (response.status === 401 && await refreshSession()) {
+    response = await fetch(`${API_BASE}/api/backtests/${runId}/export`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      credentials: "include",
+    });
+  }
+  if (!response.ok) throw new Error(await response.text());
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `backtest-${runId}.xlsx`;
+  link.click();
+  URL.revokeObjectURL(url);
+}

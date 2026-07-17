@@ -28,6 +28,7 @@ from .trading_store import (
     get_market_snapshot,
     list_market_snapshots,
     write_audit,
+    with_utc_timestamps,
 )
 from .watch_pool_store import get_head_shoulders_alert, list_head_shoulders_alerts
 
@@ -207,7 +208,7 @@ def _validate_exit_prices(position_side: str, fill_price: Decimal, stop_price: D
 def _serialize_order(connection: Any, order_id: str) -> dict[str, Any]:
     row = connection.execute(select(orders).where(orders.c.id == order_id)).mappings().one()
     lot_id = connection.execute(select(position_lots.c.id).where(position_lots.c.open_order_id == order_id)).scalar_one_or_none()
-    return {**dict(row), "position_lot_id": lot_id}
+    return with_utc_timestamps({**dict(row), "position_lot_id": lot_id}, "created_at", "filled_at")
 
 
 def create_open_order(

@@ -51,10 +51,13 @@ import { login, logout, platformApi, restoreSession } from "./api";
 import { deleteAlertFeedback, listAlertFeedbacks, listContracts, refreshContracts, updateContracts } from "../api";
 import type { AlertFeedback, ContractCenterItem, ContractCenterRefresh } from "../types";
 import type { ContractSpec, LedgerEntry, PaperOrder, PlatformUser, PositionLot, TradeSignal } from "./types";
+import { apiTimestampToMs, formatApiDateTime, formatMarketDateTime } from "../time";
 import "./platform.css";
 
 
 const AnalysisApp = lazy(() => import("../main").then((module) => ({ default: module.AnalysisApp })));
+const BacktestPage = lazy(() => import("./BacktestPage"));
+const BacktestHistoryPage = lazy(() => import("./BacktestHistoryPage"));
 const AuthContext = createContext<{
   user: PlatformUser | null;
   loading: boolean;
@@ -92,8 +95,7 @@ function editablePrice(value: number | string | null | undefined) {
 }
 
 function formatTime(value: string | null | undefined) {
-  if (!value) return "--";
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
+  return formatApiDateTime(value);
 }
 
 function sourceLabel(source: string) {
@@ -134,6 +136,9 @@ export function PlatformApp() {
               <Route path="orders" element={<OrdersPage />} />
               <Route path="ledger" element={<LedgerPage />} />
               <Route path="analysis" element={<Navigate to="/analysis/monitor" replace />} />
+              <Route path="analysis/backtest" element={<Suspense fallback={<PageLoading />}><BacktestHistoryPage /></Suspense>} />
+              <Route path="analysis/backtest/new" element={<Suspense fallback={<PageLoading />}><BacktestPage /></Suspense>} />
+              <Route path="analysis/backtest/:runId" element={<Suspense fallback={<PageLoading />}><BacktestPage /></Suspense>} />
               <Route path="analysis/:section" element={<EmbeddedAnalysis />} />
               <Route path="settings" element={<Navigate to="/settings/feedback" replace />} />
               <Route path="settings/feedback" element={<FeedbackSettingsPage />} />
@@ -247,12 +252,13 @@ function PlatformLayout() {
         { key: "/analysis/monitor", label: "实时监控信息" },
         { key: "/analysis/pool", label: "品种检测池" },
         { key: "/analysis/research", label: "回测研究" },
+        { key: "/analysis/backtest", label: "策略回测" },
       ],
     },
     ...(user?.permissions.includes("users.manage") ? [{ key: "/admin/users", icon: <UserRoundCog size={18} />, label: "用户管理" }] : []),
     { key: "settings-group", icon: <Settings2 size={18} />, label: "系统配置", children: settingsChildren },
   ];
-  const selected = location.pathname;
+  const selected = location.pathname.startsWith("/analysis/backtest") ? "/analysis/backtest" : location.pathname;
   const defaultOpenKeys = [
     ...(location.pathname.startsWith("/analysis") ? ["analysis-group"] : []),
     ...(location.pathname.startsWith("/settings") || location.pathname === "/admin/contracts" ? ["settings-group"] : []),
@@ -355,8 +361,8 @@ function SignalDesk() {
   const canTrade = user?.permissions.includes("trade.execute") ?? false;
 
   const rows = useMemo(() => [...(signalsQuery.data || [])].sort((left, right) => {
-    const leftTime = left.created_at ? new Date(left.created_at).getTime() : 0;
-    const rightTime = right.created_at ? new Date(right.created_at).getTime() : 0;
+    const leftTime = apiTimestampToMs(left.created_at);
+    const rightTime = apiTimestampToMs(right.created_at);
     return rightTime - leftTime;
   }).filter((item) => {
     const keywordMatches = !filter.keyword || item.symbol.toLowerCase().includes(filter.keyword.toLowerCase());
@@ -470,7 +476,7 @@ function SignalDesk() {
           </Form.Item>
           {manualSymbol ? <div className="manual-quote-strip">
             <div><span>最新价</span><strong>{manualQuoteQuery.isLoading ? <Spin size="small" /> : price(manualQuote?.last_price)}</strong></div>
-            <div><span>更新时间</span><strong>{manualQuote?.market_time || manualQuote?.updated_at ? formatTime(manualQuote.market_time || manualQuote.updated_at) : "--"}</strong></div>
+            <div><span>更新时间</span><strong>{manualQuote?.market_time ? formatMarketDateTime(manualQuote.market_time) : formatTime(manualQuote?.updated_at)}</strong></div>
             <Tooltip title="每 10 秒刷新行情"><RefreshCw size={15} className={manualQuoteQuery.isFetching ? "is-spinning" : ""} /></Tooltip>
           </div> : null}
           {manualQuoteQuery.isError ? <Alert type="warning" showIcon message={(manualQuoteQuery.error as Error).message} /> : null}

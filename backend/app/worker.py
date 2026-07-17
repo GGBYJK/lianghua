@@ -11,6 +11,7 @@ from uuid import uuid4
 from sqlalchemy import insert, select, update
 
 from .market_client import MarketApiError, fetch_kline_from_market, shutdown_market_clients
+from .backtest_service import process_next_backtest_run
 from .monitor import monitor_watch_pool_loop
 from .trading_db import get_engine, init_trading_database, utc_now, worker_leases
 from .trading_service import process_exit_rules_once
@@ -88,18 +89,40 @@ async def trading_loop(stop_event: asyncio.Event) -> None:
             pass
 
 
+async def backtest_loop(stop_event: asyncio.Event) -> None:
+    while not stop_event.is_set():
+        try:
+            processed = await process_next_backtest_run()
+        except Exception:
+            logger.exception("backtest worker iteration failed")
+            processed = False
+        if processed:
+            continue
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=1.0)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def run() -> None:
     init_watch_pool_store()
     init_trading_database()
     stop_event = asyncio.Event()
-    monitor_task = asyncio.create_task(monitor_watch_pool_loop(stop_event), name="watch-pool-monitor")
-    trading_task = asyncio.create_task(trading_loop(stop_event), name="paper-trading-worker")
-    logger.info("worker started: owner=%s", OWNER_ID)
+    mode = os.getenv("WORKER_MODE", "all").strip().lower()
+    tasks: list[asyncio.Task[None]] = []
+    if mode in {"all", "market"}:
+        tasks.append(asyncio.create_task(monitor_watch_pool_loop(stop_event), name="watch-pool-monitor"))
+        tasks.append(asyncio.create_task(trading_loop(stop_event), name="paper-trading-worker"))
+    if mode in {"all", "backtest"}:
+        tasks.append(asyncio.create_task(backtest_loop(stop_event), name="strategy-backtest-worker"))
+    if not tasks:
+        raise ValueError(f"unsupported WORKER_MODE: {mode}")
+    logger.info("worker started: owner=%s mode=%s", OWNER_ID, mode)
     try:
-        await asyncio.gather(monitor_task, trading_task)
+        await asyncio.gather(*tasks)
     finally:
         stop_event.set()
-        await asyncio.gather(monitor_task, trading_task, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
         shutdown_market_clients()
 
 
