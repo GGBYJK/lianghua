@@ -67,11 +67,19 @@ const AuthContext = createContext<{
 
 const platformTheme = {
   token: {
-    colorPrimary: "#0c7a5a",
+    colorPrimary: "#b33a3a",
     colorInfo: "#1168a8",
-    colorSuccess: "#0c7a5a",
+    colorSuccess: "#b33a3a",
     colorWarning: "#b7791f",
-    colorError: "#c23b32",
+    colorError: "#9b2f2f",
+    colorLink: "#b33a3a",
+    colorLinkHover: "#922f32",
+    colorLinkActive: "#7f292c",
+    colorText: "#241f1e",
+    colorTextSecondary: "#756d6a",
+    colorBorder: "#ded8d6",
+    colorBgContainer: "#fffdfc",
+    colorBgElevated: "#ffffff",
     borderRadius: 6,
     fontFamily: '"IBM Plex Sans", "Noto Sans SC", sans-serif',
   },
@@ -110,11 +118,11 @@ function sourceLabel(source: string) {
 }
 
 function directionTag(direction: "LONG" | "SHORT") {
-  return direction === "LONG" ? <Tag color="green">开多</Tag> : <Tag color="red">开空</Tag>;
+  return direction === "LONG" ? <Tag color="red">开多</Tag> : <Tag color="green">开空</Tag>;
 }
 
 function PatternTag({ pattern }: { pattern: TradeSignal["pattern"] }) {
-  return pattern === "head_shoulders_top" ? <Tag color="volcano">头肩顶</Tag> : <Tag color="cyan">倒头肩底</Tag>;
+  return pattern === "head_shoulders_top" ? <Tag color="green">头肩顶</Tag> : <Tag color="red">倒头肩底</Tag>;
 }
 
 export function PlatformApp() {
@@ -233,7 +241,7 @@ function PlatformLayout() {
   const { user, setUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => window.matchMedia("(max-width: 760px)").matches);
   const queryClient = useQueryClient();
   const settingsChildren = [
     { key: "/settings/feedback", icon: <MessageSquareText size={16} />, label: "反馈列表" },
@@ -279,7 +287,7 @@ function PlatformLayout() {
         <Menu
           mode="inline"
           selectedKeys={[selected]}
-          defaultOpenKeys={defaultOpenKeys}
+          defaultOpenKeys={collapsed ? [] : defaultOpenKeys}
           items={items}
           onClick={({ key }) => navigate(key)}
         />
@@ -310,7 +318,7 @@ function AccountBand() {
       <Statistic title="账户权益" value={Number(data?.equity ?? 0)} precision={2} prefix="¥" />
       <Statistic title="可用资金" value={Number(data?.available_funds ?? 0)} precision={2} prefix="¥" />
       <Statistic title="占用保证金" value={Number(data?.used_margin ?? 0)} precision={2} prefix="¥" />
-      <Statistic title="浮动盈亏" value={Number(data?.unrealized_pnl ?? 0)} precision={2} prefix="¥" valueStyle={{ color: Number(data?.unrealized_pnl ?? 0) >= 0 ? "#0c7a5a" : "#c23b32" }} />
+      <Statistic title="浮动盈亏" value={Number(data?.unrealized_pnl ?? 0)} precision={2} prefix="¥" valueStyle={{ color: Number(data?.unrealized_pnl ?? 0) >= 0 ? "#b33a3a" : "#16805b" }} />
       <Statistic title="累计手续费" value={Number(data?.total_fees ?? 0)} precision={2} prefix="¥" />
     </section>
   );

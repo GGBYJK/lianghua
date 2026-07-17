@@ -85,15 +85,18 @@ const TIMEFRAME_OPTIONS = [
 ];
 const antTheme = {
   token: {
-    colorPrimary: "#0c7a5a",
+    colorPrimary: "#b33a3a",
     colorInfo: "#1168a8",
-    colorSuccess: "#0c7a5a",
+    colorSuccess: "#b33a3a",
     colorWarning: "#b7791f",
-    colorError: "#c23b32",
-    colorText: "#18211f",
-    colorTextSecondary: "#76817d",
-    colorBorder: "#d8dfdc",
-    colorBgContainer: "#f8faf9",
+    colorError: "#9b2f2f",
+    colorLink: "#b33a3a",
+    colorLinkHover: "#922f32",
+    colorLinkActive: "#7f292c",
+    colorText: "#241f1e",
+    colorTextSecondary: "#756d6a",
+    colorBorder: "#ded8d6",
+    colorBgContainer: "#fffdfc",
     colorBgElevated: "#ffffff",
     borderRadius: 4,
     borderRadiusLG: 6,
@@ -109,15 +112,15 @@ const antTheme = {
     },
     Input: {
       borderRadius: 4,
-      activeShadow: "0 0 0 3px rgba(12, 122, 90, 0.12)",
+      activeShadow: "0 0 0 3px rgba(179, 58, 58, 0.12)",
     },
     InputNumber: {
       borderRadius: 4,
-      activeShadow: "0 0 0 3px rgba(12, 122, 90, 0.12)",
+      activeShadow: "0 0 0 3px rgba(179, 58, 58, 0.12)",
     },
     Select: {
       borderRadius: 4,
-      optionSelectedBg: "rgba(12, 122, 90, 0.1)",
+      optionSelectedBg: "rgba(179, 58, 58, 0.1)",
     },
   },
 };
@@ -2845,7 +2848,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
       coord: [point.index, point.price],
       value: patternLabels[index],
       itemStyle: {
-        color: signal.confirmed ? (index === 2 ? "#0066cc" : "#2997ff") : (index === 2 ? "#b87a16" : "#7a7a7a"),
+        color: signal.confirmed ? (index === 2 ? "#b33a3a" : "#e06b63") : (index === 2 ? "#b87a16" : "#7a7a7a"),
         borderColor: "#ffffff",
         borderWidth: 2,
       },
@@ -2863,7 +2866,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
         {
           coord: [signal.left_neck.index, signal.left_neck.price],
           lineStyle: {
-            color: signal.confirmed ? "#0066cc" : "#b87a16",
+            color: signal.confirmed ? "#b33a3a" : "#b87a16",
             width: signal.confirmed ? 2 : 1.5,
             type: signal.confirmed ? "dashed" : "dotted",
           },
@@ -3000,8 +3003,8 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
           realtime: false,
           brushSelect: false,
           borderColor: "#e0e0e0",
-          fillerColor: "rgba(0,102,204,0.12)",
-          handleStyle: { color: "#0066cc" },
+          fillerColor: "rgba(179,58,58,0.12)",
+          handleStyle: { color: "#b33a3a" },
           textStyle: { color: "#7a7a7a" },
         },
       ],
@@ -3019,7 +3022,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
           markPoint: { symbol: "circle", symbolSize: 12, data: markPoints },
           markLine: {
             symbol: "none",
-            lineStyle: { color: "#0066cc", width: 2, type: "dashed" },
+            lineStyle: { color: "#b33a3a", width: 2, type: "dashed" },
             label: { color: "#1d1d1f", formatter: "颈线" },
             data: markLines,
           },

@@ -50,7 +50,7 @@ export function BacktestChart({ series, order }: { series: BacktestSeries; order
     }
     if (order?.exit_time) {
       const index = rawTimes.indexOf(order.exit_time);
-      if (index >= 0) markPoints.push({ coord: [index, Number(order.exit_price)], name: "出", value: "出", itemStyle: { color: order.exit_reason === "TAKE_PROFIT" ? "#0c7a5a" : "#c23b32" } });
+      if (index >= 0) markPoints.push({ coord: [index, Number(order.exit_price)], name: "出", value: "出", itemStyle: { color: order.exit_reason === "TAKE_PROFIT" ? "#b33a3a" : "#16805b" } });
     }
     const necklineSeries = series.chart.necklines.map((line, index) => {
       const values = new Array(candles.length).fill(null) as Array<number | null>;
@@ -89,7 +89,7 @@ export function BacktestChart({ series, order }: { series: BacktestSeries; order
       ],
       dataZoom: [
         { type: "inside", xAxisIndex: [0, 1], start: Math.max(0, 100 - Math.min(100, 12000 / Math.max(candles.length, 1))), end: 100 },
-        { type: "slider", xAxisIndex: [0, 1], bottom: 2, height: 18, borderColor: "#d5ddda", fillerColor: "rgba(12,122,90,.14)" },
+        { type: "slider", xAxisIndex: [0, 1], bottom: 2, height: 18, borderColor: "#ded8d6", fillerColor: "rgba(179,58,58,.14)" },
       ],
       series: [
         {
@@ -102,8 +102,8 @@ export function BacktestChart({ series, order }: { series: BacktestSeries; order
             symbol: ["none", "none"],
             label: { position: "insideEndTop", fontSize: 10 },
             data: [
-              order.stop_price != null ? { name: "止损", yAxis: Number(order.stop_price), lineStyle: { color: "#c23b32" } } : null,
-              order.target_price != null ? { name: "止盈", yAxis: Number(order.target_price), lineStyle: { color: "#0c7a5a" } } : null,
+              order.stop_price != null ? { name: "止损", yAxis: Number(order.stop_price), lineStyle: { color: "#16805b" } } : null,
+              order.target_price != null ? { name: "止盈", yAxis: Number(order.target_price), lineStyle: { color: "#b33a3a" } } : null,
             ].filter(Boolean),
           } : undefined,
         },

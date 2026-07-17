@@ -70,8 +70,8 @@ function statusTag(status: BacktestRun["status"]) {
 function exitTag(reason: BacktestOrder["exit_reason"], status: BacktestOrder["status"]) {
   if (status === "INCOMPLETE") return <Tag>数据不足</Tag>;
   if (status === "INVALID") return <Tag color="default">无效样本</Tag>;
-  if (reason === "TAKE_PROFIT") return <Tag color="success">止盈</Tag>;
-  if (reason === "STOP_LOSS") return <Tag color="error">止损</Tag>;
+  if (reason === "TAKE_PROFIT") return <Tag color="red">止盈</Tag>;
+  if (reason === "STOP_LOSS") return <Tag color="green">止损</Tag>;
   return <Tag color="warning">到期平仓</Tag>;
 }
 
@@ -200,7 +200,7 @@ export default function BacktestPage() {
     { title: "品种", dataIndex: "symbol", width: 100, render: (value) => <strong className="symbol-cell">{value}</strong> },
     { title: "周期", dataIndex: "timeframe", width: 70 },
     { title: "止盈条件", dataIndex: "rule_label", width: 112 },
-    { title: "方向", dataIndex: "direction", width: 76, render: (value) => <Tag color={value === "LONG" ? "green" : "red"}>{value === "LONG" ? "做多" : "做空"}</Tag> },
+    { title: "方向", dataIndex: "direction", width: 76, render: (value) => <Tag color={value === "LONG" ? "red" : "green"}>{value === "LONG" ? "做多" : "做空"}</Tag> },
     { title: "结果", width: 92, render: (_, row) => exitTag(row.exit_reason, row.status) },
     { title: "进场", dataIndex: "entry_price", align: "right", width: 96, render: (value) => number(value, 4) },
     { title: "止损", dataIndex: "stop_price", align: "right", width: 96, render: (value) => number(value, 4) },
@@ -284,8 +284,8 @@ export default function BacktestPage() {
             <Statistic title="虚拟订单" value={detail.order_count} />
             <Statistic title="最佳止盈条件" value={best?.rule_label || "--"} />
             <Statistic title="最佳胜率" value={best ? Number(best.win_rate) * 100 : 0} precision={1} suffix="%" />
-            <Statistic title="累计R" value={best ? Number(best.total_r) : 0} precision={2} styles={{ content: { color: Number(best?.total_r || 0) >= 0 ? "#0c7a5a" : "#c23b32" } }} />
-            <Statistic title="净收益" value={best?.net_pnl == null ? "--" : Number(best.net_pnl)} precision={2} prefix={best?.net_pnl == null ? undefined : "¥"} />
+            <Statistic title="累计R" value={best ? Number(best.total_r) : 0} precision={2} styles={{ content: { color: Number(best?.total_r || 0) >= 0 ? "#b33a3a" : "#16805b" } }} />
+            <Statistic title="净收益" value={best?.net_pnl == null ? "--" : Number(best.net_pnl)} precision={2} prefix={best?.net_pnl == null ? undefined : "¥"} styles={{ content: { color: best?.net_pnl == null ? "#241f1e" : Number(best.net_pnl) >= 0 ? "#b33a3a" : "#16805b" } }} />
           </section>
           {ACTIVE_STATUSES.has(detail.status) && !summaries.length ? <div className="backtest-running"><Spin /><strong>后台正在扫描K线并生成独立止盈样本</strong><span>可以离开此页面，任务会继续运行。</span></div> : <Tabs activeKey={activeTab} onChange={setActiveTab} items={[
             { key: "overview", label: <span><BarChart3 size={15} />止盈对比</span>, children: overview },
