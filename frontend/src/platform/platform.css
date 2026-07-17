@@ -806,14 +806,14 @@ button, input, select { letter-spacing: 0; }
 .analysis-embedded .monitor-symbol-summary strong {
   color: #1f302a;
   font-family: Consolas, monospace;
-  font-size: 15px;
+  font-size: 18px;
 }
 
 .analysis-embedded .monitor-symbol-summary small,
 .analysis-embedded .monitor-head-summary small {
   margin-top: 1px;
   color: #7b8783;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .analysis-embedded .message-tree-marker,
@@ -843,8 +843,8 @@ button, input, select { letter-spacing: 0; }
 }
 
 .analysis-embedded .message-tree-summary-meta { gap: 5px; }
-.analysis-embedded .message-tree-latest-time { gap: 3px; font-size: 11px; font-weight: 500; }
-.analysis-embedded .message-tree-latest-time svg { width: 11px; height: 11px; }
+.analysis-embedded .message-tree-latest-time { gap: 4px; font-size: 13px; font-weight: 700; }
+.analysis-embedded .message-tree-latest-time svg { width: 13px; height: 13px; }
 .analysis-embedded .message-tree-summary-meta > b {
   min-width: 22px;
   padding: 3px 5px;
@@ -894,14 +894,34 @@ button, input, select { letter-spacing: 0; }
   background: #f8faf9;
 }
 
+.analysis-embedded .current-signal-group.high-quality-group > .message-tree-summary,
+.analysis-embedded .current-signal-group.pullback-group > .message-tree-summary {
+  background: #164b7c;
+}
+
+.analysis-embedded .current-signal-group.high-quality-group > .message-tree-summary .message-tree-marker::before,
+.analysis-embedded .current-signal-group.high-quality-group > .message-tree-summary strong,
+.analysis-embedded .current-signal-group.high-quality-group > .message-tree-summary .message-head-title > span:last-child,
+.analysis-embedded .current-signal-group.pullback-group > .message-tree-summary .message-tree-marker::before,
+.analysis-embedded .current-signal-group.pullback-group > .message-tree-summary strong,
+.analysis-embedded .current-signal-group.pullback-group > .message-tree-summary .message-head-title > span:last-child {
+  color: #f4f9ff;
+}
+
+.analysis-embedded .current-signal-group.high-quality-group > .message-tree-summary small,
+.analysis-embedded .current-signal-group.pullback-group > .message-tree-summary small {
+  color: #c9e1f7;
+}
+
 .analysis-embedded .message-head-title {
   gap: 5px;
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .analysis-embedded .message-head-title > span:last-child {
   color: #283832;
-  font-size: 13px;
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .analysis-embedded .monitor-head-children {
@@ -929,6 +949,26 @@ button, input, select { letter-spacing: 0; }
   border-left-color: #b7791f;
 }
 
+.analysis-embedded .current-signal-list .message-item.high-quality {
+  background: #eaf4ff;
+  border-left-color: #3b82c4;
+}
+
+.analysis-embedded .current-signal-list .message-item.high-quality.selected {
+  background: #dceeff;
+  border-left-color: #256da8;
+}
+
+.analysis-embedded .current-signal-list .message-item.pullback {
+  background: #eaf4ff;
+  border-left-color: #3b82c4;
+}
+
+.analysis-embedded .current-signal-list .message-item.pullback.selected {
+  background: #dceeff;
+  border-left-color: #256da8;
+}
+
 .analysis-embedded .monitor-message-list .message-item.selected {
   background: #eef6f2;
   border-left-color: #0c7a5a;
@@ -947,10 +987,10 @@ button, input, select { letter-spacing: 0; }
 
 .analysis-embedded .monitor-tag,
 .analysis-embedded .score-detail-trigger {
-  min-height: 20px;
-  padding: 3px 6px;
+  min-height: 24px;
+  padding: 4px 8px;
   border-radius: 3px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -971,9 +1011,11 @@ button, input, select { letter-spacing: 0; }
 }
 
 .analysis-embedded .monitor-message-footer time {
-  color: #7c8884;
+  color: #394842;
   font-family: Consolas, monospace;
-  font-size: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
 }
 
 .analysis-embedded .monitor-message-footer .message-card-actions { gap: 5px; }
@@ -982,7 +1024,7 @@ button, input, select { letter-spacing: 0; }
   min-height: 27px;
   padding: 4px 9px;
   border-radius: 3px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .analysis-embedded .monitor-message-list .monitor-close-button {
