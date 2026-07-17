@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import multiprocessing
 import os
 
 
@@ -22,7 +21,7 @@ def _bool_env(name: str, default: bool) -> bool:
 
 
 bind = os.getenv("GUNICORN_BIND", f"0.0.0.0:{os.getenv('PORT', '8010')}")
-workers = _int_env("GUNICORN_WORKERS", multiprocessing.cpu_count() * 2 + 1)
+workers = _int_env("GUNICORN_WORKERS", 2)
 worker_class = os.getenv("GUNICORN_WORKER_CLASS", "uvicorn.workers.UvicornWorker")
 
 request_timeout = _int_env("REQUEST_TIMEOUT_SECONDS", 90)
