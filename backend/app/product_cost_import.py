@@ -103,3 +103,57 @@ def parse_product_cost_excel(content: bytes) -> tuple[list[dict[str, Any]], list
         except (IndexError, ValueError) as exc:
             issues.append(ProductCostImportIssue(row_number, str(exc)))
     return items, issues
+
+
+def parse_contract_specs_excel(content: bytes) -> tuple[list[dict[str, Any]], list[ProductCostImportIssue]]:
+    """Parse the full contract-parameter workbook used by the admin screen."""
+    workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    sheet = workbook.active
+    rows = sheet.iter_rows(values_only=True)
+    header_row = next(rows, None)
+    if header_row is None:
+        return [], [ProductCostImportIssue(1, "Excel为空")]
+    columns = {_header(value): index for index, value in enumerate(header_row)}
+    required = {"品种", "名称", "合约乘数", "最小变动", "保证金率", "手续费"}
+    missing = sorted(required - set(columns))
+    if missing:
+        return [], [ProductCostImportIssue(1, f"缺少列：{'、'.join(missing)}")]
+
+    items: list[dict[str, Any]] = []
+    issues: list[ProductCostImportIssue] = []
+    for row_number, row in enumerate(rows, start=2):
+        if not any(value is not None and str(value).strip() for value in row):
+            continue
+        try:
+            raw_symbol = str(row[columns["品种"]] or "").strip()
+            symbol = contract_to_variety(raw_symbol)
+            if symbol is None:
+                raise ValueError("品种不是有效期货品种代码")
+            multiplier = _decimal(row[columns["合约乘数"]])
+            price_tick = _decimal(row[columns["最小变动"]])
+            margin_rate = _decimal(row[columns["保证金率"]])
+            if multiplier <= 0:
+                raise ValueError("合约乘数必须大于 0")
+            if price_tick <= 0:
+                raise ValueError("最小变动必须大于 0")
+            if margin_rate > 1 and margin_rate <= 100:
+                margin_rate /= Decimal("100")
+            if margin_rate <= 0 or margin_rate > 1:
+                raise ValueError("保证金率必须在 0 到 1 之间")
+            fees = parse_fee_description(row[columns["手续费"]])
+            items.append({
+                "symbol": symbol.lower(),
+                "exchange": symbol.split(".", 1)[0],
+                "name": str(row[columns["名称"]] or "").strip(),
+                "multiplier": multiplier,
+                "price_tick": price_tick,
+                "margin_rate": margin_rate,
+                "fee_mode": fees["fee_mode"],
+                "fee_value": fees["fee_value"],
+                "fee_close_today_mode": fees["fee_close_today_mode"],
+                "fee_close_today_value": fees["fee_close_today_value"],
+                "enabled": True,
+            })
+        except (IndexError, ValueError) as exc:
+            issues.append(ProductCostImportIssue(row_number, str(exc)))
+    return items, issues

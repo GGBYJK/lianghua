@@ -11,7 +11,7 @@ from fastapi import APIRouter, Cookie, Depends, File, HTTPException, Query, Resp
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .market_client import MarketApiError, contract_to_variety, fetch_kline_from_market, fetch_tqsdk_contract_details
-from .product_cost_import import parse_product_cost_excel
+from .product_cost_import import parse_contract_specs_excel
 from .security import (
     REFRESH_TOKEN_DAYS,
     create_access_token,
@@ -64,8 +64,8 @@ from .trading_store import (
     revoke_refresh_session,
     update_user,
     upsert_contract_spec,
+    upsert_contract_specs,
     upsert_market_snapshot,
-    upsert_product_cost_templates,
 )
 from .watch_pool_store import WatchPoolStoreError, list_contract_center_items
 
@@ -367,12 +367,12 @@ def product_details(
 @router.post("/admin/product-costs/import")
 async def import_product_costs(
     file: UploadFile = File(...),
-    _: dict[str, Any] = Depends(require_permission("contracts.manage")),
+    user: dict[str, Any] = Depends(require_permission("contracts.manage")),
 ) -> dict[str, Any]:
     if not (file.filename or "").lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="请上传 .xlsx 格式的 Excel 文件")
-    items, issues = parse_product_cost_excel(await file.read())
-    imported = upsert_product_cost_templates(items)
+    items, issues = parse_contract_specs_excel(await file.read())
+    imported = upsert_contract_specs(int(user["id"]), items)
     return {
         "imported": imported,
         "errors": [{"row": issue.row, "reason": issue.reason} for issue in issues],

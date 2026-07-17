@@ -286,6 +286,24 @@ def upsert_contract_spec(actor_user_id: int, payload: dict[str, Any]) -> dict[st
     return spec
 
 
+def upsert_contract_specs(actor_user_id: int, payloads: list[dict[str, Any]]) -> int:
+    if not payloads:
+        return 0
+    with get_engine().begin() as connection:
+        for payload in payloads:
+            symbol = product_symbol(payload["symbol"])
+            values = {**payload, "symbol": symbol, "enabled": True}
+            existing = connection.execute(select(contract_specs.c.symbol).where(contract_specs.c.symbol == symbol)).first()
+            if existing is None:
+                connection.execute(insert(contract_specs).values(**values))
+                action = "CONTRACT_CREATE"
+            else:
+                connection.execute(update(contract_specs).where(contract_specs.c.symbol == symbol).values(**values))
+                action = "CONTRACT_UPDATE"
+            write_audit(connection, actor_user_id, action, "CONTRACT", symbol, values)
+    return len(payloads)
+
+
 def get_contract_spec(symbol: str) -> dict[str, Any] | None:
     with get_engine().connect() as connection:
         row = connection.execute(select(contract_specs).where(contract_specs.c.symbol == product_symbol(symbol))).mappings().first()
