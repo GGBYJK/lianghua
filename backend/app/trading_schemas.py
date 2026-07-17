@@ -38,13 +38,13 @@ class ContractSpecRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=40)
     exchange: str = Field(min_length=1, max_length=16)
     name: str = Field(default="", max_length=80)
-    multiplier: Decimal = Field(gt=0)
+    multiplier: Decimal = Field(default=Decimal("1"), gt=0)
     price_tick: Decimal = Field(gt=0)
     margin_rate: Decimal = Field(gt=0, le=1)
-    fee_open_rate: Decimal = Field(default=Decimal("0"), ge=0)
-    fee_close_rate: Decimal = Field(default=Decimal("0"), ge=0)
-    fee_open_fixed: Decimal = Field(default=Decimal("0"), ge=0)
-    fee_close_fixed: Decimal = Field(default=Decimal("0"), ge=0)
+    fee_mode: Literal["TURNOVER_RATE", "PER_LOT"] = "TURNOVER_RATE"
+    fee_value: Decimal = Field(default=Decimal("0"), ge=0)
+    fee_close_today_mode: Literal["TURNOVER_RATE", "PER_LOT"] | None = None
+    fee_close_today_value: Decimal | None = Field(default=None, ge=0)
     enabled: bool = True
 
 

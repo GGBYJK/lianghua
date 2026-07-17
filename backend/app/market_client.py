@@ -137,6 +137,10 @@ def _fetch_kline_from_tqsdk_market_sync(symbol: str, period: str, limit: int = 1
     return get_tqsdk_service().get_kline(tq_symbol=tq_symbol, duration_seconds=duration_seconds, limit=limit)
 
 
+def fetch_tqsdk_contract_details(symbol: str) -> dict[str, Any]:
+    return get_tqsdk_service().get_contract_details(normalize_tqsdk_symbol(symbol))
+
+
 class TqSdkMarketService:
     def __init__(self) -> None:
         self._command_queue: queue.Queue[tuple[str, tuple[Any, ...], concurrent.futures.Future[Any]]] = queue.Queue()
@@ -169,6 +173,17 @@ class TqSdkMarketService:
         except concurrent.futures.TimeoutError as exc:
             future.cancel()
             raise MarketApiError("TqSdk 合约列表查询超时") from exc
+
+    def get_contract_details(self, tq_symbol: str) -> dict[str, Any]:
+        self.start()
+        future: concurrent.futures.Future[dict[str, Any]] = concurrent.futures.Future()
+        self._command_queue.put(("get_contract_details", (tq_symbol,), future))
+        timeout = float(os.getenv("TQ_REQUEST_TIMEOUT", os.getenv("TQ_TIMEOUT", "30")))
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError as exc:
+            future.cancel()
+            raise MarketApiError(f"TqSdk 合约资料查询超时：{tq_symbol}") from exc
 
     def start(self) -> None:
         with self._start_lock:
@@ -240,6 +255,13 @@ class TqSdkMarketService:
                     exchanges = args[0]
                     if not future.done():
                         future.set_result(query_main_and_sub_contracts_from_api(api, exchanges=exchanges))
+                if command == "get_contract_details":
+                    tq_symbol = args[0]
+                    self._ensure_contract_listed(api, tq_symbol)
+                    quote = api.get_quote(tq_symbol)
+                    api.wait_update(deadline=time.time() + float(os.getenv("TQ_DETAIL_TIMEOUT", "3")))
+                    if not future.done():
+                        future.set_result(tqsdk_contract_details_from_quote(quote, tq_symbol))
             except BaseException as exc:
                 if not future.done():
                     future.set_exception(exc)
@@ -616,6 +638,26 @@ def contract_to_variety(contract: str) -> str | None:
     if not match:
         return None
     return f"{exchange.upper()}.{match.group(1)}"
+
+
+def tqsdk_contract_details_from_quote(quote: Any, symbol: str) -> dict[str, Any]:
+    variety = contract_to_variety(symbol)
+    if variety is None:
+        raise MarketApiError(f"无法识别期货品种：{symbol}")
+    exchange, product = variety.split(".", 1)
+    multiplier = getattr(quote, "volume_multiple", None)
+    price_tick = getattr(quote, "price_tick", None)
+    if multiplier is None or price_tick is None or float(multiplier) <= 0 or float(price_tick) <= 0:
+        raise MarketApiError(f"未取得 {symbol} 的合约乘数或最小变动价位")
+    name = str(getattr(quote, "ins_name", "") or product).strip()
+    name = re.sub(r"\d+$", "", name).strip() or product
+    return {
+        "symbol": variety.lower(),
+        "exchange": exchange,
+        "name": name,
+        "multiplier": multiplier,
+        "price_tick": price_tick,
+    }
 
 
 def query_tqsdk_contracts_from_api(api: Any, exchanges: list[str]) -> list[str]:

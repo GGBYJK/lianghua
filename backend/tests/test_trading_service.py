@@ -9,6 +9,7 @@ import app.trading_service as trading_service
 from app.security import hash_password, verify_password
 from app.trading_service import (
     QUOTE_STALE_SECONDS,
+    _fee,
     _fill_price,
     _rule_triggered,
     _validate_exit_prices,
@@ -114,6 +115,31 @@ def test_trade_signals_are_sorted_by_detection_time_descending(monkeypatch: pyte
 def test_market_fill_applies_adverse_slippage() -> None:
     assert _fill_price(Decimal("100"), "BUY", Decimal("0.5"), Decimal("1"))[0] == Decimal("100.5")
     assert _fill_price(Decimal("100"), "SELL", Decimal("0.5"), Decimal("1"))[0] == Decimal("99.5")
+
+
+def test_turnover_rate_fee_uses_trade_value() -> None:
+    spec = {"multiplier": Decimal("10"), "fee_mode": "TURNOVER_RATE", "fee_value": Decimal("0.0005")}
+
+    assert _fee(Decimal("100"), 2, spec, "OPEN") == Decimal("1")
+
+
+def test_per_lot_fee_uses_quantity_only() -> None:
+    spec = {"multiplier": Decimal("10"), "fee_mode": "PER_LOT", "fee_value": Decimal("3.2")}
+
+    assert _fee(Decimal("100"), 2, spec, "CLOSE") == Decimal("6.4")
+
+
+def test_close_today_fee_uses_the_special_fee_when_configured() -> None:
+    spec = {
+        "multiplier": Decimal("10"),
+        "fee_mode": "TURNOVER_RATE",
+        "fee_value": Decimal("0.000075"),
+        "fee_close_today_mode": "TURNOVER_RATE",
+        "fee_close_today_value": Decimal("0.00015"),
+    }
+
+    assert _fee(Decimal("100"), 2, spec, "CLOSE") == Decimal("0.15")
+    assert _fee(Decimal("100"), 2, spec, "CLOSE_TODAY") == Decimal("0.3")
 
 
 def test_exit_prices_must_be_on_correct_side() -> None:

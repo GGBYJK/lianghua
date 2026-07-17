@@ -149,11 +149,26 @@ contract_specs = Table(
     Column("multiplier", money_type, nullable=False),
     Column("price_tick", money_type, nullable=False),
     Column("margin_rate", money_type, nullable=False),
-    Column("fee_open_rate", money_type, nullable=False, server_default="0"),
-    Column("fee_close_rate", money_type, nullable=False, server_default="0"),
-    Column("fee_open_fixed", money_type, nullable=False, server_default="0"),
-    Column("fee_close_fixed", money_type, nullable=False, server_default="0"),
+    Column("fee_mode", String(24), nullable=False, server_default="TURNOVER_RATE"),
+    Column("fee_value", money_type, nullable=False, server_default="0"),
+    Column("fee_close_today_mode", String(24), nullable=True),
+    Column("fee_close_today_value", money_type, nullable=True),
     Column("enabled", Boolean, nullable=False, server_default="1"),
+    Column("updated_at", DateTime, nullable=False, server_default=func.now(), onupdate=func.now()),
+)
+
+product_cost_templates = Table(
+    "product_cost_templates",
+    metadata,
+    Column("symbol", String(40), primary_key=True),
+    Column("exchange", String(16), nullable=False),
+    Column("name", String(80), nullable=False, server_default=""),
+    Column("margin_rate", money_type, nullable=False),
+    Column("fee_mode", String(24), nullable=False),
+    Column("fee_value", money_type, nullable=False),
+    Column("fee_close_today_mode", String(24), nullable=True),
+    Column("fee_close_today_value", money_type, nullable=True),
+    Column("fee_description", Text, nullable=False),
     Column("updated_at", DateTime, nullable=False, server_default=func.now(), onupdate=func.now()),
 )
 

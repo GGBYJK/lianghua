@@ -7,6 +7,9 @@ import type {
   PaperOrder,
   PlatformUser,
   PositionLot,
+  ProductCatalogItem,
+  ProductCostImportResult,
+  ProductDetails,
   TradeSignal,
   BacktestOrdersResponse,
   BacktestRequest,
@@ -101,6 +104,13 @@ export const platformApi = {
   orders: () => request<PaperOrder[]>("/api/trading/orders?limit=200"),
   ledger: () => request<LedgerEntry[]>("/api/trading/ledger?limit=200"),
   contracts: () => request<ContractSpec[]>("/api/trading/contracts"),
+  products: () => request<ProductCatalogItem[]>("/api/trading/products"),
+  productDetails: (symbol: string) => request<ProductDetails>(`/api/trading/products/details?symbol=${encodeURIComponent(symbol)}`),
+  importProductCosts: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request<ProductCostImportResult>("/api/admin/product-costs/import", { method: "POST", body });
+  },
   quotes: (symbols: string[]) => request<MarketQuote[]>(`/api/trading/quotes?symbols=${encodeURIComponent(symbols.join(","))}`),
   users: () => request<PlatformUser[]>("/api/admin/users"),
   openSignal: (signalId: string, payload: Record<string, unknown>) => request<PaperOrder>(`/api/trading/signals/${signalId}/open`, {

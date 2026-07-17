@@ -7,10 +7,11 @@ from decimal import Decimal
 from typing import Any, Callable
 
 import jwt
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Cookie, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from .market_client import MarketApiError, fetch_kline_from_market
+from .market_client import MarketApiError, contract_to_variety, fetch_kline_from_market, fetch_tqsdk_contract_details
+from .product_cost_import import parse_product_cost_excel
 from .security import (
     REFRESH_TOKEN_DAYS,
     create_access_token,
@@ -48,6 +49,7 @@ from .trading_store import (
     create_user,
     get_account_summary,
     get_market_snapshot,
+    get_product_cost_template,
     get_user,
     list_audit_logs,
     list_contract_specs,
@@ -63,8 +65,9 @@ from .trading_store import (
     update_user,
     upsert_contract_spec,
     upsert_market_snapshot,
+    upsert_product_cost_templates,
 )
-from .watch_pool_store import WatchPoolStoreError
+from .watch_pool_store import WatchPoolStoreError, list_contract_center_items
 
 
 router = APIRouter(prefix="/api")
@@ -318,6 +321,62 @@ def update_exit_rules(
 @router.get("/trading/contracts")
 def contract_spec_list(_: dict[str, Any] = Depends(require_permission("market.read"))) -> list[dict[str, Any]]:
     return list_contract_specs()
+
+
+@router.get("/trading/products")
+def product_catalog(_: dict[str, Any] = Depends(require_permission("market.read"))) -> list[dict[str, str]]:
+    products: dict[str, dict[str, str]] = {}
+    for item in list_contract_center_items():
+        product = contract_to_variety(item["symbol"])
+        if product is None:
+            continue
+        normalized = product.lower()
+        products.setdefault(normalized, {
+            "symbol": normalized,
+            "exchange": item["exchange"],
+            "name": product.split(".", 1)[1],
+            "representative_symbol": item["symbol"],
+        })
+    return [products[symbol] for symbol in sorted(products)]
+
+
+@router.get("/trading/products/details")
+def product_details(
+    symbol: str = Query(min_length=1, max_length=40),
+    _: dict[str, Any] = Depends(require_permission("market.read")),
+) -> dict[str, Any]:
+    try:
+        details = fetch_tqsdk_contract_details(symbol)
+        template = get_product_cost_template(details["symbol"])
+        if template is None:
+            return details
+        return {
+            **details,
+            "name": template["name"] or details["name"],
+            "margin_rate": template["margin_rate"],
+            "fee_mode": template["fee_mode"],
+            "fee_value": template["fee_value"],
+            "fee_close_today_mode": template["fee_close_today_mode"],
+            "fee_close_today_value": template["fee_close_today_value"],
+            "fee_description": template["fee_description"],
+        }
+    except MarketApiError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/admin/product-costs/import")
+async def import_product_costs(
+    file: UploadFile = File(...),
+    _: dict[str, Any] = Depends(require_permission("contracts.manage")),
+) -> dict[str, Any]:
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="请上传 .xlsx 格式的 Excel 文件")
+    items, issues = parse_product_cost_excel(await file.read())
+    imported = upsert_product_cost_templates(items)
+    return {
+        "imported": imported,
+        "errors": [{"row": issue.row, "reason": issue.reason} for issue in issues],
+    }
 
 
 @router.put("/admin/contracts/{symbol}")

@@ -28,6 +28,7 @@ from app.market_client import (
     normalize_tushare_symbol_row,
     _fetch_kline_from_aliyun_market_sync,
     tqsdk_dataframe_to_kline,
+    tqsdk_contract_details_from_quote,
     aggregate_exchange_hourly_bars,
     aggregate_exchange_daily_bars,
     tqsdk_symbol_hints,
@@ -590,6 +591,21 @@ def test_listed_futures_contract_filter_excludes_options() -> None:
     assert is_listed_futures_contract("CZCE.IPS SF609&SM609") is False
     assert is_listed_futures_contract("CZCE.RM409-C-3000") is False
     assert is_listed_futures_contract("SHFE.Cu2401C50000") is False
+
+
+def test_tqsdk_contract_details_are_normalized_to_product() -> None:
+    class FakeQuote:
+        volume_multiple = 10
+        price_tick = 1
+        ins_name = "豆粕2609"
+
+    assert tqsdk_contract_details_from_quote(FakeQuote(), "DCE.m2609") == {
+        "symbol": "dce.m",
+        "exchange": "DCE",
+        "name": "豆粕",
+        "multiplier": 10,
+        "price_tick": 1,
+    }
 
 
 def test_tqsdk_subscription_rejects_unlisted_contract() -> None:

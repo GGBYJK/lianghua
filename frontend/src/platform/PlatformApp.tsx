@@ -1,4 +1,4 @@
-import React, { createContext, lazy, Suspense, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, lazy, Suspense, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
@@ -41,6 +41,7 @@ import {
   Trash2,
   TrendingDown,
   TrendingUp,
+  Upload,
   UserRoundCog,
   WalletCards,
   Zap,
@@ -50,7 +51,7 @@ import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } 
 import { login, logout, platformApi, restoreSession } from "./api";
 import { deleteAlertFeedback, listAlertFeedbacks, listContracts, refreshContracts, updateContracts } from "../api";
 import type { AlertFeedback, ContractCenterItem, ContractCenterRefresh } from "../types";
-import type { ContractSpec, LedgerEntry, PaperOrder, PlatformUser, PositionLot, TradeSignal } from "./types";
+import type { ContractSpec, LedgerEntry, PaperOrder, PlatformUser, PositionLot, ProductCatalogItem, TradeSignal } from "./types";
 import { apiTimestampToMs, formatApiDateTime, formatMarketDateTime } from "../time";
 import "./platform.css";
 
@@ -237,7 +238,7 @@ function PlatformLayout() {
   const settingsChildren = [
     { key: "/settings/feedback", icon: <MessageSquareText size={16} />, label: "反馈列表" },
     { key: "/settings/contracts", icon: <Database size={16} />, label: "合约中心" },
-    ...(user?.permissions.includes("contracts.manage") ? [{ key: "/admin/contracts", icon: <Settings2 size={16} />, label: "交易合约参数" }] : []),
+    ...(user?.permissions.includes("contracts.manage") ? [{ key: "/admin/contracts", icon: <Settings2 size={16} />, label: "交易品种参数" }] : []),
   ];
   const items = [
     { key: "/", icon: <BarChart3 size={18} />, label: "信号交易池" },
@@ -711,22 +712,82 @@ function ContractsPage() {
   const [editing, setEditing] = useState<ContractSpec | null>(null);
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
+  const costFileInput = useRef<HTMLInputElement>(null);
+  const feeMode = Form.useWatch("fee_mode", form) || "TURNOVER_RATE";
+  const closeTodayFeeMode = Form.useWatch("fee_close_today_mode", form) as "TURNOVER_RATE" | "PER_LOT" | undefined;
+  const selectedProduct = Form.useWatch("symbol", form) as string | undefined;
   const query = useQuery({ queryKey: ["contracts"], queryFn: platformApi.contracts });
-  const mutation = useMutation({ mutationFn: (values: Record<string, unknown>) => platformApi.saveContract(String(values.symbol), values), onSuccess: () => { api.success("合约参数已保存"); setOpen(false); setEditing(null); form.resetFields(); void queryClient.invalidateQueries({ queryKey: ["contracts"] }); }, onError: (error: Error) => api.error(error.message) });
+  const productsQuery = useQuery({ queryKey: ["trading-products"], queryFn: platformApi.products });
+  const selectedCatalogProduct = useMemo<ProductCatalogItem | undefined>(
+    () => productsQuery.data?.find((item) => item.symbol === selectedProduct),
+    [productsQuery.data, selectedProduct],
+  );
+  const productDetailsQuery = useQuery({
+    queryKey: ["trading-product-details", selectedCatalogProduct?.representative_symbol],
+    queryFn: () => platformApi.productDetails(selectedCatalogProduct!.representative_symbol),
+    enabled: open && !editing && Boolean(selectedCatalogProduct),
+  });
+  useEffect(() => {
+    if (!editing && productDetailsQuery.data) {
+      const details = productDetailsQuery.data;
+      form.setFieldsValue({
+        exchange: details.exchange,
+        name: details.name,
+        multiplier: Number(details.multiplier),
+        price_tick: Number(details.price_tick),
+        margin_rate: details.margin_rate == null ? undefined : Number(details.margin_rate),
+        fee_mode: details.fee_mode,
+        fee_value: details.fee_value == null ? undefined : (details.fee_mode === "TURNOVER_RATE" ? Number(details.fee_value) * 100 : Number(details.fee_value)),
+        fee_close_today_mode: details.fee_close_today_mode || undefined,
+        fee_close_today_value: details.fee_close_today_value == null ? undefined : (details.fee_close_today_mode === "TURNOVER_RATE" ? Number(details.fee_close_today_value) * 100 : Number(details.fee_close_today_value)),
+      });
+    }
+  }, [editing, form, productDetailsQuery.data]);
+  const mutation = useMutation({ mutationFn: (values: Record<string, unknown>) => {
+    const feeMode = String(values.fee_mode);
+    const closeTodayFeeMode = values.fee_close_today_mode ? String(values.fee_close_today_mode) : null;
+    return platformApi.saveContract(String(values.symbol), {
+      ...values,
+      fee_value: feeMode === "TURNOVER_RATE" ? Number(values.fee_value || 0) / 100 : values.fee_value,
+      fee_close_today_mode: closeTodayFeeMode,
+      fee_close_today_value: closeTodayFeeMode
+        ? (closeTodayFeeMode === "TURNOVER_RATE" ? Number(values.fee_close_today_value || 0) / 100 : values.fee_close_today_value)
+        : null,
+    });
+  }, onSuccess: () => { api.success("品种参数已保存"); setOpen(false); setEditing(null); form.resetFields(); void queryClient.invalidateQueries({ queryKey: ["contracts"] }); }, onError: (error: Error) => api.error(error.message) });
+  const importMutation = useMutation({
+    mutationFn: platformApi.importProductCosts,
+    onSuccess: (result) => {
+      api.success(`已导入 ${result.imported} 个品种的保证金及手续费`);
+      if (result.errors.length) api.warning(`${result.errors.length} 行未能识别`);
+      void queryClient.invalidateQueries({ queryKey: ["trading-product-details"] });
+    },
+    onError: (error: Error) => api.error(error.message),
+  });
   function edit(row?: ContractSpec) {
     setEditing(row || null); setOpen(true);
-    form.setFieldsValue(row ? { ...row, margin_rate: Number(row.margin_rate), multiplier: Number(row.multiplier), price_tick: Number(row.price_tick), fee_open_rate: Number(row.fee_open_rate), fee_close_rate: Number(row.fee_close_rate), fee_open_fixed: Number(row.fee_open_fixed), fee_close_fixed: Number(row.fee_close_fixed) } : { enabled: true, margin_rate: 0.12, multiplier: 10, price_tick: 1, fee_open_rate: 0, fee_close_rate: 0, fee_open_fixed: 0, fee_close_fixed: 0 });
+    form.setFieldsValue(row ? {
+      ...row,
+      margin_rate: Number(row.margin_rate),
+      multiplier: Number(row.multiplier),
+      price_tick: Number(row.price_tick),
+      fee_value: row.fee_mode === "TURNOVER_RATE" ? Number(row.fee_value) * 100 : Number(row.fee_value),
+      fee_close_today_mode: row.fee_close_today_mode || undefined,
+      fee_close_today_value: row.fee_close_today_value == null ? undefined : (row.fee_close_today_mode === "TURNOVER_RATE" ? Number(row.fee_close_today_value) * 100 : Number(row.fee_close_today_value)),
+    } : { enabled: true, margin_rate: 0.12, multiplier: 1, price_tick: 1, fee_mode: "TURNOVER_RATE", fee_value: 0, fee_close_today_mode: undefined, fee_close_today_value: undefined });
   }
   const columns: ColumnsType<ContractSpec> = [
-    { title: "合约", dataIndex: "symbol", render: (value) => <strong>{String(value).toUpperCase()}</strong> },
+    { title: "品种", dataIndex: "symbol", render: (value) => <strong>{String(value).toUpperCase()}</strong> },
     { title: "交易所", dataIndex: "exchange" }, { title: "名称", dataIndex: "name" },
-    { title: "乘数", dataIndex: "multiplier", align: "right", render: price },
+    { title: "合约乘数", dataIndex: "multiplier", align: "right", render: price },
     { title: "最小变动", dataIndex: "price_tick", align: "right", render: price },
     { title: "保证金率", dataIndex: "margin_rate", align: "right", render: (value) => `${(Number(value) * 100).toFixed(2)}%` },
+    { title: "手续费", render: (_, row) => row.fee_mode === "TURNOVER_RATE" ? `${(Number(row.fee_value) * 100).toLocaleString("zh-CN", { maximumFractionDigits: 6 })}%` : `${money(row.fee_value)} 元/手` },
+    { title: "平今/日内", render: (_, row) => !row.fee_close_today_mode ? "--" : row.fee_close_today_mode === "TURNOVER_RATE" ? `${(Number(row.fee_close_today_value) * 100).toLocaleString("zh-CN", { maximumFractionDigits: 6 })}%` : `${money(row.fee_close_today_value)} 元/手` },
     { title: "状态", dataIndex: "enabled", render: (value) => value ? <Tag color="success">启用</Tag> : <Tag>停用</Tag> },
     { title: "操作", render: (_, row) => <Button size="small" onClick={() => edit(row)}>编辑</Button> },
   ];
-  return <div className="desk-page">{contextHolder}<PageTitle kicker="CONTRACT RISK DATA" title="合约参数" action={<Button type="primary" onClick={() => edit()}>新增合约</Button>} /><Alert showIcon type="info" message="只有配置了合约乘数、最小变动价位、保证金率和手续费的合约才能模拟成交。" /><section className="table-section"><Table rowKey="symbol" columns={columns} dataSource={query.data || []} loading={query.isLoading} pagination={false} /></section><Modal width={680} title={editing ? "编辑合约参数" : "新增合约参数"} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} confirmLoading={mutation.isPending}><Form form={form} layout="vertical" onFinish={(values) => mutation.mutate(values)}><div className="form-grid three"><Form.Item name="symbol" label="合约代码" rules={[{ required: true }]}><Input disabled={Boolean(editing)} /></Form.Item><Form.Item name="exchange" label="交易所" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="name" label="合约名称"><Input /></Form.Item></div><div className="form-grid three"><Form.Item name="multiplier" label="合约乘数"><InputNumber min={0.0001} className="full-input" /></Form.Item><Form.Item name="price_tick" label="最小变动价位"><InputNumber min={0.0001} className="full-input" /></Form.Item><Form.Item name="margin_rate" label="保证金率"><InputNumber min={0.0001} max={1} step={0.01} className="full-input" /></Form.Item></div><div className="form-grid"><Form.Item name="fee_open_rate" label="开仓费率"><InputNumber min={0} className="full-input" /></Form.Item><Form.Item name="fee_close_rate" label="平仓费率"><InputNumber min={0} className="full-input" /></Form.Item><Form.Item name="fee_open_fixed" label="每手开仓费"><InputNumber min={0} className="full-input" /></Form.Item><Form.Item name="fee_close_fixed" label="每手平仓费"><InputNumber min={0} className="full-input" /></Form.Item></div><Form.Item name="enabled" label="启用" valuePropName="checked"><Switch /></Form.Item></Form></Modal></div>;
+  return <div className="desk-page">{contextHolder}<PageTitle kicker="PRODUCT RISK DATA" title="品种参数" action={<Space><input ref={costFileInput} type="file" accept=".xlsx" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) importMutation.mutate(file); event.target.value = ""; }} /><Button icon={<Upload size={16} />} loading={importMutation.isPending} onClick={() => costFileInput.current?.click()}>保证金及手续费</Button><Button type="primary" onClick={() => edit()}>新增品种</Button></Space>} /><Alert showIcon type="info" message="选择品种后自动填入交易所、名称、合约乘数、最小变动价位、保证金率和手续费。同一品种的全部月份合约共用该标准。" /><section className="table-section"><Table rowKey="symbol" columns={columns} dataSource={query.data || []} loading={query.isLoading} pagination={false} /></section><Modal width={760} title={editing ? "编辑品种参数" : "新增品种参数"} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} confirmLoading={mutation.isPending}><Form form={form} layout="vertical" onFinish={(values) => mutation.mutate(values)}><div className="form-grid three"><Form.Item name="symbol" label="品种" rules={[{ required: true }]}><Select showSearch optionFilterProp="label" loading={productsQuery.isLoading} disabled={Boolean(editing)} options={(productsQuery.data || []).map((item) => ({ value: item.symbol, label: `${item.symbol.toUpperCase()} · ${item.name}` }))} onChange={(value) => { const item = productsQuery.data?.find((product) => product.symbol === value); form.setFieldsValue({ exchange: item?.exchange, name: item?.name, multiplier: undefined, price_tick: undefined, margin_rate: undefined, fee_mode: undefined, fee_value: undefined, fee_close_today_mode: undefined, fee_close_today_value: undefined }); }} /></Form.Item><Form.Item name="exchange" label="交易所" rules={[{ required: true }]}><Input disabled /></Form.Item><Form.Item name="name" label="品种名称"><Input disabled /></Form.Item></div>{productDetailsQuery.isError ? <Alert showIcon type="warning" message="未能自动读取合约规格，可手工填写乘数和最小变动价位" description={productDetailsQuery.error.message} /> : null}<div className="form-grid three"><Form.Item name="multiplier" label="合约乘数" rules={[{ required: true }]}><InputNumber min={0.0001} className="full-input" /></Form.Item><Form.Item name="price_tick" label="最小变动价位" rules={[{ required: true }]}><InputNumber min={0.0001} className="full-input" /></Form.Item><Form.Item name="margin_rate" label="保证金率" rules={[{ required: true }]}><InputNumber min={0.0001} max={1} step={0.01} className="full-input" /></Form.Item></div><div className="form-grid"><Form.Item name="fee_mode" label="开/平仓手续费方式" rules={[{ required: true }]}><Select options={[{ value: "TURNOVER_RATE", label: "按成交额比例" }, { value: "PER_LOT", label: "按每手固定金额" }]} /></Form.Item><Form.Item name="fee_value" label={feeMode === "TURNOVER_RATE" ? "开/平仓手续费率" : "开/平仓每手手续费"} rules={[{ required: true }]}><InputNumber min={0} step={feeMode === "TURNOVER_RATE" ? 0.0001 : 0.01} addonAfter={feeMode === "TURNOVER_RATE" ? "%" : "元/手"} className="full-input" /></Form.Item></div><div className="form-grid"><Form.Item name="fee_close_today_mode" label="平今/日内手续费方式"><Select allowClear placeholder="无特殊平今/日内费率" options={[{ value: "TURNOVER_RATE", label: "按成交额比例" }, { value: "PER_LOT", label: "按每手固定金额" }]} /></Form.Item><Form.Item name="fee_close_today_value" label={closeTodayFeeMode === "TURNOVER_RATE" ? "平今/日内手续费率" : "平今/日内每手手续费"} rules={closeTodayFeeMode ? [{ required: true }] : []}><InputNumber disabled={!closeTodayFeeMode} min={0} step={closeTodayFeeMode === "TURNOVER_RATE" ? 0.0001 : 0.01} addonAfter={closeTodayFeeMode === "TURNOVER_RATE" ? "%" : "元/手"} className="full-input" /></Form.Item></div><Form.Item name="enabled" label="启用" valuePropName="checked"><Switch /></Form.Item></Form></Modal></div>;
 }
 
 function PageTitle({ kicker, title, action }: { kicker: string; title: string; action?: React.ReactNode }) {

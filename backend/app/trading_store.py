@@ -9,6 +9,7 @@ from uuid import uuid4
 from sqlalchemy import and_, delete, desc, func, insert, select, update
 from sqlalchemy.exc import IntegrityError
 
+from .market_client import contract_to_variety
 from .security import hash_password, verify_password
 from .trading_db import (
     account_ledger,
@@ -20,6 +21,7 @@ from .trading_db import (
     orders,
     paper_accounts,
     permissions,
+    product_cost_templates,
     position_exit_rules,
     position_lots,
     refresh_sessions,
@@ -37,6 +39,11 @@ class TradingStoreError(RuntimeError):
 
 def _decimal(value: Any) -> Decimal:
     return value if isinstance(value, Decimal) else Decimal(str(value or 0))
+
+
+def product_symbol(symbol: str) -> str:
+    normalized = symbol.strip()
+    return (contract_to_variety(normalized) or normalized).lower()
 
 
 def provider_symbol(symbol: str) -> str:
@@ -262,7 +269,7 @@ def adjust_account(actor_user_id: int, user_id: int, amount: Decimal, descriptio
 
 
 def upsert_contract_spec(actor_user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-    symbol = payload["symbol"].strip().lower()
+    symbol = product_symbol(payload["symbol"])
     values = {**payload, "symbol": symbol}
     with get_engine().begin() as connection:
         existing = connection.execute(select(contract_specs.c.symbol).where(contract_specs.c.symbol == symbol)).first()
@@ -281,7 +288,7 @@ def upsert_contract_spec(actor_user_id: int, payload: dict[str, Any]) -> dict[st
 
 def get_contract_spec(symbol: str) -> dict[str, Any] | None:
     with get_engine().connect() as connection:
-        row = connection.execute(select(contract_specs).where(contract_specs.c.symbol == symbol.strip().lower())).mappings().first()
+        row = connection.execute(select(contract_specs).where(contract_specs.c.symbol == product_symbol(symbol))).mappings().first()
         return with_utc_timestamps(dict(row), "updated_at") if row is not None else None
 
 
@@ -290,7 +297,36 @@ def list_contract_specs() -> list[dict[str, Any]]:
         return [
             with_utc_timestamps(dict(row), "updated_at")
             for row in connection.execute(select(contract_specs).order_by(contract_specs.c.symbol)).mappings()
+            if product_symbol(row["symbol"]) == row["symbol"]
         ]
+
+
+def get_product_cost_template(symbol: str) -> dict[str, Any] | None:
+    with get_engine().connect() as connection:
+        row = connection.execute(
+            select(product_cost_templates).where(product_cost_templates.c.symbol == product_symbol(symbol))
+        ).mappings().first()
+        return with_utc_timestamps(dict(row), "updated_at") if row is not None else None
+
+
+def upsert_product_cost_templates(items: list[dict[str, Any]]) -> int:
+    if not items:
+        return 0
+    with get_engine().begin() as connection:
+        for item in items:
+            values = {**item, "symbol": product_symbol(str(item["symbol"]))}
+            existing = connection.execute(
+                select(product_cost_templates.c.symbol).where(product_cost_templates.c.symbol == values["symbol"])
+            ).first()
+            if existing is None:
+                connection.execute(insert(product_cost_templates).values(**values))
+            else:
+                connection.execute(
+                    update(product_cost_templates)
+                    .where(product_cost_templates.c.symbol == values["symbol"])
+                    .values(**values)
+                )
+    return len(items)
 
 
 def upsert_market_snapshot(symbol: str, price: Decimal, source: str, market_time: datetime | None = None) -> None:
@@ -326,8 +362,7 @@ def list_market_snapshots(symbols: list[str]) -> list[dict[str, Any]]:
 
 def _position_rows(connection: Any, account_id: int) -> list[dict[str, Any]]:
     statement = (
-        select(position_lots, market_snapshots.c.last_price, market_snapshots.c.updated_at.label("quote_updated_at"), contract_specs.c.multiplier)
-        .join(contract_specs, contract_specs.c.symbol == position_lots.c.symbol)
+        select(position_lots, market_snapshots.c.last_price, market_snapshots.c.updated_at.label("quote_updated_at"))
         .outerjoin(market_snapshots, market_snapshots.c.symbol == position_lots.c.symbol)
         .where(and_(position_lots.c.account_id == account_id, position_lots.c.status == "OPEN"))
         .order_by(position_lots.c.opened_at)
@@ -335,8 +370,13 @@ def _position_rows(connection: Any, account_id: int) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for row in connection.execute(statement).mappings():
         item = dict(row)
+        spec = connection.execute(
+            select(contract_specs.c.multiplier).where(contract_specs.c.symbol == product_symbol(item["symbol"]))
+        ).mappings().first()
+        if spec is None:
+            continue
         latest = _decimal(item.get("last_price") or item["open_price"])
-        multiplier = _decimal(item["multiplier"])
+        multiplier = _decimal(spec["multiplier"])
         quantity = int(item["remaining_quantity"])
         open_price = _decimal(item["open_price"])
         pnl = (latest - open_price) * quantity * multiplier

@@ -28,6 +28,7 @@ from .backtest_store import (
 from .config import load_head_shoulder_config
 from .market_client import fetch_kline_from_market
 from .strategy import add_ma_columns, add_macd_columns, find_pivots, prepare_chart_payload, scan_head_shoulders
+from .market_client import contract_to_variety
 from .trading_service import DEFAULT_SLIPPAGE_TICKS, _fee, _fill_price, _round_price, decimal_value
 from .trading_store import get_contract_spec
 
@@ -75,8 +76,10 @@ def _signal_key(signal: dict[str, Any]) -> str:
 
 
 def _contract_for_symbol(symbol: str) -> dict[str, Any] | None:
-    candidates = [symbol, symbol.split(".")[-1]]
+    candidates = [contract_to_variety(symbol), symbol, symbol.split(".")[-1]]
     for candidate in candidates:
+        if not candidate:
+            continue
         spec = get_contract_spec(candidate)
         if spec and spec.get("enabled"):
             return spec

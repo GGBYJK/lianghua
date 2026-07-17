@@ -113,11 +113,37 @@ export type ContractSpec = {
   multiplier: Numeric;
   price_tick: Numeric;
   margin_rate: Numeric;
-  fee_open_rate: Numeric;
-  fee_close_rate: Numeric;
-  fee_open_fixed: Numeric;
-  fee_close_fixed: Numeric;
+  fee_mode: "TURNOVER_RATE" | "PER_LOT";
+  fee_value: Numeric;
+  fee_close_today_mode: "TURNOVER_RATE" | "PER_LOT" | null;
+  fee_close_today_value: Numeric | null;
   enabled: boolean;
+};
+
+export type ProductCatalogItem = {
+  symbol: string;
+  exchange: string;
+  name: string;
+  representative_symbol: string;
+};
+
+export type ProductDetails = {
+  symbol: string;
+  exchange: string;
+  name: string;
+  multiplier: Numeric;
+  price_tick: Numeric;
+  margin_rate?: Numeric;
+  fee_mode?: "TURNOVER_RATE" | "PER_LOT";
+  fee_value?: Numeric;
+  fee_close_today_mode?: "TURNOVER_RATE" | "PER_LOT" | null;
+  fee_close_today_value?: Numeric | null;
+  fee_description?: string;
+};
+
+export type ProductCostImportResult = {
+  imported: number;
+  errors: Array<{ row: number; reason: string }>;
 };
 
 export type MarketQuote = {

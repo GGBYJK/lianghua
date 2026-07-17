@@ -5,10 +5,12 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, insert, select, update
 from sqlalchemy.exc import IntegrityError
 
+from .market_client import contract_to_variety
 from .trading_db import (
     account_ledger,
     contract_specs,
@@ -37,6 +39,7 @@ DEFAULT_SLIPPAGE_TICKS = Decimal(os.getenv("DEFAULT_SLIPPAGE_TICKS", "1"))
 QUOTE_STALE_SECONDS = int(os.getenv("QUOTE_STALE_SECONDS", "30"))
 MIN_DEFAULT_TAKE_PROFIT_RR = Decimal(os.getenv("MIN_DEFAULT_TAKE_PROFIT_RR", "1.5"))
 SIGNAL_TRADEABLE_HOURS = int(os.getenv("SIGNAL_TRADEABLE_HOURS", "24"))
+TRADING_TIMEZONE = ZoneInfo(os.getenv("MARKET_TIMEZONE", "Asia/Shanghai"))
 
 
 def decimal_value(value: Any) -> Decimal:
@@ -167,8 +170,9 @@ def _locked_quote(connection: Any, symbol: str) -> dict[str, Any]:
 
 
 def _locked_contract(connection: Any, symbol: str) -> dict[str, Any]:
+    product = (contract_to_variety(symbol) or symbol).lower()
     row = connection.execute(
-        select(contract_specs).where(and_(contract_specs.c.symbol == symbol, contract_specs.c.enabled.is_(True)))
+        select(contract_specs).where(and_(contract_specs.c.symbol == product, contract_specs.c.enabled.is_(True)))
     ).mappings().first()
     if row is None:
         raise TradingStoreError("缺少有效的合约乘数、保证金率或手续费配置")
@@ -182,14 +186,19 @@ def _fill_price(quote_price: Decimal, side: str, tick: Decimal, slippage_ticks: 
 
 
 def _fee(price: Decimal, quantity: int, spec: dict[str, Any], effect: str) -> Decimal:
-    multiplier = decimal_value(spec["multiplier"])
-    if effect == "OPEN":
-        rate = decimal_value(spec["fee_open_rate"])
-        fixed = decimal_value(spec["fee_open_fixed"])
-    else:
-        rate = decimal_value(spec["fee_close_rate"])
-        fixed = decimal_value(spec["fee_close_fixed"])
-    return price * quantity * multiplier * rate + fixed * quantity
+    fee_mode = spec["fee_mode"]
+    fee_value = decimal_value(spec["fee_value"])
+    if effect == "CLOSE_TODAY" and spec.get("fee_close_today_mode") and spec.get("fee_close_today_value") is not None:
+        fee_mode = spec["fee_close_today_mode"]
+        fee_value = decimal_value(spec["fee_close_today_value"])
+    if fee_mode == "TURNOVER_RATE":
+        return price * quantity * decimal_value(spec["multiplier"]) * fee_value
+    return fee_value * quantity
+
+
+def _opened_today(opened_at: datetime) -> bool:
+    value = opened_at.replace(tzinfo=timezone.utc) if opened_at.tzinfo is None else opened_at
+    return value.astimezone(TRADING_TIMEZONE).date() == datetime.now(TRADING_TIMEZONE).date()
 
 
 def _validate_exit_prices(position_side: str, fill_price: Decimal, stop_price: Decimal | None, take_profit_price: Decimal | None) -> None:
@@ -375,7 +384,7 @@ def _close_lot_in_transaction(
     spec = _locked_contract(connection, symbol)
     tick = decimal_value(spec["price_tick"])
     fill_price, slippage = _fill_price(decimal_value(quote["last_price"]), side, tick, DEFAULT_SLIPPAGE_TICKS)
-    fee = _fee(fill_price, quantity, spec, "CLOSE")
+    fee = _fee(fill_price, quantity, spec, "CLOSE_TODAY" if _opened_today(lot["opened_at"]) else "CLOSE")
     multiplier = decimal_value(spec["multiplier"])
     open_price = decimal_value(lot["open_price"])
     pnl = (fill_price - open_price) * quantity * multiplier
