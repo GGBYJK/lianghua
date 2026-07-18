@@ -152,6 +152,21 @@ def _target_price(rule: dict[str, Any], signal: dict[str, Any], entry: float, st
     return entry + distance if direction == "LONG" else entry - distance
 
 
+def _stop_price(signal: dict[str, Any], direction: str, qtr_multiplier: float) -> float | None:
+    try:
+        qtr = float(signal.get("qtr") or 0)
+        if qtr <= 0:
+            return None
+        is_pullback = str(signal.get("alert_type", "")).endswith("_pullback")
+        point_key = "right_neck" if is_pullback else "right_shoulder"
+        point = signal.get(point_key) or {}
+        anchor = float(point["price"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    distance = qtr * qtr_multiplier
+    return anchor - distance if direction == "LONG" else anchor + distance
+
+
 def _simulate_order(
     *,
     run_id: str,
@@ -159,14 +174,10 @@ def _simulate_order(
     frame: pd.DataFrame,
     signal: dict[str, Any],
     rule: dict[str, Any],
-    max_holding_bars: int,
+    max_holding_bars: int | None,
     contract: dict[str, Any] | None,
+    stop_loss_qtr_multiplier: float = 0.5,
 ) -> dict[str, Any]:
-    metrics = signal.get("pattern_metrics") or {}
-    raw_entry = metrics.get("trigger_price")
-    if raw_entry is None:
-        raw_entry = signal.get("retest_price") or signal.get("break_price") or signal.get("neckline_price")
-    raw_stop = metrics.get("stop")
     direction = signal_direction(str(signal["pattern"]), str(signal["alert_type"]))
     base = {
         "id": str(uuid4()),
@@ -200,17 +211,6 @@ def _simulate_order(
         "cost_available": contract is not None,
         "signal_json": json.dumps(signal, ensure_ascii=False, separators=(",", ":")),
     }
-    if raw_entry is None or raw_stop is None:
-        return base
-    entry = float(raw_entry)
-    stop = float(raw_stop)
-    target = _target_price(rule, signal, entry, stop, direction)
-    if target is None:
-        return base
-    valid_prices = stop < entry < target if direction == "LONG" else target < entry < stop
-    if not valid_prices:
-        return base
-
     signal_time = _signal_time(signal)
     if not signal_time:
         return base
@@ -220,6 +220,17 @@ def _simulate_order(
         return base
     entry_index = int(matches[0])
     base["entry_time"] = timestamps.iloc[entry_index].to_pydatetime()
+    # Signals are only actionable after this bar has closed.
+    entry = float(frame.iloc[entry_index]["close"])
+    stop = _stop_price(signal, direction, stop_loss_qtr_multiplier)
+    if stop is None:
+        return base
+    target = _target_price(rule, signal, entry, stop, direction)
+    if target is None:
+        return base
+    valid_prices = stop < entry < target if direction == "LONG" else target < entry < stop
+    if not valid_prices:
+        return base
 
     tick = decimal_value(contract["price_tick"]) if contract else Decimal("0")
     stop_decimal = _round_price(Decimal(str(stop)), tick) if contract else Decimal(str(stop))
@@ -236,7 +247,7 @@ def _simulate_order(
         return base
 
     available = len(frame) - entry_index - 1
-    end_index = min(len(frame) - 1, entry_index + max_holding_bars)
+    end_index = min(len(frame) - 1, entry_index + max_holding_bars) if max_holding_bars is not None else len(frame) - 1
     exit_reason: str | None = None
     exit_index: int | None = None
     exit_quote: Decimal | None = None
@@ -257,14 +268,14 @@ def _simulate_order(
             stop_hit = high >= stop_decimal
             target_hit = low <= target_decimal
         if stop_hit:
-            exit_reason, exit_index, exit_quote = "STOP_LOSS", index, stop_decimal
+            exit_reason, exit_index, exit_quote = "STOP_LOSS", index, Decimal(str(row["close"]))
             break
         if target_hit:
-            exit_reason, exit_index, exit_quote = "TAKE_PROFIT", index, target_decimal
+            exit_reason, exit_index, exit_quote = "TAKE_PROFIT", index, Decimal(str(row["close"]))
             break
 
     if exit_index is None:
-        if available < max_holding_bars:
+        if max_holding_bars is None or available < max_holding_bars:
             base.update({
                 "status": "INCOMPLETE",
                 "entry_price": entry_fill,
@@ -401,8 +412,13 @@ async def process_next_backtest_run() -> bool:
                                 frame=frame,
                                 signal=signal,
                                 rule=rule,
-                                max_holding_bars=int(request["max_holding_bars"]),
+                                max_holding_bars=(
+                                    int(request["max_holding_bars"])
+                                    if request.get("max_holding_bars") is not None
+                                    else None
+                                ),
                                 contract=contract,
+                                stop_loss_qtr_multiplier=float(request.get("stop_loss_qtr_multiplier", 0.5)),
                             )
                             for signal in selected
                             for rule in request["take_profit_rules"]

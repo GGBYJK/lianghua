@@ -350,6 +350,7 @@ button, input, select { letter-spacing: 0; }
 .pattern-target-help { max-width: 260px; line-height: 1.55; }
 
 .backtest-number-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.backtest-max-holding-item .ant-form-item-label label { white-space: nowrap; }
 .backtest-entry-section {
   margin-bottom: 15px;
   padding: 10px;

@@ -186,18 +186,20 @@ export default function BacktestPage() {
 
   function submit(values: Record<string, unknown>) {
     const selectedKeys = values.rule_keys as string[];
+    const maxHoldingBars = values.max_holding_bars == null ? undefined : Number(values.max_holding_bars);
     const payload: BacktestRequest = {
       name: String(values.name || ""),
       symbols: values.symbols as string[],
       timeframes: values.timeframes as string[],
       kline_count: Number(values.kline_count),
-      max_holding_bars: Number(values.max_holding_bars),
+      ...(maxHoldingBars === undefined ? {} : { max_holding_bars: maxHoldingBars }),
       entry_conditions: values.entry_conditions as BacktestRequest["entry_conditions"],
       other_entry_conditions: values.other_entry_conditions as BacktestRequest["other_entry_conditions"],
       min_pattern_score: Number(values.min_pattern_score || 0),
       min_trend_score: Number(values.min_trend_score || 0),
       other_min_pattern_score: Number(values.other_min_pattern_score ?? 80),
       other_max_trend_score: Number(values.other_max_trend_score ?? 35),
+      stop_loss_qtr_multiplier: Number(values.stop_loss_qtr_multiplier ?? 0.5),
       take_profit_rules: ruleCatalog.filter((rule) => selectedKeys.includes(rule.key)),
     };
     createMutation.mutate(payload);
@@ -331,7 +333,7 @@ export default function BacktestPage() {
     <div className="backtest-workbench">
       <aside className="backtest-config">
         <div className="backtest-panel-title"><Play size={17} /><div><strong>本次回测</strong><span>品种、周期与退出规则</span></div></div>
-        <Form form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["5m"], kline_count: 240, max_holding_bars: 60, entry_conditions: ENTRY_CONDITIONS.map((item) => item.value), other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 0, min_trend_score: 0, other_min_pattern_score: 80, other_max_trend_score: 35, rule_keys: DEFAULT_RULE_KEYS }}>
+        <Form form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["5m"], kline_count: 240, entry_conditions: ENTRY_CONDITIONS.map((item) => item.value), other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 0, min_trend_score: 0, other_min_pattern_score: 80, other_max_trend_score: 35, stop_loss_qtr_multiplier: 0.5, rule_keys: DEFAULT_RULE_KEYS }}>
           <Form.Item name="name" label="回测名称"><Input placeholder="留空自动按时间命名" /></Form.Item>
           <Form.Item label="品种分组" className="backtest-symbol-group-item">
             <div className="backtest-symbol-group-picker">
@@ -353,7 +355,7 @@ export default function BacktestPage() {
           <Form.Item name="timeframes" label="回测周期" rules={[{ required: true, message: "至少选择一个回测周期" }]}><Select mode="multiple" maxTagCount="responsive" placeholder="选择回测周期" options={TIMEFRAMES} /></Form.Item>
           <div className="backtest-number-grid">
             <Form.Item name="kline_count" label="回测K线数" rules={[{ required: true }]}><InputNumber min={120} max={8000} step={120} /></Form.Item>
-            <Form.Item name="max_holding_bars" label="最大持有K线" rules={[{ required: true }]}><InputNumber min={1} max={500} /></Form.Item>
+            <Form.Item className="backtest-max-holding-item" name="max_holding_bars" label="最大持有K线（选填）"><InputNumber min={1} max={500} placeholder="不限制" /></Form.Item>
           </div>
           <section className="backtest-entry-section">
             <Form.Item name="entry_conditions" label="进场形态" dependencies={["other_entry_conditions"]} rules={[({ getFieldValue }) => ({ validator: (_, value: string[]) => value?.length || getFieldValue("other_entry_conditions")?.length ? Promise.resolve() : Promise.reject(new Error("至少选择一个进场形态")) })]}><Checkbox.Group className="backtest-check-grid two" options={ENTRY_CONDITIONS} /></Form.Item>
@@ -369,6 +371,7 @@ export default function BacktestPage() {
               <Form.Item name="other_max_trend_score" label="趋势评分 ≤"><InputNumber min={0} max={100} step={1} /></Form.Item>
             </div>
           </section>
+          <Form.Item name="stop_loss_qtr_multiplier" label="止损条件（QTR 倍数）" rules={[{ required: true }]}><InputNumber min={0.1} max={20} step={0.1} /></Form.Item>
           <Form.Item name="rule_keys" label="止盈条件" rules={[{ required: true, message: "至少勾选一个止盈条件" }]}>
             <Checkbox.Group className="backtest-rule-grid">
               {ruleCatalog.map((rule) => <Checkbox key={rule.key} value={rule.key} className={rule.type === "PATTERN_TARGET" ? "pattern-target-rule" : undefined}>

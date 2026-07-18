@@ -166,7 +166,7 @@ export type BacktestRequest = {
   symbols: string[];
   timeframes: string[];
   kline_count: number;
-  max_holding_bars: number;
+  max_holding_bars?: number | null;
   entry_conditions: Array<
     | "head_shoulders_top:right_shoulder_confirmed"
     | "inverse_head_shoulders:right_shoulder_confirmed"
@@ -179,6 +179,7 @@ export type BacktestRequest = {
   min_trend_score: number;
   other_min_pattern_score: number;
   other_max_trend_score: number;
+  stop_loss_qtr_multiplier: number;
   take_profit_rules: BacktestRule[];
 };
 

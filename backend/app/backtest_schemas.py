@@ -23,7 +23,7 @@ class BacktestCreateRequest(BaseModel):
     symbols: list[str] = Field(min_length=1, max_length=20)
     timeframes: list[Literal["1m", "3m", "5m", "15m", "30m", "1h", "1d"]] = Field(min_length=1, max_length=7)
     kline_count: int = Field(default=240, ge=120, le=8000)
-    max_holding_bars: int = Field(default=60, ge=1, le=500)
+    max_holding_bars: int | None = Field(default=None, ge=1, le=500)
     entry_conditions: list[Literal[
         "head_shoulders_top:right_shoulder_confirmed",
         "inverse_head_shoulders:right_shoulder_confirmed",
@@ -36,6 +36,7 @@ class BacktestCreateRequest(BaseModel):
     min_trend_score: int = Field(default=0, ge=0, le=100)
     other_min_pattern_score: int = Field(default=80, ge=0, le=100)
     other_max_trend_score: int = Field(default=35, ge=0, le=100)
+    stop_loss_qtr_multiplier: float = Field(default=0.5, gt=0, le=20)
     take_profit_rules: list[TakeProfitRuleRequest] = Field(min_length=1, max_length=20)
 
     @model_validator(mode="after")

@@ -5,7 +5,7 @@ import pytest
 from datetime import datetime
 
 from app.backtest_schemas import BacktestCreateRequest, BacktestSymbolGroupCreateRequest
-from app.backtest_service import _filter_backtest_signals, _simulate_order, _summaries
+from app.backtest_service import _filter_backtest_signals, _simulate_order, _stop_price, _summaries
 from app.backtest_store import _run_dict, default_backtest_name
 from app.strategy import HeadShoulderTopConfig, should_emit_pullback_alert
 from app.trading_store import with_utc_timestamps
@@ -32,13 +32,14 @@ def long_signal() -> dict[str, object]:
         "pattern_score": 76,
         "qtr": 4,
         "retest_time": "2026-07-17T09:00:00",
-        "right_shoulder": {"time": "2026-07-17T09:00:00"},
+        "right_shoulder": {"time": "2026-07-17T09:00:00", "price": 100},
+        "right_neck": {"time": "2026-07-17T08:55:00", "price": 105},
         "head": {"time": "2026-07-17T08:50:00"},
         "pattern_metrics": {"trigger_price": 100, "stop": 95, "target": 112},
     }
 
 
-def simulate(data: pd.DataFrame, rule: dict[str, object], max_holding_bars: int = 3) -> dict[str, object]:
+def simulate(data: pd.DataFrame, rule: dict[str, object], max_holding_bars: int | None = 3) -> dict[str, object]:
     return _simulate_order(
         run_id="run",
         series_id="series",
@@ -58,7 +59,20 @@ def test_same_bar_stop_and_target_uses_stop_first() -> None:
 
     assert order["status"] == "CLOSED"
     assert order["exit_reason"] == "STOP_LOSS"
-    assert float(order["r_multiple"]) == -1
+    assert float(order["exit_price"]) == 101
+    assert float(order["r_multiple"]) == pytest.approx(0.5)
+
+
+def test_entry_and_exit_use_the_trigger_candle_close() -> None:
+    order = simulate(
+        frame([(100, 103, 99, 102), (102, 110, 100, 108), (108, 109, 107, 108)]),
+        {"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1},
+    )
+
+    assert float(order["entry_price"]) == 102
+    assert float(order["target_price"]) == 106
+    assert order["exit_reason"] == "TAKE_PROFIT"
+    assert float(order["exit_price"]) == 108
 
 
 def test_qtr_rule_hits_take_profit() -> None:
@@ -69,13 +83,14 @@ def test_qtr_rule_hits_take_profit() -> None:
 
     assert float(order["target_price"]) == 104
     assert order["exit_reason"] == "TAKE_PROFIT"
-    assert float(order["r_multiple"]) == pytest.approx(0.8)
+    assert float(order["r_multiple"]) == pytest.approx(2)
 
 
 def test_head_shoulders_pullback_uses_long_direction_for_fake_breakout() -> None:
     signal = long_signal()
     signal["pattern"] = "head_shoulders_top"
     signal["alert_type"] = "head_shoulders_top_pullback"
+    signal["right_neck"] = {"time": "2026-07-17T08:55:00", "price": 99}
     order = _simulate_order(
         run_id="run",
         series_id="series",
@@ -88,6 +103,17 @@ def test_head_shoulders_pullback_uses_long_direction_for_fake_breakout() -> None
 
     assert order["direction"] == "LONG"
     assert order["status"] == "CLOSED"
+
+
+def test_stop_qtr_multiplier_uses_the_correct_structure_anchor() -> None:
+    normal_top = {**long_signal(), "pattern": "head_shoulders_top", "alert_type": "right_shoulder_confirmed"}
+    top_pullback = {**long_signal(), "pattern": "head_shoulders_top", "alert_type": "head_shoulders_top_pullback"}
+    inverse_pullback = {**long_signal(), "pattern": "inverse_head_shoulders", "alert_type": "inverse_head_shoulders_pullback"}
+
+    assert _stop_price(normal_top, "SHORT", 0.5) == 102
+    assert _stop_price(long_signal(), "LONG", 0.5) == 98
+    assert _stop_price(top_pullback, "LONG", 0.5) == 103
+    assert _stop_price(inverse_pullback, "SHORT", 0.5) == 107
 
 
 def test_short_history_without_exit_is_incomplete() -> None:
@@ -110,7 +136,19 @@ def test_max_holding_closes_at_period_end() -> None:
 
     assert order["exit_reason"] == "TIME_EXIT"
     assert order["holding_bars"] == 2
-    assert float(order["r_multiple"]) == pytest.approx(0.4)
+    assert float(order["r_multiple"]) == pytest.approx(1)
+
+
+def test_without_max_holding_does_not_force_a_time_exit() -> None:
+    order = simulate(
+        frame([(100, 101, 99, 100), (100, 102, 99, 101), (101, 102, 100, 102), (102, 103, 101, 102)]),
+        {"key": "rr-3", "label": "3R", "type": "RR", "multiplier": 3},
+        max_holding_bars=None,
+    )
+
+    assert order["status"] == "INCOMPLETE"
+    assert order["exit_reason"] is None
+    assert order["holding_bars"] == 3
 
 
 def test_summary_excludes_incomplete_from_win_rate() -> None:
@@ -119,7 +157,7 @@ def test_summary_excludes_incomplete_from_win_rate() -> None:
         {"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1},
     )
     incomplete = simulate(
-        frame([(100, 101, 99, 100), (100, 102, 99, 101)]),
+        frame([(100, 101, 99, 100), (100, 101.9, 99, 101)]),
         {"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1},
         max_holding_bars=5,
     )
