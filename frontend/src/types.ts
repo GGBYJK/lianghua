@@ -1,6 +1,7 @@
 export type PivotPoint = {
   index: number;
   time: string;
+  display_time?: string;
   price: number;
   kind: "high" | "low";
 };

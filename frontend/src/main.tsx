@@ -2360,11 +2360,11 @@ type DetailPriceItem = {
 
 function buildDetailPrices(signal: Signal): DetailPriceItem[] {
   return [
-    { label: "头部", value: formatPrice(signal.head.price), meta: formatTime(signal.head.time), wide: true },
-    { label: "左肩", value: formatPrice(signal.left_shoulder.price), meta: formatTime(signal.left_shoulder.time) },
-    { label: "右肩", value: formatPrice(signal.right_shoulder.price), meta: formatTime(signal.right_shoulder.time) },
-    { label: "左颈", value: formatPrice(signal.left_neck.price), meta: formatTime(signal.left_neck.time) },
-    { label: "右颈", value: formatPrice(signal.right_neck.price), meta: formatTime(signal.right_neck.time) },
+    { label: "头部", value: formatPrice(signal.head.price), meta: formatSignalPointTime(signal.head, signal.timeframe), wide: true },
+    { label: "左肩", value: formatPrice(signal.left_shoulder.price), meta: formatSignalPointTime(signal.left_shoulder, signal.timeframe) },
+    { label: "右肩", value: formatPrice(signal.right_shoulder.price), meta: formatSignalPointTime(signal.right_shoulder, signal.timeframe) },
+    { label: "左颈", value: formatPrice(signal.left_neck.price), meta: formatSignalPointTime(signal.left_neck, signal.timeframe) },
+    { label: "右颈", value: formatPrice(signal.right_neck.price), meta: formatSignalPointTime(signal.right_neck, signal.timeframe) },
     { label: "QTR", value: formatOptionalMetric(signal.qtr), meta: "真实波幅均值", wide: true },
   ];
 }
@@ -2778,11 +2778,11 @@ function SignalGroup({
           </div>
           <p>{translateResultText(signal.message)}</p>
           <div className="signal-times">
-            <div><span>左肩</span><strong>{formatTime(signal.left_shoulder.time)}</strong></div>
-            <div><span>左颈</span><strong>{formatTime(signal.left_neck.time)}</strong></div>
-            <div><span>头部</span><strong>{formatTime(signal.head.time)}</strong></div>
-            <div><span>右颈</span><strong>{formatTime(signal.right_neck.time)}</strong></div>
-            <div><span>右肩</span><strong>{formatTime(signal.right_shoulder.time)}</strong></div>
+            <div><span>左肩</span><strong>{formatSignalPointTime(signal.left_shoulder, signal.timeframe)}</strong></div>
+            <div><span>左颈</span><strong>{formatSignalPointTime(signal.left_neck, signal.timeframe)}</strong></div>
+            <div><span>头部</span><strong>{formatSignalPointTime(signal.head, signal.timeframe)}</strong></div>
+            <div><span>右颈</span><strong>{formatSignalPointTime(signal.right_neck, signal.timeframe)}</strong></div>
+            <div><span>右肩</span><strong>{formatSignalPointTime(signal.right_shoulder, signal.timeframe)}</strong></div>
           </div>
           <dl>
             <div><dt>左肩</dt><dd>{formatPrice(signal.left_shoulder.price)}</dd></div>
@@ -3678,6 +3678,25 @@ function formatOptionalMetric(value: number | null | undefined) {
 
 function formatTime(value: string) {
   return value.replace("T", " ").slice(0, 19);
+}
+
+function formatSignalPointTime(point: PivotPoint, timeframe: string) {
+  return formatTime(point.display_time ?? candleCloseTime(point.time, timeframe));
+}
+
+function candleCloseTime(value: string, timeframe: string) {
+  const durations: Record<string, number> = { "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "60m": 60, "1h": 60 };
+  const duration = durations[timeframe.toLowerCase()];
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!duration || !match) return value;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6] || 0)));
+  const minuteOfDay = date.getUTCHours() * 60 + date.getUTCMinutes();
+  const offset = timeframe === "1h" || timeframe === "60m"
+    ? ({ 600: 75, 675: 180, 855: 45 }[minuteOfDay] ?? duration)
+    : duration;
+  date.setUTCMinutes(date.getUTCMinutes() + offset);
+  const part = (partValue: number) => String(partValue).padStart(2, "0");
+  return `${date.getUTCFullYear()}-${part(date.getUTCMonth() + 1)}-${part(date.getUTCDate())} ${part(date.getUTCHours())}:${part(date.getUTCMinutes())}:${part(date.getUTCSeconds())}`;
 }
 
 function formatAlertTime(value: string) {

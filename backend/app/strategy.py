@@ -128,16 +128,21 @@ class HeadShoulderTopSignal:
     pattern_metrics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        def point_payload(point: PivotPoint) -> dict[str, Any]:
+            result = point.to_dict()
+            result["display_time"] = candle_display_time(point.time, self.timeframe).isoformat()
+            return result
+
         return {
             "symbol": self.symbol,
             "timeframe": self.timeframe,
             "pattern": self.pattern,
             "alert_type": self.alert_type,
-            "left_shoulder": self.left_shoulder.to_dict(),
-            "left_neck": self.left_neck.to_dict(),
-            "head": self.head.to_dict(),
-            "right_neck": self.right_neck.to_dict(),
-            "right_shoulder": self.right_shoulder.to_dict(),
+            "left_shoulder": point_payload(self.left_shoulder),
+            "left_neck": point_payload(self.left_neck),
+            "head": point_payload(self.head),
+            "right_neck": point_payload(self.right_neck),
+            "right_shoulder": point_payload(self.right_shoulder),
             "neckline_price": self.neckline_price,
             "confirmed": self.confirmed,
             "score": self.score,
