@@ -137,6 +137,10 @@ def _contract_for_symbol(symbol: str) -> dict[str, Any] | None:
     return None
 
 
+def _position_key(symbol: str) -> str:
+    return (contract_to_variety(symbol) or symbol).lower()
+
+
 def _target_price(rule: dict[str, Any], signal: dict[str, Any], entry: float, stop: float, direction: str) -> float | None:
     metrics = signal.get("pattern_metrics") or {}
     if rule["type"] == "PATTERN_TARGET":
@@ -321,6 +325,89 @@ def _simulate_order(
     return base
 
 
+def _head_key(signal: dict[str, Any]) -> str:
+    head = signal.get("head") or {}
+    return "|".join([
+        str(signal.get("pattern", "")),
+        str(head.get("time", "")),
+    ])
+
+
+def _signal_timestamp(signal: dict[str, Any]) -> pd.Timestamp | None:
+    value = _signal_time(signal)
+    if not value:
+        return None
+    try:
+        return pd.Timestamp(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _has_higher_score(signal: dict[str, Any], previous_signal: dict[str, Any]) -> bool:
+    return (
+        _score(signal, "pattern_score") > _score(previous_signal, "pattern_score")
+        or _score(signal, "score") > _score(previous_signal, "score")
+    )
+
+
+def _simulate_symbol_orders(
+    *,
+    run_id: str,
+    events: list[dict[str, Any]],
+    rules: list[dict[str, Any]],
+    max_holding_bars: int | None,
+    stop_loss_qtr_multiplier: float,
+) -> list[dict[str, Any]]:
+    """Simulate each take-profit rule as a single-position strategy per symbol."""
+    ordered_events = sorted(
+        events,
+        key=lambda event: (
+            _signal_timestamp(event["signal"]) or pd.Timestamp.max,
+            str(event["signal"].get("timeframe", "")),
+            _signal_key(event["signal"]),
+        ),
+    )
+    orders: list[dict[str, Any]] = []
+    for rule in rules:
+        position_until: pd.Timestamp | None = None
+        previous_by_head: dict[str, dict[str, Any]] = {}
+        for event in ordered_events:
+            signal = event["signal"]
+            signal_time = _signal_timestamp(signal)
+            if signal_time is None:
+                continue
+            if position_until is not None:
+                if signal_time <= position_until:
+                    continue
+                position_until = None
+
+            head_key = _head_key(signal)
+            previous = previous_by_head.get(head_key)
+            if previous is not None and previous["exit_reason"] == "STOP_LOSS" and not _has_higher_score(signal, previous["signal"]):
+                continue
+
+            order = _simulate_order(
+                run_id=run_id,
+                series_id=event["series_id"],
+                frame=event["frame"],
+                signal=signal,
+                rule=rule,
+                max_holding_bars=max_holding_bars,
+                contract=event["contract"],
+                stop_loss_qtr_multiplier=stop_loss_qtr_multiplier,
+            )
+            if order["status"] == "INVALID":
+                continue
+
+            previous_by_head[head_key] = {"signal": signal, "exit_reason": order["exit_reason"]}
+            if order["status"] == "INCOMPLETE":
+                position_until = pd.Timestamp.max
+            elif order["exit_time"] is not None:
+                position_until = pd.Timestamp(order["exit_time"])
+            orders.append(order)
+    return orders
+
+
 def _summaries(run_id: str, rules: list[dict[str, Any]], orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for rule in rules:
@@ -373,7 +460,9 @@ async def process_next_backtest_run() -> bool:
     completed = 0
     errors = 0
     try:
+        events_by_product: dict[str, list[dict[str, Any]]] = {}
         for symbol in request["symbols"]:
+            symbol_events: list[dict[str, Any]] = []
             for timeframe in request["timeframes"]:
                 if is_backtest_cancel_requested(run_id):
                     replace_backtest_summaries(run_id, _summaries(run_id, request["take_profit_rules"], all_orders))
@@ -404,28 +493,12 @@ async def process_next_backtest_run() -> bool:
                         "symbol": symbol, "timeframe": timeframe, "chart": chart, "signals": selected,
                     })
                     contract = _contract_for_symbol(symbol)
-                    combination_orders = await asyncio.to_thread(
-                        lambda: [
-                            _simulate_order(
-                                run_id=run_id,
-                                series_id=series_id,
-                                frame=frame,
-                                signal=signal,
-                                rule=rule,
-                                max_holding_bars=(
-                                    int(request["max_holding_bars"])
-                                    if request.get("max_holding_bars") is not None
-                                    else None
-                                ),
-                                contract=contract,
-                                stop_loss_qtr_multiplier=float(request.get("stop_loss_qtr_multiplier", 0.5)),
-                            )
-                            for signal in selected
-                            for rule in request["take_profit_rules"]
-                        ]
-                    )
-                    save_backtest_orders(combination_orders)
-                    all_orders.extend(combination_orders)
+                    symbol_events.extend({
+                        "series_id": series_id,
+                        "frame": frame,
+                        "signal": signal,
+                        "contract": contract,
+                    } for signal in selected)
                     signal_count += len(selected)
                 except Exception as exc:
                     errors += 1
@@ -433,6 +506,24 @@ async def process_next_backtest_run() -> bool:
                     add_backtest_error(run_id, symbol, timeframe, str(exc))
                 completed += 1
                 update_backtest_progress(run_id, completed, signal_count, len(all_orders))
+            if symbol_events:
+                events_by_product.setdefault(_position_key(symbol), []).extend(symbol_events)
+        for product_events in events_by_product.values():
+            symbol_orders = await asyncio.to_thread(
+                _simulate_symbol_orders,
+                run_id=run_id,
+                events=product_events,
+                rules=request["take_profit_rules"],
+                max_holding_bars=(
+                    int(request["max_holding_bars"])
+                    if request.get("max_holding_bars") is not None
+                    else None
+                ),
+                stop_loss_qtr_multiplier=float(request.get("stop_loss_qtr_multiplier", 0.5)),
+            )
+            save_backtest_orders(symbol_orders)
+            all_orders.extend(symbol_orders)
+            update_backtest_progress(run_id, completed, signal_count, len(all_orders))
         replace_backtest_summaries(run_id, _summaries(run_id, request["take_profit_rules"], all_orders))
         status = "COMPLETED_WITH_ERRORS" if errors else "COMPLETED"
         finish_backtest_run(run_id, status, signal_count, len(all_orders))

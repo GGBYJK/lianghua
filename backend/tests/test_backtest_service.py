@@ -5,7 +5,7 @@ import pytest
 from datetime import datetime
 
 from app.backtest_schemas import BacktestCreateRequest, BacktestSymbolGroupCreateRequest
-from app.backtest_service import _filter_backtest_signals, _simulate_order, _stop_price, _summaries
+from app.backtest_service import _filter_backtest_signals, _position_key, _simulate_order, _simulate_symbol_orders, _stop_price, _summaries
 from app.backtest_store import _run_dict, default_backtest_name
 from app.strategy import HeadShoulderTopConfig, should_emit_pullback_alert
 from app.trading_store import with_utc_timestamps
@@ -63,6 +63,11 @@ def test_same_bar_stop_and_target_uses_stop_first() -> None:
     assert float(order["r_multiple"]) == pytest.approx(0.5)
 
 
+def test_position_key_groups_contract_months_by_product() -> None:
+    assert _position_key("DCE.a2609") == "dce.a"
+    assert _position_key("SHFE.au2608") == "shfe.au"
+
+
 def test_entry_and_exit_use_the_trigger_candle_close() -> None:
     order = simulate(
         frame([(100, 103, 99, 102), (102, 110, 100, 108), (108, 109, 107, 108)]),
@@ -105,6 +110,31 @@ def test_head_shoulders_pullback_uses_long_direction_for_fake_breakout() -> None
     assert order["status"] == "CLOSED"
 
 
+def signal_for_bar(index: int, head_time: str, pattern_score: int = 76, trend_score: int = 82) -> dict[str, object]:
+    signal = long_signal()
+    time = (pd.Timestamp("2026-07-17 09:00:00") + pd.Timedelta(index * 5, unit="min")).isoformat()
+    signal["retest_time"] = time
+    signal["right_shoulder"] = {"time": time, "price": 100}
+    signal["head"] = {"time": head_time}
+    signal["pattern_score"] = pattern_score
+    signal["score"] = trend_score
+    return signal
+
+
+def symbol_orders(
+    data: pd.DataFrame,
+    signals: list[dict[str, object]],
+    max_holding_bars: int | None = 3,
+) -> list[dict[str, object]]:
+    return _simulate_symbol_orders(
+        run_id="run",
+        events=[{"series_id": "series", "frame": data, "signal": signal, "contract": None} for signal in signals],
+        rules=[{"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1}],
+        max_holding_bars=max_holding_bars,
+        stop_loss_qtr_multiplier=0.5,
+    )
+
+
 def test_stop_qtr_multiplier_uses_the_correct_structure_anchor() -> None:
     normal_top = {**long_signal(), "pattern": "head_shoulders_top", "alert_type": "right_shoulder_confirmed"}
     top_pullback = {**long_signal(), "pattern": "head_shoulders_top", "alert_type": "head_shoulders_top_pullback"}
@@ -114,6 +144,66 @@ def test_stop_qtr_multiplier_uses_the_correct_structure_anchor() -> None:
     assert _stop_price(long_signal(), "LONG", 0.5) == 98
     assert _stop_price(top_pullback, "LONG", 0.5) == 103
     assert _stop_price(inverse_pullback, "SHORT", 0.5) == 107
+
+
+def test_symbol_sequence_blocks_other_signals_while_a_position_is_open() -> None:
+    data = frame([
+        (100, 101, 99, 100),
+        (100, 101, 99, 100),
+        (100, 103, 99, 102),
+        (100, 101, 99, 100),
+        (100, 103, 99, 102),
+    ])
+    first = signal_for_bar(0, "2026-07-17T08:30:00")
+    blocked = signal_for_bar(1, "2026-07-17T08:35:00", pattern_score=95)
+    next_head = signal_for_bar(3, "2026-07-17T08:40:00")
+
+    orders = symbol_orders(data, [first, blocked, next_head])
+
+    assert len(orders) == 2
+    assert [order["signal_key"] for order in orders] == [
+        "rb2610|5m|inverse_head_shoulders|right_shoulder_confirmed|2026-07-17T08:30:00|2026-07-17T09:00:00",
+        "rb2610|5m|inverse_head_shoulders|right_shoulder_confirmed|2026-07-17T08:40:00|2026-07-17T09:15:00",
+    ]
+
+
+def test_same_head_requires_a_higher_score_after_a_stop() -> None:
+    data = frame([
+        (100, 101, 99, 100),
+        (100, 101, 97, 99),
+        (100, 101, 99, 100),
+        (100, 101, 99, 100),
+        (100, 103, 99, 102),
+        (100, 101, 99, 100),
+        (100, 103, 99, 102),
+    ])
+    head_time = "2026-07-17T08:30:00"
+    stopped = signal_for_bar(0, head_time, pattern_score=70, trend_score=70)
+    unchanged = signal_for_bar(2, head_time, pattern_score=70, trend_score=70)
+    improved = signal_for_bar(3, head_time, pattern_score=71, trend_score=70)
+    after_take_profit = signal_for_bar(5, head_time, pattern_score=90, trend_score=90)
+
+    orders = symbol_orders(data, [stopped, unchanged, improved, after_take_profit])
+
+    assert len(orders) == 3
+    assert [order["exit_reason"] for order in orders] == ["STOP_LOSS", "TAKE_PROFIT", "TAKE_PROFIT"]
+    assert orders[1]["signal_key"].endswith("|2026-07-17T09:15:00")
+
+
+def test_time_exit_releases_the_symbol_for_a_new_head() -> None:
+    data = frame([
+        (100, 101, 99, 100),
+        (100, 101, 99, 100),
+        (100, 101, 99, 100),
+        (100, 101, 99, 100),
+    ])
+    first = signal_for_bar(0, "2026-07-17T08:30:00")
+    next_head = signal_for_bar(2, "2026-07-17T08:40:00")
+
+    orders = symbol_orders(data, [first, next_head], max_holding_bars=1)
+
+    assert len(orders) == 2
+    assert [order["exit_reason"] for order in orders] == ["TIME_EXIT", "TIME_EXIT"]
 
 
 def test_short_history_without_exit_is_incomplete() -> None:
@@ -178,6 +268,19 @@ def test_request_rejects_more_than_fifty_market_combinations() -> None:
             entry_conditions=["head_shoulders_top:right_shoulder_confirmed"],
             take_profit_rules=[{"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1}],
         )
+
+
+def test_backtest_request_uses_the_default_entry_score_thresholds() -> None:
+    request = BacktestCreateRequest(
+        symbols=["DCE.a2609"],
+        entry_conditions=["head_shoulders_top:right_shoulder_confirmed"],
+        take_profit_rules=[{"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1}],
+    )
+
+    assert request.min_pattern_score == 75
+    assert request.min_trend_score == 65
+    assert request.timeframes == ["3m", "5m"]
+    assert request.kline_count == 1000
 
 
 def test_entry_condition_and_score_filters_select_only_eligible_signals() -> None:

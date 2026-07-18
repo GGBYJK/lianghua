@@ -21,8 +21,8 @@ class TakeProfitRuleRequest(BaseModel):
 class BacktestCreateRequest(BaseModel):
     name: str = Field(default="", max_length=120)
     symbols: list[str] = Field(min_length=1, max_length=20)
-    timeframes: list[Literal["1m", "3m", "5m", "15m", "30m", "1h", "1d"]] = Field(min_length=1, max_length=7)
-    kline_count: int = Field(default=240, ge=120, le=8000)
+    timeframes: list[Literal["1m", "3m", "5m", "15m", "30m", "1h", "1d"]] = Field(default_factory=lambda: ["3m", "5m"], min_length=1, max_length=7)
+    kline_count: int = Field(default=1000, ge=120, le=8000)
     max_holding_bars: int | None = Field(default=None, ge=1, le=500)
     entry_conditions: list[Literal[
         "head_shoulders_top:right_shoulder_confirmed",
@@ -32,8 +32,8 @@ class BacktestCreateRequest(BaseModel):
         "head_shoulders_top:head_shoulders_top_pullback",
         "inverse_head_shoulders:inverse_head_shoulders_pullback",
     ]] = Field(default_factory=list, max_length=2)
-    min_pattern_score: int = Field(default=0, ge=0, le=100)
-    min_trend_score: int = Field(default=0, ge=0, le=100)
+    min_pattern_score: int = Field(default=75, ge=0, le=100)
+    min_trend_score: int = Field(default=65, ge=0, le=100)
     other_min_pattern_score: int = Field(default=80, ge=0, le=100)
     other_max_trend_score: int = Field(default=35, ge=0, le=100)
     stop_loss_qtr_multiplier: float = Field(default=0.5, gt=0, le=20)

@@ -348,7 +348,7 @@ def list_backtest_orders(
             select(backtest_orders)
             .select_from(base)
             .where(and_(*conditions))
-            .order_by(desc(backtest_orders.c.entry_time), backtest_orders.c.rule_key)
+            .order_by(backtest_orders.c.entry_time.asc(), backtest_orders.c.rule_key)
             .offset((page - 1) * page_size)
             .limit(page_size)
         ).mappings()

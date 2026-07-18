@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
@@ -62,6 +62,33 @@ function number(value: unknown, digits = 2) {
   return Number(value).toLocaleString("zh-CN", { maximumFractionDigits: digits, minimumFractionDigits: digits });
 }
 
+function priceDigitsForTick(tick: unknown) {
+  const value = Number(tick);
+  if (!Number.isFinite(value) || value <= 0) return 4;
+  if (value >= 1) return 0;
+
+  let scaled = value;
+  for (let digits = 0; digits < 8; digits += 1) {
+    if (Math.abs(scaled - Math.round(scaled)) < 1e-8) return digits;
+    scaled *= 10;
+  }
+  return 4;
+}
+
+function contractSymbolKeys(symbol: string) {
+  const normalized = symbol.trim().toLowerCase();
+  const keys = new Set([normalized]);
+  const match = normalized.match(/^([a-z]+)\.([a-z]+)/);
+  if (match) {
+    keys.add(`${match[1]}.${match[2]}`);
+    keys.add(match[2]);
+  } else {
+    const product = normalized.match(/^[a-z]+/)?.[0];
+    if (product) keys.add(product);
+  }
+  return keys;
+}
+
 function statusTag(status: BacktestRun["status"]) {
   const labels: Record<string, string> = {
     QUEUED: "排队中", RUNNING: "运行中", COMPLETED: "已完成", COMPLETED_WITH_ERRORS: "部分完成", FAILED: "失败", CANCELLED: "已取消",
@@ -78,6 +105,14 @@ function exitTag(reason: BacktestOrder["exit_reason"], status: BacktestOrder["st
   return <Tag color="warning">到期平仓</Tag>;
 }
 
+function directionLabel(order: Pick<BacktestOrder, "pattern" | "alert_type" | "direction">) {
+  if (order.alert_type === "head_shoulders_top_pullback") return "头肩顶反抽做多";
+  if (order.alert_type === "inverse_head_shoulders_pullback") return "反向头肩反抽做空";
+  if (order.pattern === "head_shoulders_top") return "头肩顶做空";
+  if (order.pattern === "inverse_head_shoulders") return "反向头肩做多";
+  return order.direction === "LONG" ? "做多" : "做空";
+}
+
 export default function BacktestPage() {
   const navigate = useNavigate();
   const { runId } = useParams();
@@ -91,10 +126,12 @@ export default function BacktestPage() {
   const [marketKey, setMarketKey] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<BacktestOrder | null>(null);
   const [customRules, setCustomRules] = useState<BacktestRule[]>([]);
-  const [customDraft, setCustomDraft] = useState({ type: "RR" as "RR" | "QTR", multiplier: 2.5 });
+  const [customDraft, setCustomDraft] = useState({ type: "RR" as "RR" | "QTR", multiplier: 1 });
   const [selectedSymbolGroupId, setSelectedSymbolGroupId] = useState<string>();
   const [symbolGroupModalOpen, setSymbolGroupModalOpen] = useState(false);
   const [symbolGroupName, setSymbolGroupName] = useState("");
+  const topOrderScrollRef = useRef<HTMLDivElement>(null);
+  const orderTableRef = useRef<HTMLDivElement>(null);
 
   const detailQuery = useQuery({
     queryKey: ["backtest", selectedRunId],
@@ -124,6 +161,20 @@ export default function BacktestPage() {
 
   const ruleCatalog = useMemo(() => [...BUILTIN_RULES, ...customRules], [customRules]);
   const configuredSymbols = useMemo(() => new Set((specsQuery.data || []).filter((item) => item.enabled).map((item) => item.symbol.toLowerCase())), [specsQuery.data]);
+  const priceDigitsBySymbol = useMemo(() => {
+    const digits = new Map<string, number>();
+    for (const spec of specsQuery.data || []) {
+      const displayDigits = priceDigitsForTick(spec.price_tick);
+      for (const key of contractSymbolKeys(spec.symbol)) digits.set(key, displayDigits);
+    }
+    return digits;
+  }, [specsQuery.data]);
+  const orderPrice = (symbol: string, value: unknown) => {
+    const digits = [...contractSymbolKeys(symbol)]
+      .map((key) => priceDigitsBySymbol.get(key))
+      .find((item) => item !== undefined) ?? 4;
+    return number(value, digits);
+  };
   const symbolOptions = useMemo(() => (contractsQuery.data || []).map((item) => ({
     value: item.symbol,
     searchText: `${item.symbol} ${item.name}`.toLowerCase(),
@@ -176,6 +227,15 @@ export default function BacktestPage() {
     queryFn: () => platformApi.backtestOrders(selectedRunId!, orderParams),
     enabled: Boolean(selectedRunId) && Boolean(detail?.summaries?.length),
   });
+  useEffect(() => {
+    const tableContent = orderTableRef.current?.querySelector<HTMLElement>(".ant-table-content");
+    const topScroll = topOrderScrollRef.current;
+    if (!tableContent || !topScroll) return;
+    const syncTopScroll = () => { topScroll.scrollLeft = tableContent.scrollLeft; };
+    syncTopScroll();
+    tableContent.addEventListener("scroll", syncTopScroll);
+    return () => tableContent.removeEventListener("scroll", syncTopScroll);
+  }, [ordersQuery.data, ordersQuery.isLoading]);
   const [marketSymbol, marketTimeframe] = marketKey.split("|");
   const seriesQuery = useQuery({
     queryKey: ["backtest-series", selectedRunId, marketSymbol, marketTimeframe],
@@ -209,10 +269,15 @@ export default function BacktestPage() {
     const multiplier = Number(customDraft.multiplier);
     if (!Number.isFinite(multiplier) || multiplier <= 0) return;
     const key = `custom-${customDraft.type.toLowerCase()}-${String(multiplier).replace(".", "_")}-${Date.now()}`;
-    const rule: BacktestRule = { key, label: `自定义 ${multiplier}${customDraft.type === "RR" ? "R" : " QTR"}`, type: customDraft.type, multiplier };
+    const rule: BacktestRule = { key, label: `${multiplier}${customDraft.type === "RR" ? "R" : " QTR"}`, type: customDraft.type, multiplier };
     setCustomRules((items) => [...items, rule]);
     const selected = form.getFieldValue("rule_keys") as string[];
     form.setFieldValue("rule_keys", [...selected, key]);
+  }
+
+  function syncOrderTableScroll(event: UIEvent<HTMLDivElement>) {
+    const tableContent = orderTableRef.current?.querySelector<HTMLElement>(".ant-table-content");
+    if (tableContent) tableContent.scrollLeft = event.currentTarget.scrollLeft;
   }
 
   function applySymbolGroup(groupId: string | undefined) {
@@ -263,20 +328,19 @@ export default function BacktestPage() {
     { title: "不完整", dataIndex: "incomplete", width: 78 },
   ];
   const orderColumns: ColumnsType<BacktestOrder> = [
-    { title: "品种", dataIndex: "symbol", width: 100, render: (value) => <strong className="symbol-cell">{value}</strong> },
-    { title: "周期", dataIndex: "timeframe", width: 70 },
-    { title: "止盈条件", dataIndex: "rule_label", width: 112 },
-    { title: "方向", dataIndex: "direction", width: 76, render: (value) => <Tag color={value === "LONG" ? "red" : "green"}>{value === "LONG" ? "做多" : "做空"}</Tag> },
-    { title: "结果", width: 92, render: (_, row) => exitTag(row.exit_reason, row.status) },
-    { title: "进场", dataIndex: "entry_price", align: "right", width: 96, render: (value) => number(value, 4) },
-    { title: "止损", dataIndex: "stop_price", align: "right", width: 96, render: (value) => number(value, 4) },
-    { title: "止盈", dataIndex: "target_price", align: "right", width: 96, render: (value) => number(value, 4) },
-    { title: "出场", dataIndex: "exit_price", align: "right", width: 96, render: (value) => number(value, 4) },
-    { title: "净收益", dataIndex: "net_pnl", align: "right", width: 100, render: (value) => value == null ? "--" : <span className={Number(value) >= 0 ? "profit" : "loss"}>{number(value)}</span> },
-    { title: "R", dataIndex: "r_multiple", align: "right", width: 72, render: (value) => number(value, 2) },
-    { title: "持有", dataIndex: "holding_bars", width: 72, render: (value) => `${value}根` },
-    { title: "进场时间", dataIndex: "entry_time", width: 160, render: (value) => formatMarketDateTime(value) },
-    { title: "", fixed: "right", width: 52, render: (_, row) => <Tooltip title="查看K线"><Button type="text" icon={<Eye size={16} />} onClick={() => openOrder(row)} /></Tooltip> },
+    { title: "品种", dataIndex: "symbol", width: 80, render: (value) => <strong className="symbol-cell">{value}</strong> },
+    { title: "周期", dataIndex: "timeframe", width: 52 },
+    { title: "止盈条件", dataIndex: "rule_label", width: 84 },
+    { title: "方向", dataIndex: "direction", width: 124, render: (value, row) => <Tag color={value === "LONG" ? "red" : "green"}>{directionLabel(row)}</Tag> },
+    { title: "结果", width: 64, render: (_, row) => exitTag(row.exit_reason, row.status) },
+    { title: "进场", dataIndex: "entry_price", align: "right", width: 70, render: (value, row) => orderPrice(row.symbol, value) },
+    { title: "出场", dataIndex: "exit_price", align: "right", width: 70, render: (value, row) => orderPrice(row.symbol, value) },
+    { title: "净收益", dataIndex: "net_pnl", align: "right", width: 80, render: (value) => value == null ? "--" : <span className={Number(value) >= 0 ? "profit" : "loss"}>{number(value)}</span> },
+    { title: "R", dataIndex: "r_multiple", align: "right", width: 40, render: (value) => number(value, 2) },
+    { title: "持有", dataIndex: "holding_bars", width: 50, render: (value) => `${value}根` },
+    { title: "进场时间", dataIndex: "entry_time", width: 120, render: (value) => formatMarketDateTime(value) },
+    { title: "出场时间", dataIndex: "exit_time", width: 120, render: (value) => formatMarketDateTime(value) },
+    { title: "", width: 38, render: (_, row) => <Tooltip title="查看K线"><Button type="text" icon={<Eye size={16} />} onClick={() => openOrder(row)} /></Tooltip> },
   ];
 
   const overview = detail ? <div className="backtest-overview">
@@ -284,12 +348,41 @@ export default function BacktestPage() {
     <Table rowKey="rule_key" size="small" columns={overviewColumns} dataSource={summaries} pagination={false} scroll={{ x: 1050 }} />
   </div> : <Empty />;
 
+  const selectedOrderRisk = selectedOrder && selectedOrder.entry_price != null && selectedOrder.stop_price != null
+    ? Math.abs(Number(selectedOrder.entry_price) - Number(selectedOrder.stop_price))
+    : null;
+  const selectedOrderDetails = selectedOrder ? [
+    { label: "品种", value: selectedOrder.symbol },
+    { label: "周期", value: selectedOrder.timeframe },
+    { label: "止盈条件", value: selectedOrder.rule_label },
+    { label: "方向", value: <Tag color={selectedOrder.direction === "LONG" ? "red" : "green"}>{directionLabel(selectedOrder)}</Tag> },
+    { label: "结果", value: exitTag(selectedOrder.exit_reason, selectedOrder.status) },
+    { label: "形态质量评分", value: number(selectedOrder.signal.pattern_score ?? selectedOrder.score, 0) },
+    { label: "趋势评分", value: number(selectedOrder.signal.score, 0) },
+    { label: "进场价", value: orderPrice(selectedOrder.symbol, selectedOrder.entry_price) },
+    { label: "出场价", value: orderPrice(selectedOrder.symbol, selectedOrder.exit_price) },
+    { label: "止损价", value: orderPrice(selectedOrder.symbol, selectedOrder.stop_price) },
+    { label: "目标价", value: orderPrice(selectedOrder.symbol, selectedOrder.target_price) },
+    { label: "净收益", value: selectedOrder.net_pnl == null ? "--" : number(selectedOrder.net_pnl) },
+    { label: "实际R", value: selectedOrder.r_multiple == null ? "--" : `${number(selectedOrder.r_multiple, 2)}R${selectedOrderRisk == null ? "" : ` (R=${orderPrice(selectedOrder.symbol, selectedOrderRisk)})`}` },
+    { label: "持有", value: `${selectedOrder.holding_bars}根K线` },
+    { label: "进场时间", value: formatMarketDateTime(selectedOrder.entry_time) },
+    { label: "出场时间", value: formatMarketDateTime(selectedOrder.exit_time) },
+  ] : [];
+
   const chartView = <div className="backtest-chart-view">
     <div className="backtest-view-toolbar">
       <Select value={marketKey || undefined} placeholder="选择品种与周期" onChange={(value) => { setMarketKey(value); setSelectedOrder(null); }} options={(detail?.markets || []).map((item) => ({ value: `${item.symbol}|${item.timeframe}`, label: `${item.symbol} / ${item.timeframe} · ${item.row_count}根` }))} />
-      {selectedOrder ? <span className="selected-order-note">{selectedOrder.rule_label} · {selectedOrder.direction} · {exitTag(selectedOrder.exit_reason, selectedOrder.status)}</span> : <span className="selected-order-note">点击订单可叠加进出场与止盈止损线</span>}
+      {selectedOrder ? <span className="selected-order-note">{selectedOrder.rule_label} · {selectedOrder.direction} · {exitTag(selectedOrder.exit_reason, selectedOrder.status)}</span> : <span className="selected-order-note">点击订单查看对应形态、颈线及进出场位置</span>}
     </div>
     {seriesQuery.isLoading ? <div className="backtest-chart-loading"><Spin /></div> : seriesQuery.data ? <BacktestChart series={seriesQuery.data} order={selectedOrder} /> : <Empty description="暂无K线结构" />}
+    {selectedOrder ? <section className="backtest-chart-order-details" aria-label="当前订单详情">
+      {selectedOrderDetails.map((item) => {
+        const value = item.label === "净收益" ? selectedOrder.net_pnl : item.label === "实际R" ? selectedOrder.r_multiple : null;
+        const tone = value == null ? "" : Number(value) > 0 ? "order-detail-positive" : Number(value) < 0 ? "order-detail-negative" : "";
+        return <div key={item.label}><span>{item.label}</span><strong className={[item.label.includes("时间") ? "order-detail-time" : "", tone].filter(Boolean).join(" ")}>{item.value}</strong></div>;
+      })}
+    </section> : null}
   </div>;
 
   const ordersView = <div className="backtest-orders-view">
@@ -300,7 +393,10 @@ export default function BacktestPage() {
       <Select allowClear placeholder="退出原因" value={filters.exit_reason || undefined} onChange={(value) => { setPage(1); setFilters((item) => ({ ...item, exit_reason: value || "" })); }} options={[{ value: "TAKE_PROFIT", label: "止盈" }, { value: "STOP_LOSS", label: "止损" }, { value: "TIME_EXIT", label: "到期平仓" }]} />
       <Button icon={<RotateCcw size={15} />} onClick={() => { setPage(1); setFilters({ symbol: "", timeframe: "", rule_key: "", exit_reason: "" }); }}>重置</Button>
     </div>
-    <Table rowKey="id" size="small" columns={orderColumns} dataSource={ordersQuery.data?.items || []} loading={ordersQuery.isLoading} scroll={{ x: 1450 }} pagination={{ current: page, pageSize: 50, total: ordersQuery.data?.total || 0, showSizeChanger: false, onChange: setPage }} onRow={(row) => ({ onDoubleClick: () => openOrder(row) })} />
+    <div className="backtest-orders-top-scroll" ref={topOrderScrollRef} onScroll={syncOrderTableScroll}><div /></div>
+    <div className="backtest-orders-table" ref={orderTableRef}>
+      <Table rowKey="id" size="small" tableLayout="fixed" columns={orderColumns} dataSource={ordersQuery.data?.items || []} loading={ordersQuery.isLoading} scroll={{ x: 992 }} pagination={{ current: page, pageSize: 50, total: ordersQuery.data?.total || 0, showSizeChanger: false, onChange: setPage }} onRow={(row) => ({ onDoubleClick: () => openOrder(row) })} />
+    </div>
   </div>;
 
   return <div className="backtest-page">
@@ -333,7 +429,7 @@ export default function BacktestPage() {
     <div className="backtest-workbench">
       <aside className="backtest-config">
         <div className="backtest-panel-title"><Play size={17} /><div><strong>本次回测</strong><span>品种、周期与退出规则</span></div></div>
-        <Form form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["5m"], kline_count: 240, entry_conditions: ENTRY_CONDITIONS.map((item) => item.value), other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 0, min_trend_score: 0, other_min_pattern_score: 80, other_max_trend_score: 35, stop_loss_qtr_multiplier: 0.5, rule_keys: DEFAULT_RULE_KEYS }}>
+        <Form form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["3m", "5m"], kline_count: 1000, entry_conditions: ENTRY_CONDITIONS.map((item) => item.value), other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 75, min_trend_score: 65, other_min_pattern_score: 80, other_max_trend_score: 35, stop_loss_qtr_multiplier: 0.5, rule_keys: DEFAULT_RULE_KEYS }}>
           <Form.Item name="name" label="回测名称"><Input placeholder="留空自动按时间命名" /></Form.Item>
           <Form.Item label="品种分组" className="backtest-symbol-group-item">
             <div className="backtest-symbol-group-picker">
@@ -382,12 +478,12 @@ export default function BacktestPage() {
                     title={<div className="pattern-target-help">头肩顶做空：量出“头部到颈线”的垂直高度 H，从跌破时的颈线位置向下投射 H，得到目标价。<br /><br />反向头肩做多：同样量出高度 H，从突破时的颈线位置向上投射 H，得到目标价。</div>}
                   ><Button type="text" size="small" className="rule-help" htmlType="button" aria-label="查看形态量度目标说明" icon={<CircleHelp size={15} />} onClick={(event) => { event.preventDefault(); event.stopPropagation(); }} /></Tooltip> : null}
                 </span>
-                {rule.key.startsWith("custom-") ? <button type="button" className="rule-remove" aria-label="删除自定义条件" onClick={(event) => { event.preventDefault(); setCustomRules((items) => items.filter((item) => item.key !== rule.key)); }}>×</button> : null}
+                {rule.key.startsWith("custom-") ? <button type="button" className="rule-remove" aria-label="删除条件" onClick={(event) => { event.preventDefault(); setCustomRules((items) => items.filter((item) => item.key !== rule.key)); }}>×</button> : null}
               </Checkbox>)}
             </Checkbox.Group>
           </Form.Item>
           <div className="custom-rule-row">
-            <Select value={customDraft.type} onChange={(value) => setCustomDraft((item) => ({ ...item, type: value }))} options={[{ value: "RR", label: "自定义R" }, { value: "QTR", label: "自定义QTR" }]} />
+            <Select value={customDraft.type} onChange={(value) => setCustomDraft((item) => ({ ...item, type: value }))} options={[{ value: "RR", label: "R" }, { value: "QTR", label: "QTR" }]} />
             <InputNumber min={0.1} max={20} step={0.1} value={customDraft.multiplier} onChange={(value) => setCustomDraft((item) => ({ ...item, multiplier: Number(value) || 1 }))} />
             <Tooltip title="添加止盈条件"><Button icon={<Plus size={16} />} onClick={addCustomRule} /></Tooltip>
           </div>
