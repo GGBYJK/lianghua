@@ -30,6 +30,8 @@ default:
   enable_score: true
   min_score_to_alert: 70
   min_pattern_score_to_alert: 60
+  pullback_min_pattern_score: 80
+  pullback_max_trend_score: 35
   enable_key_zone_trend_score: false
   resistance_zone_min: 0
   resistance_zone_max: 0

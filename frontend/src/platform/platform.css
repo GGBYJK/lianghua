@@ -318,6 +318,7 @@ button, input, select { letter-spacing: 0; }
 .backtest-check-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .backtest-check-stack { grid-template-columns: 1fr; }
 .backtest-rule-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.backtest-rule-grid .pattern-target-rule { grid-column: 1 / -1; }
 
 .backtest-check-grid .ant-checkbox-wrapper,
 .backtest-check-stack .ant-checkbox-wrapper,
@@ -344,8 +345,21 @@ button, input, select { letter-spacing: 0; }
 .backtest-check-grid .ant-checkbox + span,
 .backtest-rule-grid .ant-checkbox + span { min-width: 0; padding-inline-end: 0; overflow-wrap: anywhere; }
 .rule-remove { position: absolute; top: 2px; right: 3px; width: 18px; height: 18px; padding: 0; color: #a44a44; background: transparent; border: 0; cursor: pointer; }
+.rule-label-with-help { display: inline-flex; align-items: center; white-space: nowrap; }
+.rule-help { width: 20px; min-width: 20px; height: 20px; margin-left: 3px; padding: 0; color: #a44a44; vertical-align: middle; }
+.pattern-target-help { max-width: 260px; line-height: 1.55; }
 
 .backtest-number-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.backtest-entry-section {
+  margin-bottom: 15px;
+  padding: 10px;
+  background: #fffafa;
+  border: 1px dashed #b33a3a;
+}
+.backtest-entry-section .ant-form-item { margin-bottom: 10px; }
+.backtest-entry-section .backtest-number-grid .ant-form-item { margin-bottom: 0; }
+.backtest-score-grid { gap: 6px; }
+.backtest-score-grid .ant-form-item-label label { font-size: 11px; white-space: nowrap; }
 .custom-rule-row { display: grid; grid-template-columns: 1fr 86px 38px; gap: 6px; margin: -8px 0 16px; }
 .custom-rule-row .ant-select,
 .custom-rule-row .ant-input-number,

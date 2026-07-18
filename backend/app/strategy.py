@@ -23,6 +23,18 @@ PULLBACK_MAX_TREND_SCORE = 35
 PULLBACK_MIN_PATTERN_SCORE = 80
 
 
+def signal_direction(pattern: str, alert_type: str) -> str:
+    if alert_type == "head_shoulders_top_pullback":
+        return "LONG"
+    if alert_type == "inverse_head_shoulders_pullback":
+        return "SHORT"
+    if pattern == "head_shoulders_top":
+        return "SHORT"
+    if pattern == "inverse_head_shoulders":
+        return "LONG"
+    raise ValueError(f"不支持的形态方向: {pattern}/{alert_type}")
+
+
 @dataclass
 class HeadShoulderTopConfig:
     pivot_left: int = 3 
@@ -58,6 +70,8 @@ class HeadShoulderTopConfig:
     enable_score: bool = True
     min_score_to_alert: int = 70
     min_pattern_score_to_alert: int = 60
+    pullback_min_pattern_score: int = PULLBACK_MIN_PATTERN_SCORE
+    pullback_max_trend_score: int = PULLBACK_MAX_TREND_SCORE
     enable_key_zone_trend_score: bool = False
     resistance_zone_min: float = 0.0
     resistance_zone_max: float = 0.0
@@ -2110,10 +2124,14 @@ def check_neckline_break_then_pullback(
     return False, break_index, break_time, break_price, None, None, None, pullback_price
 
 
-def should_emit_pullback_alert(total_score: int, pattern_result: dict[str, Any]) -> bool:
+def should_emit_pullback_alert(
+    total_score: int,
+    pattern_result: dict[str, Any],
+    config: HeadShoulderTopConfig,
+) -> bool:
     return (
-        total_score <= PULLBACK_MAX_TREND_SCORE
-        and int(pattern_result["final_score"]) >= PULLBACK_MIN_PATTERN_SCORE
+        total_score <= config.pullback_max_trend_score
+        and int(pattern_result["final_score"]) >= config.pullback_min_pattern_score
     )
 
 
@@ -2233,7 +2251,7 @@ def scan_head_shoulders_top(
                 ),
             ))
 
-        if should_emit_pullback_alert(total_score, pattern_result):
+        if should_emit_pullback_alert(total_score, pattern_result, config):
             (
                 pullback_triggered,
                 break_index,
@@ -2276,8 +2294,8 @@ def scan_head_shoulders_top(
                     qtr=qtr,
                     trend_label=trend_label_from_score(total_score, bullish=False),
                     reasons=reasons + [
-                        f"趋势评分 {total_score} <= {PULLBACK_MAX_TREND_SCORE}",
-                        f"形态质量评分 {pattern_result['final_score']} >= {PULLBACK_MIN_PATTERN_SCORE}",
+                        f"趋势评分 {total_score} <= {config.pullback_max_trend_score}",
+                        f"形态质量评分 {pattern_result['final_score']} >= {config.pullback_min_pattern_score}",
                         f"右肩后 {PULLBACK_LOOKAHEAD_BARS} 条K线内先跌破颈线，再涨回四分之一反抽位 {pullback_level:.2f}",
                     ],
                     break_time=break_time,
@@ -2463,7 +2481,7 @@ def scan_inverse_head_shoulders(
                 ),
             ))
 
-        if should_emit_pullback_alert(total_score, pattern_result):
+        if should_emit_pullback_alert(total_score, pattern_result, config):
             (
                 pullback_triggered,
                 break_index,
@@ -2506,8 +2524,8 @@ def scan_inverse_head_shoulders(
                     qtr=qtr,
                     trend_label=trend_label_from_score(total_score, bullish=True),
                     reasons=reasons + [
-                        f"趋势评分 {total_score} <= {PULLBACK_MAX_TREND_SCORE}",
-                        f"形态质量评分 {pattern_result['final_score']} >= {PULLBACK_MIN_PATTERN_SCORE}",
+                        f"趋势评分 {total_score} <= {config.pullback_max_trend_score}",
+                        f"形态质量评分 {pattern_result['final_score']} >= {config.pullback_min_pattern_score}",
                         f"右肩后 {PULLBACK_LOOKAHEAD_BARS} 条K线内先突破颈线，再跌回四分之一反抽位 {pullback_level:.2f}",
                     ],
                     break_time=break_time,

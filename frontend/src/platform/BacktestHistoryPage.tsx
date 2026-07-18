@@ -34,7 +34,11 @@ export default function BacktestHistoryPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [api, contextHolder] = message.useMessage();
-  const runsQuery = useQuery({ queryKey: ["backtests"], queryFn: platformApi.backtests, refetchInterval: 2000 });
+  const runsQuery = useQuery({
+    queryKey: ["backtests"],
+    queryFn: platformApi.backtests,
+    refetchInterval: (query) => (query.state.data as BacktestRun[] | undefined)?.some((item) => ACTIVE_STATUSES.has(item.status)) ? 2000 : false,
+  });
   const rows = runsQuery.data || [];
   const stats = useMemo(() => ({
     total: rows.length,

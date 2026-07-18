@@ -23,7 +23,7 @@ import {
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { ArrowLeft, BarChart3, Download, Eye, ListChecks, Play, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
+import { ArrowLeft, BarChart3, CircleHelp, Download, Eye, ListChecks, Play, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { listContracts } from "../api";
@@ -40,17 +40,18 @@ const TIMEFRAMES = [
 
 const BUILTIN_RULES: BacktestRule[] = [
   { key: "pattern", label: "形态量度目标", type: "PATTERN_TARGET" },
-  { key: "rr-1", label: "1R", type: "RR", multiplier: 1 },
-  { key: "rr-1_5", label: "1.5R", type: "RR", multiplier: 1.5 },
-  { key: "rr-2", label: "2R", type: "RR", multiplier: 2 },
-  { key: "rr-3", label: "3R", type: "RR", multiplier: 3 },
-  { key: "qtr-0_5", label: "0.5 QTR", type: "QTR", multiplier: 0.5 },
-  { key: "qtr-1", label: "1 QTR", type: "QTR", multiplier: 1 },
-  { key: "qtr-2", label: "2 QTR", type: "QTR", multiplier: 2 },
 ];
 
-const DEFAULT_RULE_KEYS = ["pattern", "rr-1", "rr-1_5", "rr-2", "rr-3", "qtr-1"];
+const DEFAULT_RULE_KEYS = ["pattern"];
 const ACTIVE_STATUSES = new Set(["QUEUED", "RUNNING"]);
+const ENTRY_CONDITIONS: Array<{ label: string; value: BacktestRequest["entry_conditions"][number] }> = [
+  { label: "头肩顶 · 做空（右肩触发）", value: "head_shoulders_top:right_shoulder_confirmed" },
+  { label: "反向头肩 · 做多（右肩触发）", value: "inverse_head_shoulders:right_shoulder_confirmed" },
+];
+const OTHER_ENTRY_CONDITIONS: Array<{ label: string; value: BacktestRequest["other_entry_conditions"][number] }> = [
+  { label: "头肩顶回抽-做多", value: "head_shoulders_top:head_shoulders_top_pullback" },
+  { label: "反向头肩回抽-做空", value: "inverse_head_shoulders:inverse_head_shoulders_pullback" },
+];
 
 function dateTime(value: string | null | undefined) {
   return formatApiDateTime(value);
@@ -99,7 +100,10 @@ export default function BacktestPage() {
     queryKey: ["backtest", selectedRunId],
     queryFn: () => platformApi.backtest(selectedRunId!),
     enabled: Boolean(selectedRunId),
-    refetchInterval: 2000,
+    refetchInterval: (query) => {
+      const run = query.state.data as BacktestRun | undefined;
+      return run && ACTIVE_STATUSES.has(run.status) ? 2000 : false;
+    },
   });
   const contractsQuery = useQuery({ queryKey: ["backtest-contract-center"], queryFn: () => listContracts(), staleTime: 60_000 });
   const specsQuery = useQuery({ queryKey: ["contracts"], queryFn: platformApi.contracts, staleTime: 60_000 });
@@ -188,8 +192,12 @@ export default function BacktestPage() {
       timeframes: values.timeframes as string[],
       kline_count: Number(values.kline_count),
       max_holding_bars: Number(values.max_holding_bars),
-      patterns: values.patterns as BacktestRequest["patterns"],
-      alert_types: values.alert_types as string[],
+      entry_conditions: values.entry_conditions as BacktestRequest["entry_conditions"],
+      other_entry_conditions: values.other_entry_conditions as BacktestRequest["other_entry_conditions"],
+      min_pattern_score: Number(values.min_pattern_score || 0),
+      min_trend_score: Number(values.min_trend_score || 0),
+      other_min_pattern_score: Number(values.other_min_pattern_score ?? 80),
+      other_max_trend_score: Number(values.other_max_trend_score ?? 35),
       take_profit_rules: ruleCatalog.filter((rule) => selectedKeys.includes(rule.key)),
     };
     createMutation.mutate(payload);
@@ -323,7 +331,7 @@ export default function BacktestPage() {
     <div className="backtest-workbench">
       <aside className="backtest-config">
         <div className="backtest-panel-title"><Play size={17} /><div><strong>本次回测</strong><span>品种、周期与退出规则</span></div></div>
-        <Form form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["5m"], kline_count: 240, max_holding_bars: 60, patterns: ["head_shoulders_top", "inverse_head_shoulders"], alert_types: ["right_shoulder_confirmed", "head_shoulders_top_pullback", "inverse_head_shoulders_pullback"], rule_keys: DEFAULT_RULE_KEYS }}>
+        <Form form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["5m"], kline_count: 240, max_holding_bars: 60, entry_conditions: ENTRY_CONDITIONS.map((item) => item.value), other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 0, min_trend_score: 0, other_min_pattern_score: 80, other_max_trend_score: 35, rule_keys: DEFAULT_RULE_KEYS }}>
           <Form.Item name="name" label="回测名称"><Input placeholder="留空自动按时间命名" /></Form.Item>
           <Form.Item label="品种分组" className="backtest-symbol-group-item">
             <div className="backtest-symbol-group-picker">
@@ -342,16 +350,37 @@ export default function BacktestPage() {
             </div>
           </Form.Item>
           <Form.Item name="symbols" label="回测品种" rules={[{ required: true, message: "至少选择一个品种" }]}><Select mode="multiple" showSearch maxTagCount="responsive" placeholder="搜索并加入本次回测" options={symbolOptions} optionFilterProp="searchText" /></Form.Item>
-          <Form.Item name="timeframes" label="回测周期" rules={[{ required: true }]}><Checkbox.Group className="backtest-check-grid" options={TIMEFRAMES} /></Form.Item>
+          <Form.Item name="timeframes" label="回测周期" rules={[{ required: true, message: "至少选择一个回测周期" }]}><Select mode="multiple" maxTagCount="responsive" placeholder="选择回测周期" options={TIMEFRAMES} /></Form.Item>
           <div className="backtest-number-grid">
             <Form.Item name="kline_count" label="回测K线数" rules={[{ required: true }]}><InputNumber min={120} max={8000} step={120} /></Form.Item>
             <Form.Item name="max_holding_bars" label="最大持有K线" rules={[{ required: true }]}><InputNumber min={1} max={500} /></Form.Item>
           </div>
-          <Form.Item name="patterns" label="形态方向" rules={[{ required: true }]}><Checkbox.Group className="backtest-check-grid two" options={[{ label: "头肩顶 · 做空", value: "head_shoulders_top" }, { label: "反向头肩 · 做多", value: "inverse_head_shoulders" }]} /></Form.Item>
-          <Form.Item name="alert_types" label="进场信号" rules={[{ required: true }]}><Checkbox.Group className="backtest-check-stack" options={[{ label: "右肩半程触发", value: "right_shoulder_confirmed" }, { label: "头肩顶突破回抽", value: "head_shoulders_top_pullback" }, { label: "反向形态突破回抽", value: "inverse_head_shoulders_pullback" }]} /></Form.Item>
+          <section className="backtest-entry-section">
+            <Form.Item name="entry_conditions" label="进场形态" dependencies={["other_entry_conditions"]} rules={[({ getFieldValue }) => ({ validator: (_, value: string[]) => value?.length || getFieldValue("other_entry_conditions")?.length ? Promise.resolve() : Promise.reject(new Error("至少选择一个进场形态")) })]}><Checkbox.Group className="backtest-check-grid two" options={ENTRY_CONDITIONS} /></Form.Item>
+            <div className="backtest-number-grid backtest-score-grid">
+              <Form.Item name="min_pattern_score" label="进场形态质量评分 ≥"><InputNumber min={0} max={100} step={1} /></Form.Item>
+              <Form.Item name="min_trend_score" label="进场趋势评分 ≥"><InputNumber min={0} max={100} step={1} /></Form.Item>
+            </div>
+          </section>
+          <section className="backtest-entry-section">
+            <Form.Item name="other_entry_conditions" label="其他进场形态"><Checkbox.Group className="backtest-check-grid two" options={OTHER_ENTRY_CONDITIONS} /></Form.Item>
+            <div className="backtest-number-grid backtest-score-grid">
+              <Form.Item name="other_min_pattern_score" label="形态质量评分 ≥"><InputNumber min={0} max={100} step={1} /></Form.Item>
+              <Form.Item name="other_max_trend_score" label="趋势评分 ≤"><InputNumber min={0} max={100} step={1} /></Form.Item>
+            </div>
+          </section>
           <Form.Item name="rule_keys" label="止盈条件" rules={[{ required: true, message: "至少勾选一个止盈条件" }]}>
             <Checkbox.Group className="backtest-rule-grid">
-              {ruleCatalog.map((rule) => <Checkbox key={rule.key} value={rule.key}><span>{rule.label}</span>{rule.key.startsWith("custom-") ? <button type="button" className="rule-remove" aria-label="删除自定义条件" onClick={(event) => { event.preventDefault(); setCustomRules((items) => items.filter((item) => item.key !== rule.key)); }}>×</button> : null}</Checkbox>)}
+              {ruleCatalog.map((rule) => <Checkbox key={rule.key} value={rule.key} className={rule.type === "PATTERN_TARGET" ? "pattern-target-rule" : undefined}>
+                <span className="rule-label-with-help">
+                  <span>{rule.label}</span>
+                  {rule.type === "PATTERN_TARGET" ? <Tooltip
+                    trigger="click"
+                    title={<div className="pattern-target-help">头肩顶做空：量出“头部到颈线”的垂直高度 H，从跌破时的颈线位置向下投射 H，得到目标价。<br /><br />反向头肩做多：同样量出高度 H，从突破时的颈线位置向上投射 H，得到目标价。</div>}
+                  ><Button type="text" size="small" className="rule-help" htmlType="button" aria-label="查看形态量度目标说明" icon={<CircleHelp size={15} />} onClick={(event) => { event.preventDefault(); event.stopPropagation(); }} /></Tooltip> : null}
+                </span>
+                {rule.key.startsWith("custom-") ? <button type="button" className="rule-remove" aria-label="删除自定义条件" onClick={(event) => { event.preventDefault(); setCustomRules((items) => items.filter((item) => item.key !== rule.key)); }}>×</button> : null}
+              </Checkbox>)}
             </Checkbox.Group>
           </Form.Item>
           <div className="custom-rule-row">

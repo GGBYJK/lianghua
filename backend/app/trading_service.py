@@ -11,6 +11,7 @@ from sqlalchemy import and_, insert, select, update
 from sqlalchemy.exc import IntegrityError
 
 from .market_client import contract_to_variety
+from .strategy import signal_direction
 from .trading_db import (
     account_ledger,
     contract_specs,
@@ -60,12 +61,11 @@ def _signal_metrics(signal: dict[str, Any]) -> dict[str, Any]:
     return metrics if isinstance(metrics, dict) else {}
 
 
-def _signal_direction(pattern: str) -> str:
-    if pattern == "head_shoulders_top":
-        return "SHORT"
-    if pattern == "inverse_head_shoulders":
-        return "LONG"
-    raise TradingStoreError("不支持的形态方向")
+def _signal_direction(pattern: str, alert_type: str) -> str:
+    try:
+        return signal_direction(pattern, alert_type)
+    except ValueError as exc:
+        raise TradingStoreError(str(exc)) from exc
 
 
 def _parse_created_at(value: str | None) -> datetime | None:
@@ -98,7 +98,10 @@ def _signal_sort_key(signal: dict[str, Any]) -> tuple[datetime, int]:
 def build_trade_signal(alert: dict[str, Any], quote_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
     signal = alert.get("signal_payload") or {}
     metrics = _signal_metrics(signal)
-    direction = _signal_direction(alert["pattern"])
+    direction = _signal_direction(
+        str(alert["pattern"]),
+        str(alert.get("alert_type") or signal.get("alert_type") or "right_shoulder_confirmed"),
+    )
     entry = metrics.get("trigger_price")
     if entry is None:
         entry = signal.get("retest_price") or signal.get("break_price") or signal.get("neckline_price")

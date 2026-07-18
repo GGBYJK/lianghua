@@ -50,6 +50,21 @@ def test_signal_direction_and_default_take_profit() -> None:
     assert result["tradeable"] is True
 
 
+def test_pullback_signal_uses_fake_breakout_direction() -> None:
+    alert = {
+        "id": "pullback",
+        "symbol": "rb2610",
+        "pattern": "head_shoulders_top",
+        "alert_type": "head_shoulders_top_pullback",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "signal_payload": {"pattern_metrics": {"trigger_price": 3500, "stop": 3470, "target": 3580, "rr": 2.2}},
+    }
+
+    result = build_trade_signal(alert, fresh_snapshot())
+
+    assert result["direction"] == "LONG"
+
+
 def test_low_rr_signal_keeps_target_as_reference_but_disables_default() -> None:
     alert = {
         "id": "13",

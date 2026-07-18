@@ -27,7 +27,7 @@ from .backtest_store import (
 )
 from .config import load_head_shoulder_config
 from .market_client import fetch_kline_from_market
-from .strategy import add_ma_columns, add_macd_columns, find_pivots, prepare_chart_payload, scan_head_shoulders
+from .strategy import add_ma_columns, add_macd_columns, find_pivots, prepare_chart_payload, scan_head_shoulders, signal_direction
 from .market_client import contract_to_variety
 from .trading_service import DEFAULT_SLIPPAGE_TICKS, _fee, _fill_price, _round_price, decimal_value
 from .trading_store import get_contract_spec
@@ -42,8 +42,12 @@ def _analyze_market(
     daily: pd.DataFrame,
     symbol: str,
     timeframe: str,
-    patterns: list[str],
-    alert_types: list[str],
+    entry_conditions: list[str],
+    other_entry_conditions: list[str],
+    min_pattern_score: int,
+    min_trend_score: int,
+    other_min_pattern_score: int,
+    other_max_trend_score: int,
 ) -> tuple[pd.DataFrame, list[dict[str, Any]], dict[str, Any]]:
     normalized = frame.copy().reset_index(drop=True)
     normalized["datetime"] = pd.to_datetime(normalized["datetime"])
@@ -51,13 +55,60 @@ def _analyze_market(
     daily = daily.copy().reset_index(drop=True)
     hourly["datetime"] = pd.to_datetime(hourly["datetime"])
     daily["datetime"] = pd.to_datetime(daily["datetime"])
-    config = replace(load_head_shoulder_config(symbol, timeframe), max_signal_age_bars=0)
+    config = replace(
+        load_head_shoulder_config(symbol, timeframe),
+        max_signal_age_bars=0,
+        pullback_min_pattern_score=other_min_pattern_score,
+        pullback_max_trend_score=other_max_trend_score,
+    )
     signals = scan_head_shoulders(normalized, symbol, timeframe, config, hourly_df=hourly, daily_df=daily)
-    selected = [signal.to_dict() for signal in signals if signal.pattern in patterns and signal.alert_type in alert_types]
+    selected = _filter_backtest_signals(
+        [signal.to_dict() for signal in signals],
+        entry_conditions,
+        other_entry_conditions,
+        min_pattern_score,
+        min_trend_score,
+        other_min_pattern_score,
+        other_max_trend_score,
+    )
     enriched = add_macd_columns(add_ma_columns(normalized, config), config)
     pivots = find_pivots(enriched, left=config.pivot_left, right=config.pivot_right)
     chart = prepare_chart_payload(enriched, pivots, signals, config, timeframe=timeframe)
     return normalized, selected, chart
+
+
+def _score(signal: dict[str, Any], field: str) -> int:
+    try:
+        return int(signal.get(field) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _filter_backtest_signals(
+    signals: list[dict[str, Any]],
+    entry_conditions: list[str],
+    other_entry_conditions: list[str],
+    min_pattern_score: int,
+    min_trend_score: int,
+    other_min_pattern_score: int,
+    other_max_trend_score: int,
+) -> list[dict[str, Any]]:
+    scored_conditions = set(entry_conditions)
+    other_conditions = set(other_entry_conditions)
+    selected: list[dict[str, Any]] = []
+    for signal in signals:
+        condition = f"{signal.get('pattern')}:{signal.get('alert_type')}"
+        if condition in other_conditions and (
+            _score(signal, "pattern_score") >= other_min_pattern_score
+            and _score(signal, "score") <= other_max_trend_score
+        ):
+            selected.append(signal)
+        elif condition in scored_conditions and (
+            _score(signal, "pattern_score") >= min_pattern_score
+            and _score(signal, "score") >= min_trend_score
+        ):
+            selected.append(signal)
+    return selected
 
 
 def _signal_time(signal: dict[str, Any]) -> str | None:
@@ -116,7 +167,7 @@ def _simulate_order(
     if raw_entry is None:
         raw_entry = signal.get("retest_price") or signal.get("break_price") or signal.get("neckline_price")
     raw_stop = metrics.get("stop")
-    direction = "SHORT" if signal["pattern"] == "head_shoulders_top" else "LONG"
+    direction = signal_direction(str(signal["pattern"]), str(signal["alert_type"]))
     base = {
         "id": str(uuid4()),
         "run_id": run_id,
@@ -331,8 +382,12 @@ async def process_next_backtest_run() -> bool:
                         daily,
                         symbol,
                         timeframe,
-                        request["patterns"],
-                        request["alert_types"],
+                        request["entry_conditions"],
+                        request["other_entry_conditions"],
+                        int(request["min_pattern_score"]),
+                        int(request["min_trend_score"]),
+                        int(request["other_min_pattern_score"]),
+                        int(request["other_max_trend_score"]),
                     )
                     series_id = save_backtest_series(run_id, symbol, timeframe, {
                         "symbol": symbol, "timeframe": timeframe, "chart": chart, "signals": selected,

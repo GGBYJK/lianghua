@@ -5,8 +5,9 @@ import pytest
 from datetime import datetime
 
 from app.backtest_schemas import BacktestCreateRequest, BacktestSymbolGroupCreateRequest
-from app.backtest_service import _simulate_order, _summaries
+from app.backtest_service import _filter_backtest_signals, _simulate_order, _summaries
 from app.backtest_store import _run_dict, default_backtest_name
+from app.strategy import HeadShoulderTopConfig, should_emit_pullback_alert
 from app.trading_store import with_utc_timestamps
 
 
@@ -71,6 +72,24 @@ def test_qtr_rule_hits_take_profit() -> None:
     assert float(order["r_multiple"]) == pytest.approx(0.8)
 
 
+def test_head_shoulders_pullback_uses_long_direction_for_fake_breakout() -> None:
+    signal = long_signal()
+    signal["pattern"] = "head_shoulders_top"
+    signal["alert_type"] = "head_shoulders_top_pullback"
+    order = _simulate_order(
+        run_id="run",
+        series_id="series",
+        frame=frame([(100, 101, 99, 100), (100, 106, 99, 105), (105, 106, 104, 105)]),
+        signal=signal,
+        rule={"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1},
+        max_holding_bars=3,
+        contract=None,
+    )
+
+    assert order["direction"] == "LONG"
+    assert order["status"] == "CLOSED"
+
+
 def test_short_history_without_exit_is_incomplete() -> None:
     order = simulate(
         frame([(100, 101, 99, 100), (100, 102, 99, 101), (101, 102, 100, 101)]),
@@ -118,10 +137,42 @@ def test_request_rejects_more_than_fifty_market_combinations() -> None:
         BacktestCreateRequest(
             symbols=[f"S{index}" for index in range(8)],
             timeframes=["1m", "3m", "5m", "15m", "30m", "1h", "1d"],
-            patterns=["head_shoulders_top"],
-            alert_types=["right_shoulder_confirmed"],
+            entry_conditions=["head_shoulders_top:right_shoulder_confirmed"],
             take_profit_rules=[{"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1}],
         )
+
+
+def test_entry_condition_and_score_filters_select_only_eligible_signals() -> None:
+    signals = [
+        {"pattern": "head_shoulders_top", "alert_type": "right_shoulder_confirmed", "pattern_score": 78, "score": 71},
+        {"pattern": "head_shoulders_top", "alert_type": "head_shoulders_top_pullback", "pattern_score": 80, "score": 20},
+        {"pattern": "head_shoulders_top", "alert_type": "right_shoulder_confirmed", "pattern_score": 60, "score": 90},
+        {"pattern": "head_shoulders_top", "alert_type": "head_shoulders_top_pullback", "pattern_score": 60, "score": 20},
+        {"pattern": "head_shoulders_top", "alert_type": "head_shoulders_top_pullback", "pattern_score": 80, "score": 40},
+    ]
+
+    result = _filter_backtest_signals(
+        signals,
+        ["head_shoulders_top:right_shoulder_confirmed"],
+        ["head_shoulders_top:head_shoulders_top_pullback"],
+        min_pattern_score=70,
+        min_trend_score=70,
+        other_min_pattern_score=70,
+        other_max_trend_score=30,
+    )
+
+    assert result == [signals[0], signals[1]]
+
+
+def test_pullback_signal_thresholds_can_be_overridden_for_backtests() -> None:
+    result = {"final_score": 70}
+
+    assert not should_emit_pullback_alert(40, result, HeadShoulderTopConfig())
+    assert should_emit_pullback_alert(
+        40,
+        result,
+        HeadShoulderTopConfig(pullback_min_pattern_score=70, pullback_max_trend_score=40),
+    )
 
 
 def test_symbol_group_normalizes_name_and_duplicate_symbols() -> None:

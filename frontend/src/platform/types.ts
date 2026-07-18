@@ -167,8 +167,18 @@ export type BacktestRequest = {
   timeframes: string[];
   kline_count: number;
   max_holding_bars: number;
-  patterns: Array<"head_shoulders_top" | "inverse_head_shoulders">;
-  alert_types: string[];
+  entry_conditions: Array<
+    | "head_shoulders_top:right_shoulder_confirmed"
+    | "inverse_head_shoulders:right_shoulder_confirmed"
+  >;
+  other_entry_conditions: Array<
+    | "head_shoulders_top:head_shoulders_top_pullback"
+    | "inverse_head_shoulders:inverse_head_shoulders_pullback"
+  >;
+  min_pattern_score: number;
+  min_trend_score: number;
+  other_min_pattern_score: number;
+  other_max_trend_score: number;
   take_profit_rules: BacktestRule[];
 };
 
