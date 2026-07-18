@@ -3,17 +3,25 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from .backtest_schemas import BacktestCreateRequest
+from .backtest_schemas import (
+    BacktestCreateRequest,
+    BacktestSymbolGroupCreateRequest,
+    BacktestSymbolGroupUpdateRequest,
+)
 from .backtest_service import build_backtest_export, process_next_backtest_run
 from .backtest_store import (
     BacktestStoreError,
     create_backtest_run,
+    create_backtest_symbol_group,
     delete_backtest_run,
+    delete_backtest_symbol_group,
     get_backtest_run,
     get_backtest_series,
     list_backtest_orders,
     list_backtest_runs,
+    list_backtest_symbol_groups,
     request_backtest_cancel,
+    update_backtest_symbol_group,
 )
 from .trading_api import require_permission
 
@@ -51,6 +59,48 @@ def runs(
     user: dict[str, object] = Depends(require_permission("market.read")),
 ) -> list[dict[str, object]]:
     return list_backtest_runs(_user_id(user), limit)
+
+
+@router.get("/symbol-groups")
+def symbol_groups(
+    user: dict[str, object] = Depends(require_permission("market.read")),
+) -> list[dict[str, object]]:
+    return list_backtest_symbol_groups(_user_id(user))
+
+
+@router.post("/symbol-groups")
+def create_symbol_group(
+    payload: BacktestSymbolGroupCreateRequest,
+    user: dict[str, object] = Depends(require_permission("market.read")),
+) -> dict[str, object]:
+    try:
+        return create_backtest_symbol_group(_user_id(user), payload.model_dump())
+    except BacktestStoreError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.put("/symbol-groups/{group_id}")
+def update_symbol_group(
+    group_id: str,
+    payload: BacktestSymbolGroupUpdateRequest,
+    user: dict[str, object] = Depends(require_permission("market.read")),
+) -> dict[str, object]:
+    try:
+        return update_backtest_symbol_group(_user_id(user), group_id, payload.model_dump())
+    except BacktestStoreError as exc:
+        raise HTTPException(status_code=404 if "不存在" in str(exc) else 409, detail=str(exc)) from exc
+
+
+@router.delete("/symbol-groups/{group_id}")
+def remove_symbol_group(
+    group_id: str,
+    user: dict[str, object] = Depends(require_permission("market.read")),
+) -> dict[str, bool]:
+    try:
+        delete_backtest_symbol_group(_user_id(user), group_id)
+    except BacktestStoreError as exc:
+        raise _not_found(exc) from exc
+    return {"ok": True}
 
 
 @router.get("/{run_id}")

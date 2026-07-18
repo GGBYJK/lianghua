@@ -9,6 +9,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, delete, desc, func, insert, or_, select, update
+from sqlalchemy.exc import IntegrityError
 
 from .trading_db import (
     backtest_errors,
@@ -16,6 +17,7 @@ from .trading_db import (
     backtest_rule_summaries,
     backtest_runs,
     backtest_series,
+    backtest_symbol_groups,
     get_engine,
     utc_now,
 )
@@ -77,6 +79,73 @@ def create_backtest_run(user_id: int, payload: dict[str, Any]) -> dict[str, Any]
         ))
         row = connection.execute(select(backtest_runs).where(backtest_runs.c.id == run_id)).mappings().one()
     return _run_dict(row)
+
+
+def _symbol_group_dict(row: Any) -> dict[str, Any]:
+    item = dict(row)
+    item["symbols"] = json.loads(item.pop("symbols_json"))
+    for field in ("created_at", "updated_at"):
+        item[field] = _utc_iso(item.get(field))
+    return item
+
+
+def list_backtest_symbol_groups(user_id: int) -> list[dict[str, Any]]:
+    with get_engine().connect() as connection:
+        rows = connection.execute(
+            select(backtest_symbol_groups)
+            .where(backtest_symbol_groups.c.user_id == user_id)
+            .order_by(desc(backtest_symbol_groups.c.updated_at), backtest_symbol_groups.c.name)
+        ).mappings()
+        return [_symbol_group_dict(row) for row in rows]
+
+
+def create_backtest_symbol_group(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    group_id = str(uuid4())
+    try:
+        with get_engine().begin() as connection:
+            connection.execute(insert(backtest_symbol_groups).values(
+                id=group_id,
+                user_id=user_id,
+                name=payload["name"],
+                symbols_json=_dump(payload["symbols"]),
+            ))
+            row = connection.execute(
+                select(backtest_symbol_groups).where(backtest_symbol_groups.c.id == group_id)
+            ).mappings().one()
+    except IntegrityError as exc:
+        raise BacktestStoreError("已存在同名品种分组") from exc
+    return _symbol_group_dict(row)
+
+
+def update_backtest_symbol_group(user_id: int, group_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        with get_engine().begin() as connection:
+            result = connection.execute(update(backtest_symbol_groups).where(and_(
+                backtest_symbol_groups.c.id == group_id,
+                backtest_symbol_groups.c.user_id == user_id,
+            )).values(
+                name=payload["name"],
+                symbols_json=_dump(payload["symbols"]),
+                updated_at=utc_now(),
+            ))
+            if result.rowcount == 0:
+                raise BacktestStoreError("品种分组不存在")
+            row = connection.execute(
+                select(backtest_symbol_groups).where(backtest_symbol_groups.c.id == group_id)
+            ).mappings().one()
+    except IntegrityError as exc:
+        raise BacktestStoreError("已存在同名品种分组") from exc
+    return _symbol_group_dict(row)
+
+
+def delete_backtest_symbol_group(user_id: int, group_id: str) -> None:
+    with get_engine().begin() as connection:
+        result = connection.execute(delete(backtest_symbol_groups).where(and_(
+            backtest_symbol_groups.c.id == group_id,
+            backtest_symbol_groups.c.user_id == user_id,
+        )))
+        if result.rowcount == 0:
+            raise BacktestStoreError("品种分组不存在")
 
 
 def list_backtest_runs(user_id: int, limit: int = 50) -> list[dict[str, Any]]:

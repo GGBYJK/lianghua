@@ -44,3 +44,22 @@ class BacktestCreateRequest(BaseModel):
         if len(self.symbols) * len(self.timeframes) > 50:
             raise ValueError("单次回测最多包含 50 个品种周期组合")
         return self
+
+
+class BacktestSymbolGroupCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    symbols: list[str] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def normalize(self) -> "BacktestSymbolGroupCreateRequest":
+        self.name = self.name.strip()
+        self.symbols = list(dict.fromkeys(item.strip() for item in self.symbols if item.strip()))
+        if not self.name:
+            raise ValueError("分组名称不能为空")
+        if not self.symbols:
+            raise ValueError("分组至少需要包含一个品种")
+        return self
+
+
+class BacktestSymbolGroupUpdateRequest(BacktestSymbolGroupCreateRequest):
+    pass

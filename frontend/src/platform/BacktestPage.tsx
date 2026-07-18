@@ -8,6 +8,8 @@ import {
   Form,
   Input,
   InputNumber,
+  Modal,
+  Popconfirm,
   Progress,
   Select,
   Space,
@@ -21,7 +23,7 @@ import {
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { ArrowLeft, BarChart3, Download, Eye, ListChecks, Play, Plus, RotateCcw, X } from "lucide-react";
+import { ArrowLeft, BarChart3, Download, Eye, ListChecks, Play, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { listContracts } from "../api";
@@ -89,6 +91,9 @@ export default function BacktestPage() {
   const [selectedOrder, setSelectedOrder] = useState<BacktestOrder | null>(null);
   const [customRules, setCustomRules] = useState<BacktestRule[]>([]);
   const [customDraft, setCustomDraft] = useState({ type: "RR" as "RR" | "QTR", multiplier: 2.5 });
+  const [selectedSymbolGroupId, setSelectedSymbolGroupId] = useState<string>();
+  const [symbolGroupModalOpen, setSymbolGroupModalOpen] = useState(false);
+  const [symbolGroupName, setSymbolGroupName] = useState("");
 
   const detailQuery = useQuery({
     queryKey: ["backtest", selectedRunId],
@@ -98,6 +103,7 @@ export default function BacktestPage() {
   });
   const contractsQuery = useQuery({ queryKey: ["backtest-contract-center"], queryFn: () => listContracts(), staleTime: 60_000 });
   const specsQuery = useQuery({ queryKey: ["contracts"], queryFn: platformApi.contracts, staleTime: 60_000 });
+  const symbolGroupsQuery = useQuery({ queryKey: ["backtest-symbol-groups"], queryFn: platformApi.backtestSymbolGroups, staleTime: 60_000 });
 
   useEffect(() => {
     setMarketKey("");
@@ -119,6 +125,10 @@ export default function BacktestPage() {
     searchText: `${item.symbol} ${item.name}`.toLowerCase(),
     label: <span className="backtest-symbol-option"><strong>{item.symbol}</strong><span>{item.name}</span>{configuredSymbols.has(item.symbol.toLowerCase()) ? <Tag color="success">含成本</Tag> : <Tag>仅R指标</Tag>}</span>,
   })), [contractsQuery.data, configuredSymbols]);
+  const selectedSymbolGroup = useMemo(
+    () => (symbolGroupsQuery.data || []).find((group) => group.id === selectedSymbolGroupId),
+    [selectedSymbolGroupId, symbolGroupsQuery.data],
+  );
 
   const createMutation = useMutation({
     mutationFn: platformApi.createBacktest,
@@ -131,6 +141,26 @@ export default function BacktestPage() {
     onError: (error: Error) => api.error(error.message),
   });
   const cancelMutation = useMutation({ mutationFn: platformApi.cancelBacktest, onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["backtests"] }) });
+  const createSymbolGroupMutation = useMutation({
+    mutationFn: platformApi.createBacktestSymbolGroup,
+    onSuccess: (group) => {
+      api.success("品种分组已保存");
+      setSelectedSymbolGroupId(group.id);
+      setSymbolGroupModalOpen(false);
+      setSymbolGroupName("");
+      void queryClient.invalidateQueries({ queryKey: ["backtest-symbol-groups"] });
+    },
+    onError: (error: Error) => api.error(error.message),
+  });
+  const deleteSymbolGroupMutation = useMutation({
+    mutationFn: platformApi.deleteBacktestSymbolGroup,
+    onSuccess: () => {
+      api.success("品种分组已删除");
+      setSelectedSymbolGroupId(undefined);
+      void queryClient.invalidateQueries({ queryKey: ["backtest-symbol-groups"] });
+    },
+    onError: (error: Error) => api.error(error.message),
+  });
 
   const orderParams = useMemo(() => {
     const params = new URLSearchParams({ page: String(page), page_size: "50" });
@@ -173,6 +203,32 @@ export default function BacktestPage() {
     setCustomRules((items) => [...items, rule]);
     const selected = form.getFieldValue("rule_keys") as string[];
     form.setFieldValue("rule_keys", [...selected, key]);
+  }
+
+  function applySymbolGroup(groupId: string | undefined) {
+    setSelectedSymbolGroupId(groupId);
+    const group = (symbolGroupsQuery.data || []).find((item) => item.id === groupId);
+    if (group) form.setFieldValue("symbols", group.symbols);
+  }
+
+  function openSymbolGroupModal() {
+    const symbols = form.getFieldValue("symbols") as string[] | undefined;
+    if (!symbols?.length) {
+      api.warning("请先选择要保存的回测品种");
+      return;
+    }
+    setSymbolGroupName("");
+    setSymbolGroupModalOpen(true);
+  }
+
+  function saveSymbolGroup() {
+    const symbols = form.getFieldValue("symbols") as string[] | undefined;
+    if (!symbolGroupName.trim()) {
+      api.warning("请输入分组名称");
+      return;
+    }
+    if (!symbols?.length) return;
+    createSymbolGroupMutation.mutate({ name: symbolGroupName, symbols });
   }
 
   function openOrder(order: BacktestOrder) {
@@ -239,6 +295,24 @@ export default function BacktestPage() {
 
   return <div className="backtest-page">
     {contextHolder}
+    <Modal
+      title="保存品种分组"
+      open={symbolGroupModalOpen}
+      okText="保存"
+      cancelText="取消"
+      confirmLoading={createSymbolGroupMutation.isPending}
+      onOk={saveSymbolGroup}
+      onCancel={() => setSymbolGroupModalOpen(false)}
+    >
+      <Input
+        autoFocus
+        maxLength={80}
+        placeholder="例如：黑色系品种"
+        value={symbolGroupName}
+        onChange={(event) => setSymbolGroupName(event.target.value)}
+        onPressEnter={saveSymbolGroup}
+      />
+    </Modal>
     <header className="page-heading backtest-heading">
       <div><span className="page-kicker">STRATEGY LAB</span><Typography.Title level={2}>{selectedRunId ? "头肩形态策略回测" : "添加策略回测"}</Typography.Title><Typography.Text>同一批信号独立比较止盈条件，结果按个人账户持久保存。</Typography.Text></div>
       <Space>
@@ -251,6 +325,22 @@ export default function BacktestPage() {
         <div className="backtest-panel-title"><Play size={17} /><div><strong>本次回测</strong><span>品种、周期与退出规则</span></div></div>
         <Form form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["5m"], kline_count: 240, max_holding_bars: 60, patterns: ["head_shoulders_top", "inverse_head_shoulders"], alert_types: ["right_shoulder_confirmed", "head_shoulders_top_pullback", "inverse_head_shoulders_pullback"], rule_keys: DEFAULT_RULE_KEYS }}>
           <Form.Item name="name" label="回测名称"><Input placeholder="留空自动按时间命名" /></Form.Item>
+          <Form.Item label="品种分组" className="backtest-symbol-group-item">
+            <div className="backtest-symbol-group-picker">
+              <Select
+                allowClear
+                value={selectedSymbolGroupId}
+                placeholder="选择已保存的分组"
+                loading={symbolGroupsQuery.isLoading}
+                onChange={applySymbolGroup}
+                options={(symbolGroupsQuery.data || []).map((group) => ({ value: group.id, label: `${group.name} (${group.symbols.length})` }))}
+              />
+              <Tooltip title="将当前选中的品种保存为新分组"><Button htmlType="button" icon={<Save size={16} />} onClick={openSymbolGroupModal} /></Tooltip>
+              {selectedSymbolGroup ? <Popconfirm title={`删除分组“${selectedSymbolGroup.name}”？`} okText="删除" cancelText="取消" onConfirm={() => deleteSymbolGroupMutation.mutate(selectedSymbolGroup.id)}>
+                <Button htmlType="button" danger icon={<Trash2 size={16} />} loading={deleteSymbolGroupMutation.isPending} />
+              </Popconfirm> : null}
+            </div>
+          </Form.Item>
           <Form.Item name="symbols" label="回测品种" rules={[{ required: true, message: "至少选择一个品种" }]}><Select mode="multiple" showSearch maxTagCount="responsive" placeholder="搜索并加入本次回测" options={symbolOptions} optionFilterProp="searchText" /></Form.Item>
           <Form.Item name="timeframes" label="回测周期" rules={[{ required: true }]}><Checkbox.Group className="backtest-check-grid" options={TIMEFRAMES} /></Form.Item>
           <div className="backtest-number-grid">

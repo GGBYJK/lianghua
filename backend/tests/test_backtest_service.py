@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 from datetime import datetime
 
-from app.backtest_schemas import BacktestCreateRequest
+from app.backtest_schemas import BacktestCreateRequest, BacktestSymbolGroupCreateRequest
 from app.backtest_service import _simulate_order, _summaries
 from app.backtest_store import _run_dict, default_backtest_name
 from app.trading_store import with_utc_timestamps
@@ -122,6 +122,16 @@ def test_request_rejects_more_than_fifty_market_combinations() -> None:
             alert_types=["right_shoulder_confirmed"],
             take_profit_rules=[{"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1}],
         )
+
+
+def test_symbol_group_normalizes_name_and_duplicate_symbols() -> None:
+    group = BacktestSymbolGroupCreateRequest(
+        name="  黑色系  ",
+        symbols=[" SHFE.rb2610 ", "DCE.i2609", "SHFE.rb2610", ""],
+    )
+
+    assert group.name == "黑色系"
+    assert group.symbols == ["SHFE.rb2610", "DCE.i2609"]
 
 
 def test_database_timestamps_are_serialized_as_utc() -> None:

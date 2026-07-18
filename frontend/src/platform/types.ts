@@ -172,6 +172,16 @@ export type BacktestRequest = {
   take_profit_rules: BacktestRule[];
 };
 
+export type BacktestSymbolGroup = {
+  id: string;
+  name: string;
+  symbols: string[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type BacktestSymbolGroupPayload = Pick<BacktestSymbolGroup, "name" | "symbols">;
+
 export type BacktestSummary = {
   id: number;
   rule_key: string;

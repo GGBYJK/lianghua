@@ -15,6 +15,8 @@ import type {
   BacktestRequest,
   BacktestRun,
   BacktestSeries,
+  BacktestSymbolGroup,
+  BacktestSymbolGroupPayload,
 } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || window.location.origin;
@@ -138,6 +140,16 @@ export const platformApi = {
     method: "PUT", body: JSON.stringify(payload),
   }),
   backtests: () => request<BacktestRun[]>("/api/backtests?limit=100"),
+  backtestSymbolGroups: () => request<BacktestSymbolGroup[]>("/api/backtests/symbol-groups"),
+  createBacktestSymbolGroup: (payload: BacktestSymbolGroupPayload) => request<BacktestSymbolGroup>("/api/backtests/symbol-groups", {
+    method: "POST", body: JSON.stringify(payload),
+  }),
+  updateBacktestSymbolGroup: (groupId: string, payload: BacktestSymbolGroupPayload) => request<BacktestSymbolGroup>(`/api/backtests/symbol-groups/${encodeURIComponent(groupId)}`, {
+    method: "PUT", body: JSON.stringify(payload),
+  }),
+  deleteBacktestSymbolGroup: (groupId: string) => request<{ ok: boolean }>(`/api/backtests/symbol-groups/${encodeURIComponent(groupId)}`, {
+    method: "DELETE",
+  }),
   backtest: (runId: string) => request<BacktestRun>(`/api/backtests/${runId}`),
   createBacktest: (payload: BacktestRequest) => request<BacktestRun>("/api/backtests", {
     method: "POST", body: JSON.stringify(payload),

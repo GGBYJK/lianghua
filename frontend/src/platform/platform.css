@@ -302,6 +302,10 @@ button, input, select { letter-spacing: 0; }
 .backtest-config .ant-select,
 .backtest-config .ant-input-number { width: 100%; }
 
+.backtest-symbol-group-item { margin-bottom: 12px !important; }
+.backtest-symbol-group-picker { display: grid; grid-template-columns: minmax(0, 1fr) 38px auto; gap: 6px; }
+.backtest-symbol-group-picker .ant-btn { width: 38px; padding: 0; }
+
 .backtest-symbol-option { width: 100%; display: grid; grid-template-columns: 82px minmax(80px, 1fr) auto; align-items: center; gap: 8px; }
 .backtest-symbol-option strong { font-family: Consolas, monospace; }
 .backtest-symbol-option > span { overflow: hidden; color: #697570; text-overflow: ellipsis; white-space: nowrap; }

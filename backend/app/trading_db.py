@@ -375,6 +375,19 @@ backtest_errors = Table(
     Index("idx_backtest_errors_run", "run_id"),
 )
 
+backtest_symbol_groups = Table(
+    "backtest_symbol_groups",
+    metadata,
+    Column("id", String(36), primary_key=True),
+    Column("user_id", BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("name", String(80), nullable=False),
+    Column("symbols_json", Text, nullable=False),
+    Column("created_at", DateTime, nullable=False, server_default=func.now()),
+    Column("updated_at", DateTime, nullable=False, server_default=func.now(), onupdate=func.now()),
+    UniqueConstraint("user_id", "name", name="uq_backtest_symbol_groups_user_name"),
+    Index("idx_backtest_symbol_groups_user_updated", "user_id", "updated_at"),
+)
+
 worker_leases = Table(
     "worker_leases",
     metadata,
