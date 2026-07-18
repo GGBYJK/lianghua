@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from .backtest_schemas import BacktestCreateRequest
-from .backtest_service import build_backtest_export
+from .backtest_service import build_backtest_export, process_next_backtest_run
 from .backtest_store import (
     BacktestStoreError,
     create_backtest_run,
@@ -29,12 +29,20 @@ def _not_found(exc: BacktestStoreError) -> HTTPException:
     return HTTPException(status_code=404, detail=str(exc))
 
 
+async def _drain_backtest_queue() -> None:
+    while await process_next_backtest_run():
+        pass
+
+
 @router.post("")
-def create_run(
+async def create_run(
     payload: BacktestCreateRequest,
+    background_tasks: BackgroundTasks,
     user: dict[str, object] = Depends(require_permission("market.read")),
 ) -> dict[str, object]:
-    return create_backtest_run(_user_id(user), payload.model_dump())
+    run = create_backtest_run(_user_id(user), payload.model_dump())
+    background_tasks.add_task(_drain_backtest_queue)
+    return run
 
 
 @router.get("")

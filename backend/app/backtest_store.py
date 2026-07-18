@@ -170,13 +170,25 @@ def finish_backtest_run(run_id: str, status: str, signals: int, orders: int, err
 
 def request_backtest_cancel(user_id: int, run_id: str) -> None:
     with get_engine().begin() as connection:
-        result = connection.execute(update(backtest_runs).where(and_(
+        row = connection.execute(select(backtest_runs.c.status).where(and_(
             backtest_runs.c.id == run_id,
             backtest_runs.c.user_id == user_id,
-            backtest_runs.c.status.in_(["QUEUED", "RUNNING"]),
-        )).values(cancel_requested=True, updated_at=utc_now()))
-        if result.rowcount == 0:
+        )).with_for_update()).mappings().first()
+        if row is None or row["status"] not in {"QUEUED", "RUNNING"}:
             raise BacktestStoreError("回测任务不存在或已结束")
+        if row["status"] == "QUEUED":
+            connection.execute(update(backtest_runs).where(backtest_runs.c.id == run_id).values(
+                status="CANCELLED",
+                cancel_requested=True,
+                progress=100,
+                completed_at=utc_now(),
+                updated_at=utc_now(),
+            ))
+        else:
+            connection.execute(update(backtest_runs).where(backtest_runs.c.id == run_id).values(
+                cancel_requested=True,
+                updated_at=utc_now(),
+            ))
 
 
 def is_backtest_cancel_requested(run_id: str) -> bool:
