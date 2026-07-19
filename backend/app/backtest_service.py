@@ -178,6 +178,20 @@ def _position_quantity(
     return int((budget / margin_per_lot).to_integral_value(rounding=ROUND_FLOOR))
 
 
+def _position_margin(order: dict[str, Any], contract: dict[str, Any] | None) -> Decimal:
+    if contract is None or not order.get("entry_price") or not order.get("quantity"):
+        return Decimal("0")
+    try:
+        return (
+            decimal_value(order["entry_price"])
+            * Decimal(str(order["quantity"]))
+            * decimal_value(contract["multiplier"])
+            * decimal_value(contract["margin_rate"])
+        )
+    except (KeyError, TypeError, ValueError):
+        return Decimal("0")
+
+
 def _target_price(rule: dict[str, Any], signal: dict[str, Any], entry: float, stop: float, direction: str) -> float | None:
     metrics = signal.get("pattern_metrics") or {}
     if rule["type"] == "PATTERN_TARGET":
@@ -397,7 +411,7 @@ def _has_higher_score(signal: dict[str, Any], previous_signal: dict[str, Any]) -
     )
 
 
-def _simulate_symbol_orders(
+def _simulate_portfolio_orders(
     *,
     run_id: str,
     events: list[dict[str, Any]],
@@ -408,7 +422,7 @@ def _simulate_symbol_orders(
     initial_capital: Decimal = Decimal("1000000"),
     single_symbol_position_pct: Decimal = Decimal("10"),
 ) -> list[dict[str, Any]]:
-    """Simulate each take-profit rule as a single-position strategy per symbol."""
+    """Simulate each rule with one shared capital pool across all selected products."""
     ordered_events = sorted(
         events,
         key=lambda event: (
@@ -419,19 +433,26 @@ def _simulate_symbol_orders(
     )
     orders: list[dict[str, Any]] = []
     for rule in rules:
-        position_until: pd.Timestamp | None = None
+        active_positions: dict[str, dict[str, Any]] = {}
+        reserved_margin = Decimal("0")
         previous_by_head: dict[str, dict[str, Any]] = {}
         for event in ordered_events:
             signal = event["signal"]
             signal_time = _signal_timestamp(signal)
             if signal_time is None:
                 continue
-            if position_until is not None:
-                if signal_time <= position_until:
-                    continue
-                position_until = None
 
-            head_key = _head_key(signal)
+            for product, active in list(active_positions.items()):
+                exit_time = active["exit_time"]
+                if exit_time is not None and signal_time > exit_time:
+                    reserved_margin -= active["margin"]
+                    del active_positions[product]
+
+            product_key = _position_key(str(signal.get("symbol", "")))
+            if product_key in active_positions:
+                continue
+
+            head_key = f"{product_key}|{_head_key(signal)}"
             previous = previous_by_head.get(head_key)
             if previous is not None and previous["exit_reason"] == "STOP_LOSS" and not _has_higher_score(signal, previous["signal"]):
                 continue
@@ -452,13 +473,21 @@ def _simulate_symbol_orders(
             if order["status"] == "INVALID":
                 continue
 
+            margin = _position_margin(order, event["contract"])
+            if reserved_margin + margin > initial_capital:
+                continue
+
             previous_by_head[head_key] = {"signal": signal, "exit_reason": order["exit_reason"]}
-            if order["status"] == "INCOMPLETE":
-                position_until = pd.Timestamp.max
-            elif order["exit_time"] is not None:
-                position_until = pd.Timestamp(order["exit_time"])
+            exit_time = pd.Timestamp(order["exit_time"]) if order["exit_time"] is not None else None
+            active_positions[product_key] = {"exit_time": exit_time, "margin": margin}
+            reserved_margin += margin
             orders.append(order)
     return orders
+
+
+def _simulate_symbol_orders(**kwargs: Any) -> list[dict[str, Any]]:
+    """Backward-compatible name for the shared-capital order simulator."""
+    return _simulate_portfolio_orders(**kwargs)
 
 
 def _entry_condition_streams(conditions: list[str]) -> tuple[list[str], set[str]]:
@@ -560,7 +589,7 @@ async def process_next_backtest_run() -> bool:
     completed = 0
     errors = 0
     try:
-        events_by_product: dict[str, list[dict[str, Any]]] = {}
+        all_events: list[dict[str, Any]] = []
         for symbol in request["symbols"]:
             symbol_events: list[dict[str, Any]] = []
             for timeframe in request["timeframes"]:
@@ -614,46 +643,44 @@ async def process_next_backtest_run() -> bool:
                     add_backtest_error(run_id, symbol, timeframe, str(exc))
                 completed += 1
                 update_backtest_progress(run_id, completed, signal_count, len(all_orders))
-            if symbol_events:
-                events_by_product.setdefault(_position_key(symbol), []).extend(symbol_events)
+            all_events.extend(symbol_events)
         configured_conditions = [*request.get("entry_conditions", []), *request.get("other_entry_conditions", [])]
         entry_streams, pullback_types = _entry_condition_streams(configured_conditions)
-        for product_events in events_by_product.values():
-            for entry_condition in entry_streams:
-                stream_events = [
-                    event for event in product_events
-                    if (
-                        event["signal"].get("alert_type") == entry_condition
-                        or (
-                            entry_condition != "pullback"
-                            and event["signal"].get("alert_type") in pullback_types
-                        )
-                        or (
-                            entry_condition == "pullback"
-                            and event["signal"].get("alert_type") in pullback_types
-                        )
+        for entry_condition in entry_streams:
+            stream_events = [
+                event for event in all_events
+                if (
+                    event["signal"].get("alert_type") == entry_condition
+                    or (
+                        entry_condition != "pullback"
+                        and event["signal"].get("alert_type") in pullback_types
                     )
-                ]
-                if not stream_events:
-                    continue
-                symbol_orders = await asyncio.to_thread(
-                    _simulate_symbol_orders,
-                    run_id=run_id,
-                    events=stream_events,
-                    rules=request["take_profit_rules"],
-                    max_holding_bars=(
-                        int(request["max_holding_bars"])
-                        if request.get("max_holding_bars") is not None
-                        else None
-                    ),
-                    stop_loss_qtr_multiplier=float(request.get("stop_loss_qtr_multiplier", 0.5)),
-                    entry_condition=entry_condition,
-                    initial_capital=Decimal(str(request.get("initial_capital", 1_000_000))),
-                    single_symbol_position_pct=Decimal(str(request.get("single_symbol_position_pct", 10))),
+                    or (
+                        entry_condition == "pullback"
+                        and event["signal"].get("alert_type") in pullback_types
+                    )
                 )
-                save_backtest_orders(symbol_orders)
-                all_orders.extend(symbol_orders)
-                update_backtest_progress(run_id, completed, signal_count, len(all_orders))
+            ]
+            if not stream_events:
+                continue
+            portfolio_orders = await asyncio.to_thread(
+                _simulate_portfolio_orders,
+                run_id=run_id,
+                events=stream_events,
+                rules=request["take_profit_rules"],
+                max_holding_bars=(
+                    int(request["max_holding_bars"])
+                    if request.get("max_holding_bars") is not None
+                    else None
+                ),
+                stop_loss_qtr_multiplier=float(request.get("stop_loss_qtr_multiplier", 0.5)),
+                entry_condition=entry_condition,
+                initial_capital=Decimal(str(request.get("initial_capital", 1_000_000))),
+                single_symbol_position_pct=Decimal(str(request.get("single_symbol_position_pct", 10))),
+            )
+            save_backtest_orders(portfolio_orders)
+            all_orders.extend(portfolio_orders)
+            update_backtest_progress(run_id, completed, signal_count, len(all_orders))
         replace_backtest_summaries(
             run_id,
             _summaries(

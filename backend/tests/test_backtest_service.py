@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.backtest_schemas import BacktestCreateRequest, BacktestSymbolGroupCreateRequest
-from app.backtest_service import _backtest_shape_config, _filter_backtest_signals, _position_key, _position_quantity, _simulate_order, _simulate_symbol_orders, _stop_price, _summaries
+from app.backtest_service import _backtest_shape_config, _filter_backtest_signals, _position_key, _position_quantity, _simulate_order, _simulate_portfolio_orders, _simulate_symbol_orders, _stop_price, _summaries
 from app.backtest_store import _run_dict, default_backtest_name
 from app.strategy import HeadShoulderTopConfig, should_emit_pullback_alert
 from app.trading_store import with_utc_timestamps
@@ -85,6 +85,46 @@ def test_position_quantity_uses_initial_capital_and_single_symbol_position_limit
     )
 
     assert quantity == 19
+
+
+def test_multi_product_backtest_skips_signals_until_shared_capital_is_released() -> None:
+    data = frame([
+        (100, 101, 99, 100),
+        (100, 101, 99, 100),
+        (100, 106, 99, 105),
+        (100, 101, 99, 100),
+    ])
+    contract = {
+        "multiplier": Decimal("1"),
+        "margin_rate": Decimal("1"),
+        "price_tick": Decimal("0"),
+        "fee_mode": "FIXED",
+        "fee_value": Decimal("0"),
+    }
+    first = signal_for_bar(0, "2026-07-17T08:30:00")
+    first["symbol"] = "DCE.a2609"
+    skipped = signal_for_bar(1, "2026-07-17T08:35:00")
+    skipped["symbol"] = "DCE.b2609"
+    after_release = signal_for_bar(3, "2026-07-17T08:40:00")
+    after_release["symbol"] = "DCE.b2609"
+
+    orders = _simulate_portfolio_orders(
+        run_id="run",
+        events=[
+            {"series_id": "b", "frame": data, "signal": after_release, "contract": contract},
+            {"series_id": "b", "frame": data, "signal": skipped, "contract": contract},
+            {"series_id": "a", "frame": data, "signal": first, "contract": contract},
+        ],
+        rules=[{"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1}],
+        max_holding_bars=None,
+        stop_loss_qtr_multiplier=0.5,
+        initial_capital=Decimal("1000"),
+        single_symbol_position_pct=Decimal("60"),
+    )
+
+    assert [order["symbol"] for order in orders] == ["DCE.a2609", "DCE.b2609"]
+    assert orders[0]["status"] == "CLOSED"
+    assert orders[1]["status"] == "INCOMPLETE"
 
 
 def test_entry_and_exit_use_the_trigger_candle_close() -> None:
