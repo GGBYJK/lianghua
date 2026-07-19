@@ -28,7 +28,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { listContracts } from "../api";
 import { downloadBacktest, platformApi } from "./api";
-import { BacktestChart } from "./BacktestChart";
+import { BacktestChartPanel } from "./BacktestChartPanel";
 import { BacktestEquityChart } from "./BacktestEquityChart";
 import type { BacktestOrder, BacktestRequest, BacktestRule, BacktestRun, BacktestSummary } from "./types";
 import { formatApiDateTime, formatMarketDateTime } from "../time";
@@ -124,7 +124,8 @@ export default function BacktestPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({ symbol: "", timeframe: "", rule_key: "", exit_reason: "" });
-  const [marketKey, setMarketKey] = useState("");
+  const [chartSymbol, setChartSymbol] = useState("");
+  const [chartTimeframes, setChartTimeframes] = useState<string[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<BacktestOrder | null>(null);
   const [equityRuleKey, setEquityRuleKey] = useState("");
   const [chartRuleKey, setChartRuleKey] = useState("");
@@ -150,7 +151,8 @@ export default function BacktestPage() {
   const symbolGroupsQuery = useQuery({ queryKey: ["backtest-symbol-groups"], queryFn: platformApi.backtestSymbolGroups, staleTime: 60_000 });
 
   useEffect(() => {
-    setMarketKey("");
+    setChartSymbol("");
+    setChartTimeframes([]);
     setSelectedOrder(null);
     setEquityRuleKey("");
     setChartRuleKey("");
@@ -159,10 +161,6 @@ export default function BacktestPage() {
   }, [selectedRunId]);
 
   const detail = detailQuery.data;
-  useEffect(() => {
-    const first = detail?.markets?.[0];
-    if (first && !marketKey) setMarketKey(`${first.symbol}|${first.timeframe}`);
-  }, [detail?.markets, marketKey]);
 
   const ruleCatalog = useMemo(() => [...BUILTIN_RULES, ...customRules], [customRules]);
   const configuredSymbols = useMemo(() => new Set((specsQuery.data || []).filter((item) => item.enabled).map((item) => item.symbol.toLowerCase())), [specsQuery.data]);
@@ -241,14 +239,6 @@ export default function BacktestPage() {
     tableContent.addEventListener("scroll", syncTopScroll);
     return () => tableContent.removeEventListener("scroll", syncTopScroll);
   }, [ordersQuery.data, ordersQuery.isLoading]);
-  const [marketSymbol, marketTimeframe] = marketKey.split("|");
-  const seriesQuery = useQuery({
-    queryKey: ["backtest-series", selectedRunId, marketSymbol, marketTimeframe],
-    queryFn: () => platformApi.backtestSeries(selectedRunId!, marketSymbol, marketTimeframe),
-    enabled: Boolean(selectedRunId && marketSymbol && marketTimeframe),
-    staleTime: Infinity,
-  });
-
   function submit(values: Record<string, unknown>) {
     const selectedKeys = values.rule_keys as string[];
     const maxHoldingBars = values.max_holding_bars == null ? undefined : Number(values.max_holding_bars);
@@ -315,7 +305,8 @@ export default function BacktestPage() {
 
   function openOrder(order: BacktestOrder) {
     setSelectedOrder(order);
-    setMarketKey(`${order.symbol}|${order.timeframe}`);
+    setChartSymbol(order.symbol);
+    setChartTimeframes([order.timeframe]);
     setChartRuleKey("");
     setActiveTab("chart");
   }
@@ -324,20 +315,16 @@ export default function BacktestPage() {
   const best = summaries[0];
   const selectedEquityRuleKey = equityRuleKey || best?.rule_key || "";
   const selectedChartRuleKey = chartRuleKey;
-  const chartOrderParams = useMemo(() => new URLSearchParams({
-    page: "1",
-    page_size: "5000",
-    symbol: marketSymbol,
-    timeframe: marketTimeframe,
-    rule_key: selectedChartRuleKey,
-  }), [marketSymbol, marketTimeframe, selectedChartRuleKey]);
-  const chartOrdersQuery = useQuery({
-    queryKey: ["backtest-chart-orders", selectedRunId, chartOrderParams.toString()],
-    queryFn: () => platformApi.backtestOrders(selectedRunId!, chartOrderParams),
-    enabled: Boolean(selectedRunId && marketSymbol && marketTimeframe && selectedChartRuleKey),
-    staleTime: Infinity,
-  });
-  const chartOrders = selectedChartRuleKey ? chartOrdersQuery.data?.items || [] : selectedOrder ? [selectedOrder] : [];
+  const selectedChartSymbol = chartSymbol;
+  const chartProductMarkets = (detail?.markets || []).filter((item) => item.symbol === selectedChartSymbol);
+  const chartMarkets = (detail?.markets || [])
+    .filter((item) => item.symbol === selectedChartSymbol && chartTimeframes.includes(item.timeframe))
+    .sort((left, right) => TIMEFRAMES.findIndex((item) => item.value === left.timeframe) - TIMEFRAMES.findIndex((item) => item.value === right.timeframe));
+  const chartSymbolOptions = (detail?.markets || [])
+    .map((item) => item.symbol)
+    .filter((symbol, index, items) => items.indexOf(symbol) === index)
+    .map((symbol) => ({ value: symbol, label: symbol }));
+  const chartTimeframeOptions = TIMEFRAMES.filter((item) => chartProductMarkets.some((market) => market.timeframe === item.value));
   const equityCurveQuery = useQuery({
     queryKey: ["backtest-equity-curve", selectedRunId, selectedEquityRuleKey],
     queryFn: () => platformApi.backtestEquityCurve(selectedRunId!, selectedEquityRuleKey),
@@ -353,7 +340,7 @@ export default function BacktestPage() {
     { title: "净收益", dataIndex: "net_pnl", align: "right", width: 110, render: (value) => value == null ? <Tooltip title="部分或全部品种未配置合约成本参数">--</Tooltip> : <span className={Number(value) >= 0 ? "profit" : "loss"}>{number(value)}</span> },
     { title: "平均R", dataIndex: "avg_r", align: "right", width: 88, render: (value) => number(value, 3) },
     { title: "累计R", dataIndex: "total_r", align: "right", width: 88, render: (value) => number(value, 2) },
-    { title: "收益因子", dataIndex: "profit_factor", align: "right", width: 96, render: (value) => number(value, 2) },
+    { title: <span className="backtest-column-title">收益因子<Tooltip title="收益因子 = 所有盈利的总和 ÷ 所有亏损的绝对值"><CircleHelp className="backtest-column-help" size={14} /></Tooltip></span>, dataIndex: "profit_factor", align: "right", width: 96, render: (value) => number(value, 2) },
     { title: "平均持有", dataIndex: "avg_holding_bars", align: "right", width: 100, render: (value) => `${number(value, 1)} 根` },
     { title: "不完整", dataIndex: "incomplete", width: 78 },
   ];
@@ -386,16 +373,16 @@ export default function BacktestPage() {
   const selectedOrderDetails = selectedOrder ? [
     { label: "品种", value: selectedOrder.symbol },
     { label: "周期", value: selectedOrder.timeframe },
-    { label: "止盈条件", value: selectedOrder.rule_label },
     { label: "方向", value: <Tag color={selectedOrder.direction === "LONG" ? "red" : "green"}>{directionLabel(selectedOrder)}</Tag> },
     { label: "结果", value: exitTag(selectedOrder.exit_reason, selectedOrder.status) },
-    { label: "手数", value: selectedOrder.cost_available ? `${selectedOrder.quantity} 手` : "--" },
-    { label: "形态质量评分", value: number(selectedOrder.signal.pattern_score ?? selectedOrder.score, 0) },
-    { label: "趋势评分", value: number(selectedOrder.signal.score, 0) },
     { label: "进场价", value: orderPrice(selectedOrder.symbol, selectedOrder.entry_price) },
     { label: "出场价", value: orderPrice(selectedOrder.symbol, selectedOrder.exit_price) },
     { label: "止损价", value: orderPrice(selectedOrder.symbol, selectedOrder.stop_price) },
     { label: "目标价", value: orderPrice(selectedOrder.symbol, selectedOrder.target_price) },
+    { label: "手数", value: selectedOrder.cost_available ? `${selectedOrder.quantity} 手` : "--" },
+    { label: "止盈条件", value: selectedOrder.rule_label },
+    { label: "形态质量评分", value: number(selectedOrder.signal.pattern_score ?? selectedOrder.score, 0) },
+    { label: "趋势评分", value: number(selectedOrder.signal.score, 0) },
     { label: "净收益", value: selectedOrder.net_pnl == null ? "--" : number(selectedOrder.net_pnl) },
     { label: "实际R", value: selectedOrder.r_multiple == null ? "--" : `${number(selectedOrder.r_multiple, 2)}R${selectedOrderRisk == null ? "" : ` (R=${orderPrice(selectedOrder.symbol, selectedOrderRisk)})`}` },
     { label: "持有", value: `${selectedOrder.holding_bars}根K线` },
@@ -405,16 +392,20 @@ export default function BacktestPage() {
 
   const chartView = <div className="backtest-chart-view">
     <div className="backtest-view-toolbar">
-      <Select value={marketKey || undefined} placeholder="选择品种与周期" onChange={(value) => { setMarketKey(value); setSelectedOrder(null); }} options={(detail?.markets || []).map((item) => ({ value: `${item.symbol}|${item.timeframe}`, label: `${item.symbol} / ${item.timeframe} · ${item.row_count}根` }))} />
+      <Select allowClear value={selectedChartSymbol || undefined} placeholder="选择品种" onChange={(value) => { setChartSymbol(value || ""); setChartTimeframes([]); setSelectedOrder(null); }} options={chartSymbolOptions} />
+      <Select mode="multiple" value={chartTimeframes} placeholder="选择周期" disabled={!selectedChartSymbol} onChange={(value) => { setChartTimeframes(value); setSelectedOrder(null); }} options={chartTimeframeOptions} />
       <Select allowClear value={selectedChartRuleKey || undefined} placeholder="选择止盈条件" onChange={(value) => { setChartRuleKey(value || ""); if (value) setSelectedOrder(null); }} options={summaries.map((item) => ({ value: item.rule_key, label: item.rule_label }))} />
-      <span className="selected-order-note">{selectedChartRuleKey ? `${chartOrdersQuery.data?.total || 0} 笔订单` : selectedOrder ? `${selectedOrder.rule_label} · 单笔订单` : "选择止盈条件查看订单结构"}</span>
+      <span className="selected-order-note">{selectedChartRuleKey ? "所选止盈条件将同步展示在全部已选周期图中" : selectedOrder ? `${selectedOrder.rule_label} · 单笔订单` : "选择品种与周期后查看K线结构"}</span>
     </div>
-    {seriesQuery.isLoading || (Boolean(selectedChartRuleKey) && chartOrdersQuery.isLoading) ? <div className="backtest-chart-loading"><Spin /></div> : seriesQuery.data ? <BacktestChart series={seriesQuery.data} orders={chartOrders} /> : <Empty description="暂无K线结构" />}
+    {chartMarkets.length ? <div className="backtest-chart-stack">
+      {chartMarkets.map((market) => <BacktestChartPanel key={`${market.symbol}|${market.timeframe}`} runId={selectedRunId!} symbol={market.symbol} timeframe={market.timeframe} ruleKey={selectedChartRuleKey} selectedOrder={selectedOrder} />)}
+    </div> : <Empty description="暂无K线结构" />}
     {selectedOrder ? <section className="backtest-chart-order-details" aria-label="当前订单详情">
       {selectedOrderDetails.map((item) => {
         const value = item.label === "净收益" ? selectedOrder.net_pnl : item.label === "实际R" ? selectedOrder.r_multiple : null;
         const tone = value == null ? "" : Number(value) > 0 ? "order-detail-positive" : Number(value) < 0 ? "order-detail-negative" : "";
-        return <div key={item.label}><span>{item.label}</span><strong className={[item.label.includes("时间") ? "order-detail-time" : "", tone].filter(Boolean).join(" ")}>{item.value}</strong></div>;
+        const isPrice = ["进场价", "出场价", "止损价", "目标价"].includes(item.label);
+        return <div key={item.label} className={[item.label.includes("时间") ? "backtest-order-detail-time" : "", isPrice ? "backtest-order-detail-price" : ""].filter(Boolean).join(" ")}><span>{item.label}</span><strong className={[item.label.includes("时间") ? "order-detail-time" : "", tone].filter(Boolean).join(" ")}>{item.value}</strong></div>;
       })}
     </section> : null}
   </div>;
