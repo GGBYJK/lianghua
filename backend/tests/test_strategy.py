@@ -73,6 +73,13 @@ ROOT = Path(__file__).resolve().parents[2]
 SAMPLE = ROOT / "sample_data" / "head_shoulders_sample.csv"
 
 
+def test_default_head_shoulder_price_gap_thresholds_preserve_live_monitor_defaults() -> None:
+    config = load_head_shoulder_config("DCE.a2609", "5m")
+
+    assert config.min_head_to_neck_height == 0
+    assert config.min_shoulder_to_neck_height == 0
+
+
 def _pattern_test_df(
     close: list[float],
     *,
@@ -177,13 +184,16 @@ def test_five_minute_config_also_enables_strict_shape_rules() -> None:
 
     assert config_1m.require_head_beyond_shoulders_and_necks is True
     assert config_1m.require_shoulders_between_opposite_neck_and_head is True
+    assert config_1m.min_head_to_neck_height == 0
     assert config_1m.min_shoulder_to_neck_height == 4
     assert config_3m.require_head_beyond_shoulders_and_necks is True
     assert config_3m.require_shoulders_between_opposite_neck_and_head is True
+    assert config_3m.min_head_to_neck_height == 0
     assert config_3m.min_shoulder_to_neck_height == 0
     assert config_3m.max_shoulder_diff_pct == 0.005
     assert config_5m.require_head_beyond_shoulders_and_necks is True
     assert config_5m.require_shoulders_between_opposite_neck_and_head is True
+    assert config_5m.min_head_to_neck_height == 0
     assert config_5m.min_shoulder_to_neck_height == 0
     assert config_5m.max_shoulder_diff_pct == 0.005
     assert config_15m.require_head_beyond_shoulders_and_necks is False
@@ -2427,6 +2437,8 @@ def test_head_shoulders_requires_shoulders_within_0_4_pct_but_not_neckline_diff(
         max_shoulder_diff_pct=0.004,
         min_right_leg_to_left_leg_ratio=0.1,
         max_right_leg_to_left_leg_ratio=10,
+        min_head_to_neck_height=0,
+        min_shoulder_to_neck_height=0,
     )
 
     ok, _, _ = validate_head_shoulders_structure([
@@ -2568,6 +2580,8 @@ def test_head_shoulders_requires_price_tier_head_to_neck_height() -> None:
         max_shoulder_diff_pct=0.5,
         min_right_leg_to_left_leg_ratio=0.1,
         max_right_leg_to_left_leg_ratio=10,
+        min_head_to_neck_height=0,
+        min_shoulder_to_neck_height=0,
     )
 
     cases = [
@@ -2585,7 +2599,7 @@ def test_head_shoulders_requires_price_tier_head_to_neck_height() -> None:
             PivotPoint(12, times[4], head_price - 1, "high"),
         ]
         ok, _, _ = validate_head_shoulders_structure(exact_threshold, config)
-        assert not ok
+        assert ok
 
         one_side_above_threshold = [
             PivotPoint(0, times[0], head_price - 1, "high"),
@@ -2605,6 +2619,8 @@ def test_inverse_head_shoulders_requires_price_tier_head_to_neck_height() -> Non
         max_shoulder_diff_pct=0.5,
         min_right_leg_to_left_leg_ratio=0.1,
         max_right_leg_to_left_leg_ratio=10,
+        min_head_to_neck_height=0,
+        min_shoulder_to_neck_height=0,
     )
 
     ok, reasons, _ = validate_inverse_head_shoulders_structure([
@@ -2626,6 +2642,8 @@ def test_inverse_head_shoulders_price_tier_height_boundaries() -> None:
         max_shoulder_diff_pct=0.5,
         min_right_leg_to_left_leg_ratio=0.1,
         max_right_leg_to_left_leg_ratio=10,
+        min_head_to_neck_height=0,
+        min_shoulder_to_neck_height=0,
     )
 
     cases = [
@@ -2642,7 +2660,7 @@ def test_inverse_head_shoulders_price_tier_height_boundaries() -> None:
             PivotPoint(12, times[4], head_price + 1, "low"),
         ]
         ok, _, _ = validate_inverse_head_shoulders_structure(exact_threshold, config)
-        assert not ok
+        assert ok
 
         one_side_above_threshold = [
             PivotPoint(0, times[0], head_price + 1, "low"),
@@ -2662,6 +2680,8 @@ def test_head_shoulders_requires_at_least_one_shoulder_height_ratio() -> None:
         max_shoulder_diff_pct=0.5,
         min_right_leg_to_left_leg_ratio=0.1,
         max_right_leg_to_left_leg_ratio=10,
+        min_head_to_neck_height=0,
+        min_shoulder_to_neck_height=0,
     )
 
     ok, _, _ = validate_head_shoulders_structure([
@@ -2711,6 +2731,8 @@ def test_inverse_head_shoulders_requires_at_least_one_shoulder_height_ratio() ->
         max_shoulder_diff_pct=0.5,
         min_right_leg_to_left_leg_ratio=0.1,
         max_right_leg_to_left_leg_ratio=10,
+        min_head_to_neck_height=0,
+        min_shoulder_to_neck_height=0,
     )
 
     ok, _, _ = validate_inverse_head_shoulders_structure([
@@ -2732,6 +2754,7 @@ def test_head_shoulders_strict_one_minute_price_rules() -> None:
         max_right_leg_to_left_leg_ratio=10,
         require_head_beyond_shoulders_and_necks=True,
         require_shoulders_between_opposite_neck_and_head=True,
+        min_head_to_neck_height=0,
         min_shoulder_to_neck_height=4,
     )
 
@@ -2794,6 +2817,7 @@ def test_inverse_head_shoulders_strict_one_minute_price_rules() -> None:
         max_right_leg_to_left_leg_ratio=10,
         require_head_beyond_shoulders_and_necks=True,
         require_shoulders_between_opposite_neck_and_head=True,
+        min_head_to_neck_height=0,
         min_shoulder_to_neck_height=4,
     )
 

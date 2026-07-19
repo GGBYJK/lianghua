@@ -1714,10 +1714,10 @@ def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShou
     min_head_to_neck_height = config.min_head_to_neck_height if config.min_head_to_neck_height > 0 else min_head_to_neck_height_by_price(p3.price)
     left_head_to_neck_height = p3.price - p2.price
     right_head_to_neck_height = p3.price - p4.price
-    if left_head_to_neck_height <= min_head_to_neck_height and right_head_to_neck_height <= min_head_to_neck_height:
+    if left_head_to_neck_height < min_head_to_neck_height or right_head_to_neck_height < min_head_to_neck_height:
         return False, [
             f"C到A1/A2高度不足：C-A1 {left_head_to_neck_height:.2f}，C-A2 {right_head_to_neck_height:.2f}，"
-            f"要求至少一侧大于 {min_head_to_neck_height:.2f}"
+            f"两侧均要求不低于 {min_head_to_neck_height:.2f}"
         ], 0
 
     shoulder_diff = abs(p1.price - p5.price) / max(p1.price, p5.price)
@@ -1813,10 +1813,10 @@ def validate_inverse_head_shoulders_structure(
     min_head_to_neck_height = config.min_head_to_neck_height if config.min_head_to_neck_height > 0 else min_head_to_neck_height_by_price(p3.price)
     left_head_to_neck_height = p2.price - p3.price
     right_head_to_neck_height = p4.price - p3.price
-    if left_head_to_neck_height <= min_head_to_neck_height and right_head_to_neck_height <= min_head_to_neck_height:
+    if left_head_to_neck_height < min_head_to_neck_height or right_head_to_neck_height < min_head_to_neck_height:
         return False, [
             f"C到A1/A2高度不足：A1-C {left_head_to_neck_height:.2f}，"
-            f"A2-C {right_head_to_neck_height:.2f}，要求至少一侧大于 {min_head_to_neck_height:.2f}"
+            f"A2-C {right_head_to_neck_height:.2f}，两侧均要求不低于 {min_head_to_neck_height:.2f}"
         ], 0
 
     shoulder_diff = abs(p1.price - p5.price) / max(p1.price, p5.price)

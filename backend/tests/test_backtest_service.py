@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.backtest_schemas import BacktestCreateRequest, BacktestSymbolGroupCreateRequest
-from app.backtest_service import _filter_backtest_signals, _position_key, _position_quantity, _simulate_order, _simulate_symbol_orders, _stop_price, _summaries
+from app.backtest_service import _backtest_shape_config, _filter_backtest_signals, _position_key, _position_quantity, _simulate_order, _simulate_symbol_orders, _stop_price, _summaries
 from app.backtest_store import _run_dict, default_backtest_name
 from app.strategy import HeadShoulderTopConfig, should_emit_pullback_alert
 from app.trading_store import with_utc_timestamps
@@ -21,6 +21,13 @@ def frame(rows: list[tuple[float, float, float, float]]) -> pd.DataFrame:
         "close": [item[3] for item in rows],
         "volume": [100] * len(rows),
     })
+
+
+def test_backtest_uses_its_own_minimum_shape_price_gaps() -> None:
+    config = _backtest_shape_config("DCE.a2609", "5m")
+
+    assert config.min_head_to_neck_height == 10
+    assert config.min_shoulder_to_neck_height == 4
 
 
 def long_signal() -> dict[str, object]:

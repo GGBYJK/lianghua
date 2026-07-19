@@ -36,6 +36,14 @@ from .trading_store import get_contract_spec
 logger = logging.getLogger("app.backtest")
 
 
+def _backtest_shape_config(symbol: str, timeframe: str):
+    return replace(
+        load_head_shoulder_config(symbol, timeframe),
+        min_head_to_neck_height=10.0,
+        min_shoulder_to_neck_height=4.0,
+    )
+
+
 def _analyze_market(
     frame: pd.DataFrame,
     hourly: pd.DataFrame,
@@ -56,7 +64,7 @@ def _analyze_market(
     hourly["datetime"] = pd.to_datetime(hourly["datetime"])
     daily["datetime"] = pd.to_datetime(daily["datetime"])
     config = replace(
-        load_head_shoulder_config(symbol, timeframe),
+        _backtest_shape_config(symbol, timeframe),
         max_signal_age_bars=0,
         pullback_min_pattern_score=other_min_pattern_score,
         pullback_max_trend_score=other_max_trend_score,
