@@ -3,9 +3,10 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 from datetime import datetime
+from decimal import Decimal
 
 from app.backtest_schemas import BacktestCreateRequest, BacktestSymbolGroupCreateRequest
-from app.backtest_service import _filter_backtest_signals, _position_key, _simulate_order, _simulate_symbol_orders, _stop_price, _summaries
+from app.backtest_service import _filter_backtest_signals, _position_key, _position_quantity, _simulate_order, _simulate_symbol_orders, _stop_price, _summaries
 from app.backtest_store import _run_dict, default_backtest_name
 from app.strategy import HeadShoulderTopConfig, should_emit_pullback_alert
 from app.trading_store import with_utc_timestamps
@@ -66,6 +67,17 @@ def test_same_bar_stop_and_target_uses_stop_first() -> None:
 def test_position_key_groups_contract_months_by_product() -> None:
     assert _position_key("DCE.a2609") == "dce.a"
     assert _position_key("SHFE.au2608") == "shfe.au"
+
+
+def test_position_quantity_uses_initial_capital_and_single_symbol_position_limit() -> None:
+    quantity = _position_quantity(
+        initial_capital=Decimal("1000000"),
+        single_symbol_position_pct=Decimal("10"),
+        entry_price=Decimal("4683"),
+        contract={"multiplier": Decimal("10"), "margin_rate": Decimal("0.11")},
+    )
+
+    assert quantity == 19
 
 
 def test_entry_and_exit_use_the_trigger_candle_close() -> None:
@@ -281,6 +293,8 @@ def test_backtest_request_uses_the_default_entry_score_thresholds() -> None:
     assert request.min_trend_score == 65
     assert request.timeframes == ["3m", "5m"]
     assert request.kline_count == 1000
+    assert request.initial_capital == 1_000_000
+    assert request.single_symbol_position_pct == 10
 
 
 def test_entry_condition_and_score_filters_select_only_eligible_signals() -> None:

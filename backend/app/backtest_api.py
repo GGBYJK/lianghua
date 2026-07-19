@@ -17,6 +17,7 @@ from .backtest_store import (
     delete_backtest_symbol_group,
     get_backtest_run,
     get_backtest_series,
+    backtest_equity_curve,
     list_backtest_orders,
     list_backtest_runs,
     list_backtest_symbol_groups,
@@ -118,7 +119,7 @@ def run_detail(
 def run_orders(
     run_id: str,
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=50, ge=1, le=500),
+    page_size: int = Query(default=50, ge=1, le=5000),
     symbol: str | None = None,
     timeframe: str | None = None,
     rule_key: str | None = None,
@@ -132,6 +133,15 @@ def run_orders(
         )
     except BacktestStoreError as exc:
         raise _not_found(exc) from exc
+
+
+@router.get("/{run_id}/equity-curve")
+def run_equity_curve(
+    run_id: str,
+    rule_key: str = Query(min_length=1, max_length=80),
+    user: dict[str, object] = Depends(require_permission("market.read")),
+) -> dict[str, object]:
+    return {"rule_key": rule_key, "items": backtest_equity_curve(_user_id(user), run_id, rule_key)}
 
 
 @router.get("/{run_id}/series")

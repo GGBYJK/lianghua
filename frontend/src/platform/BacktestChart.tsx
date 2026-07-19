@@ -43,7 +43,7 @@ const STRUCTURE_POINTS = [
   ["right_shoulder", "右肩"],
 ] as const;
 
-export function BacktestChart({ series, order }: { series: BacktestSeries; order: BacktestOrder | null }) {
+export function BacktestChart({ series, orders }: { series: BacktestSeries; orders: BacktestOrder[] }) {
   const elementRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -58,33 +58,27 @@ export function BacktestChart({ series, order }: { series: BacktestSeries; order
     const ma20 = candles.map((item) => item.ma?.ma20 ?? null);
     const ma30 = candles.map((item) => item.ma?.ma30 ?? null);
     const ma60 = candles.map((item) => item.ma?.ma60 ?? null);
-    const selectedSignal = order?.signal || null;
-    const structureMarkPoints: Array<Record<string, unknown>> = selectedSignal ? STRUCTURE_POINTS.map(([key, label]) => {
-      const point = signalPoint(selectedSignal, key);
-      const index = point ? rawTimes.indexOf(point.time) : -1;
-      return index >= 0 && point ? { coord: [index, point.price], name: label, value: label, itemStyle: { color: "#6f4a46" } } : null;
-    }).filter((item): item is NonNullable<typeof item> => Boolean(item)) : [];
-    const allSignalMarkPoints: Array<Record<string, unknown>> = series.signals.map((signal) => {
-      const time = signalTime(signal);
-      const index = rawTimes.indexOf(time);
-      const pattern = signal.pattern === "head_shoulders_top" ? "顶" : "底";
-      return index >= 0 ? { coord: [index, candles[index].close], name: pattern, value: pattern } : null;
-    }).filter((item): item is NonNullable<typeof item> => Boolean(item));
-    const markPoints = selectedSignal ? structureMarkPoints : allSignalMarkPoints;
-    if (order?.entry_time) {
-      const index = rawTimes.indexOf(order.entry_time);
-      if (index >= 0) markPoints.push({ coord: [index, Number(order.entry_price)], name: "进", value: "进", itemStyle: { color: "#1168a8" } });
-    }
-    if (order?.exit_time) {
-      const index = rawTimes.indexOf(order.exit_time);
-      if (index >= 0) markPoints.push({ coord: [index, Number(order.exit_price)], name: "出", value: "出", itemStyle: { color: order.exit_reason === "TAKE_PROFIT" ? "#b33a3a" : "#16805b" } });
-    }
-    const selectedNecklineSeries = selectedSignal ? (() => {
-      const leftNeck = signalPoint(selectedSignal, "left_neck");
-      const rightNeck = signalPoint(selectedSignal, "right_neck");
+    const markPoints: Array<Record<string, unknown>> = [];
+    const necklineSeries = orders.flatMap((order, orderIndex) => {
+      const signal = order.signal;
+      STRUCTURE_POINTS.forEach(([key, label]) => {
+        const point = signalPoint(signal, key);
+        const index = point ? rawTimes.indexOf(point.time) : -1;
+        if (index >= 0 && point) markPoints.push({ coord: [index, point.price], name: label, value: label, itemStyle: { color: "#6f4a46" } });
+      });
+      if (order.entry_time && order.entry_price != null) {
+        const index = rawTimes.indexOf(order.entry_time);
+        if (index >= 0) markPoints.push({ coord: [index, Number(order.entry_price)], name: "进", value: "进", symbolOffset: [0, -24], itemStyle: { color: "#1168a8" } });
+      }
+      if (order.exit_time && order.exit_price != null) {
+        const index = rawTimes.indexOf(order.exit_time);
+        if (index >= 0) markPoints.push({ coord: [index, Number(order.exit_price)], name: "出", value: "出", symbolOffset: [0, 24], itemStyle: { color: order.exit_reason === "TAKE_PROFIT" ? "#b33a3a" : "#16805b" } });
+      }
+      const leftNeck = signalPoint(signal, "left_neck");
+      const rightNeck = signalPoint(signal, "right_neck");
       const start = leftNeck ? rawTimes.indexOf(leftNeck.time) : -1;
       const rightIndex = rightNeck ? rawTimes.indexOf(rightNeck.time) : -1;
-      const end = Math.max(rightIndex, rawTimes.indexOf(signalTime(selectedSignal)));
+      const end = Math.max(rightIndex, rawTimes.indexOf(signalTime(signal)));
       if (!leftNeck || !rightNeck || start < 0 || rightIndex < start || end < start) return [];
       const values = new Array(candles.length).fill(null) as Array<number | null>;
       const span = Math.max(1, rightIndex - start);
@@ -92,36 +86,18 @@ export function BacktestChart({ series, order }: { series: BacktestSeries; order
         values[item] = leftNeck.price + ((rightNeck.price - leftNeck.price) * (item - start)) / span;
       }
       return [{
-        name: "颈线",
+        name: `颈线${orderIndex + 1}`,
         type: "line" as const,
         data: values,
         symbol: "none",
         silent: true,
         lineStyle: { color: "#b7791f", width: 1.5, type: "dashed" as const },
       }];
-    })() : [];
-    const allNecklineSeries = series.chart.necklines.map((line, index) => {
-      const values = new Array(candles.length).fill(null) as Array<number | null>;
-      const start = Math.max(0, line.from_index);
-      const end = Math.min(candles.length - 1, line.to_index);
-      const span = Math.max(1, end - start);
-      for (let item = start; item <= end; item += 1) {
-        values[item] = line.from_price + ((line.to_price - line.from_price) * (item - start)) / span;
-      }
-      return {
-        name: `颈线${index + 1}`,
-        type: "line" as const,
-        data: values,
-        symbol: "none",
-        silent: true,
-        lineStyle: { color: line.confirmed ? "#b7791f" : "#7a8582", width: 1, type: "dashed" as const },
-      };
     });
-    const necklineSeries = selectedSignal ? selectedNecklineSeries : allNecklineSeries;
-    const selectedIndexes = selectedSignal ? [
-      ...STRUCTURE_POINTS.map(([key]) => signalPoint(selectedSignal, key)).map((point) => point ? rawTimes.indexOf(point.time) : -1),
-      order?.entry_time ? rawTimes.indexOf(order.entry_time) : -1,
-      order?.exit_time ? rawTimes.indexOf(order.exit_time) : -1,
+    const selectedIndexes = orders.length === 1 ? [
+      ...STRUCTURE_POINTS.map(([key]) => signalPoint(orders[0].signal, key)).map((point) => point ? rawTimes.indexOf(point.time) : -1),
+      orders[0].entry_time ? rawTimes.indexOf(orders[0].entry_time) : -1,
+      orders[0].exit_time ? rawTimes.indexOf(orders[0].exit_time) : -1,
     ].filter((index) => index >= 0) : [];
     const defaultZoomStart = Math.max(0, 100 - Math.min(100, 12000 / Math.max(candles.length, 1)));
     const zoomStart = selectedIndexes.length ? Math.max(0, ((Math.min(...selectedIndexes) - 12) / Math.max(candles.length - 1, 1)) * 100) : defaultZoomStart;
@@ -196,7 +172,7 @@ export function BacktestChart({ series, order }: { series: BacktestSeries; order
       observer.disconnect();
       chart.dispose();
     };
-  }, [series, order]);
+  }, [series, orders]);
 
   return <div ref={elementRef} className="backtest-chart" />;
 }

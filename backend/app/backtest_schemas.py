@@ -24,6 +24,8 @@ class BacktestCreateRequest(BaseModel):
     timeframes: list[Literal["1m", "3m", "5m", "15m", "30m", "1h", "1d"]] = Field(default_factory=lambda: ["3m", "5m"], min_length=1, max_length=7)
     kline_count: int = Field(default=1000, ge=120, le=8000)
     max_holding_bars: int | None = Field(default=None, ge=1, le=500)
+    initial_capital: float = Field(default=1_000_000, gt=0, le=1_000_000_000)
+    single_symbol_position_pct: float = Field(default=10, gt=0, le=100)
     entry_conditions: list[Literal[
         "head_shoulders_top:right_shoulder_confirmed",
         "inverse_head_shoulders:right_shoulder_confirmed",

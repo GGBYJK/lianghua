@@ -29,6 +29,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { listContracts } from "../api";
 import { downloadBacktest, platformApi } from "./api";
 import { BacktestChart } from "./BacktestChart";
+import { BacktestEquityChart } from "./BacktestEquityChart";
 import type { BacktestOrder, BacktestRequest, BacktestRule, BacktestRun, BacktestSummary } from "./types";
 import { formatApiDateTime, formatMarketDateTime } from "../time";
 
@@ -125,6 +126,8 @@ export default function BacktestPage() {
   const [filters, setFilters] = useState({ symbol: "", timeframe: "", rule_key: "", exit_reason: "" });
   const [marketKey, setMarketKey] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<BacktestOrder | null>(null);
+  const [equityRuleKey, setEquityRuleKey] = useState("");
+  const [chartRuleKey, setChartRuleKey] = useState("");
   const [customRules, setCustomRules] = useState<BacktestRule[]>([]);
   const [customDraft, setCustomDraft] = useState({ type: "RR" as "RR" | "QTR", multiplier: 1 });
   const [selectedSymbolGroupId, setSelectedSymbolGroupId] = useState<string>();
@@ -149,6 +152,8 @@ export default function BacktestPage() {
   useEffect(() => {
     setMarketKey("");
     setSelectedOrder(null);
+    setEquityRuleKey("");
+    setChartRuleKey("");
     setPage(1);
     setFilters({ symbol: "", timeframe: "", rule_key: "", exit_reason: "" });
   }, [selectedRunId]);
@@ -253,6 +258,8 @@ export default function BacktestPage() {
       timeframes: values.timeframes as string[],
       kline_count: Number(values.kline_count),
       ...(maxHoldingBars === undefined ? {} : { max_holding_bars: maxHoldingBars }),
+      initial_capital: Number(values.initial_capital),
+      single_symbol_position_pct: Number(values.single_symbol_position_pct),
       entry_conditions: values.entry_conditions as BacktestRequest["entry_conditions"],
       other_entry_conditions: values.other_entry_conditions as BacktestRequest["other_entry_conditions"],
       min_pattern_score: Number(values.min_pattern_score || 0),
@@ -309,11 +316,34 @@ export default function BacktestPage() {
   function openOrder(order: BacktestOrder) {
     setSelectedOrder(order);
     setMarketKey(`${order.symbol}|${order.timeframe}`);
+    setChartRuleKey("");
     setActiveTab("chart");
   }
 
   const summaries = detail?.summaries || [];
   const best = summaries[0];
+  const selectedEquityRuleKey = equityRuleKey || best?.rule_key || "";
+  const selectedChartRuleKey = chartRuleKey;
+  const chartOrderParams = useMemo(() => new URLSearchParams({
+    page: "1",
+    page_size: "5000",
+    symbol: marketSymbol,
+    timeframe: marketTimeframe,
+    rule_key: selectedChartRuleKey,
+  }), [marketSymbol, marketTimeframe, selectedChartRuleKey]);
+  const chartOrdersQuery = useQuery({
+    queryKey: ["backtest-chart-orders", selectedRunId, chartOrderParams.toString()],
+    queryFn: () => platformApi.backtestOrders(selectedRunId!, chartOrderParams),
+    enabled: Boolean(selectedRunId && marketSymbol && marketTimeframe && selectedChartRuleKey),
+    staleTime: Infinity,
+  });
+  const chartOrders = selectedChartRuleKey ? chartOrdersQuery.data?.items || [] : selectedOrder ? [selectedOrder] : [];
+  const equityCurveQuery = useQuery({
+    queryKey: ["backtest-equity-curve", selectedRunId, selectedEquityRuleKey],
+    queryFn: () => platformApi.backtestEquityCurve(selectedRunId!, selectedEquityRuleKey),
+    enabled: Boolean(selectedRunId && selectedEquityRuleKey),
+    staleTime: Infinity,
+  });
   const overviewColumns: ColumnsType<BacktestSummary> = [
     { title: "止盈条件", dataIndex: "rule_label", fixed: "left", width: 132, render: (value) => <strong>{value}</strong> },
     { title: "样本", dataIndex: "sample_count", width: 72 },
@@ -328,18 +358,20 @@ export default function BacktestPage() {
     { title: "不完整", dataIndex: "incomplete", width: 78 },
   ];
   const orderColumns: ColumnsType<BacktestOrder> = [
-    { title: "品种", dataIndex: "symbol", width: 80, render: (value) => <strong className="symbol-cell">{value}</strong> },
-    { title: "周期", dataIndex: "timeframe", width: 52 },
-    { title: "止盈条件", dataIndex: "rule_label", width: 84 },
-    { title: "方向", dataIndex: "direction", width: 124, render: (value, row) => <Tag color={value === "LONG" ? "red" : "green"}>{directionLabel(row)}</Tag> },
+    { title: "品种", dataIndex: "symbol", width: 92, render: (value) => <strong className="symbol-cell">{value}</strong> },
+    { title: "周期", dataIndex: "timeframe", width: 56 },
+    { title: "止盈条件", dataIndex: "rule_label", width: 112 },
+    { title: "方向", dataIndex: "direction", width: 132, render: (value, row) => <Tag color={value === "LONG" ? "red" : "green"}>{directionLabel(row)}</Tag> },
     { title: "结果", width: 64, render: (_, row) => exitTag(row.exit_reason, row.status) },
-    { title: "进场", dataIndex: "entry_price", align: "right", width: 70, render: (value, row) => orderPrice(row.symbol, value) },
-    { title: "出场", dataIndex: "exit_price", align: "right", width: 70, render: (value, row) => orderPrice(row.symbol, value) },
-    { title: "净收益", dataIndex: "net_pnl", align: "right", width: 80, render: (value) => value == null ? "--" : <span className={Number(value) >= 0 ? "profit" : "loss"}>{number(value)}</span> },
-    { title: "R", dataIndex: "r_multiple", align: "right", width: 40, render: (value) => number(value, 2) },
-    { title: "持有", dataIndex: "holding_bars", width: 50, render: (value) => `${value}根` },
-    { title: "进场时间", dataIndex: "entry_time", width: 120, render: (value) => formatMarketDateTime(value) },
-    { title: "出场时间", dataIndex: "exit_time", width: 120, render: (value) => formatMarketDateTime(value) },
+    { title: "手数", dataIndex: "quantity", align: "right", width: 56, render: (value, row) => row.cost_available ? value : "--" },
+    { title: "进场", dataIndex: "entry_price", align: "right", width: 78, render: (value, row) => orderPrice(row.symbol, value) },
+    { title: "出场", dataIndex: "exit_price", align: "right", width: 78, render: (value, row) => orderPrice(row.symbol, value) },
+    { title: "净收益", dataIndex: "net_pnl", align: "right", width: 96, render: (value) => value == null ? "--" : <span className={Number(value) >= 0 ? "profit" : "loss"}>{number(value)}</span> },
+    { title: "手续费", dataIndex: "fees", align: "right", width: 84, render: (value) => value == null ? "--" : number(value) },
+    { title: "R", dataIndex: "r_multiple", align: "right", width: 52, render: (value) => number(value, 2) },
+    { title: "持有", dataIndex: "holding_bars", width: 64, render: (value) => `${value}根` },
+    { title: "进场时间", dataIndex: "entry_time", width: 144, render: (value) => formatMarketDateTime(value) },
+    { title: "出场时间", dataIndex: "exit_time", width: 144, render: (value) => formatMarketDateTime(value) },
     { title: "", width: 38, render: (_, row) => <Tooltip title="查看K线"><Button type="text" icon={<Eye size={16} />} onClick={() => openOrder(row)} /></Tooltip> },
   ];
 
@@ -357,6 +389,7 @@ export default function BacktestPage() {
     { label: "止盈条件", value: selectedOrder.rule_label },
     { label: "方向", value: <Tag color={selectedOrder.direction === "LONG" ? "red" : "green"}>{directionLabel(selectedOrder)}</Tag> },
     { label: "结果", value: exitTag(selectedOrder.exit_reason, selectedOrder.status) },
+    { label: "手数", value: selectedOrder.cost_available ? `${selectedOrder.quantity} 手` : "--" },
     { label: "形态质量评分", value: number(selectedOrder.signal.pattern_score ?? selectedOrder.score, 0) },
     { label: "趋势评分", value: number(selectedOrder.signal.score, 0) },
     { label: "进场价", value: orderPrice(selectedOrder.symbol, selectedOrder.entry_price) },
@@ -373,9 +406,10 @@ export default function BacktestPage() {
   const chartView = <div className="backtest-chart-view">
     <div className="backtest-view-toolbar">
       <Select value={marketKey || undefined} placeholder="选择品种与周期" onChange={(value) => { setMarketKey(value); setSelectedOrder(null); }} options={(detail?.markets || []).map((item) => ({ value: `${item.symbol}|${item.timeframe}`, label: `${item.symbol} / ${item.timeframe} · ${item.row_count}根` }))} />
-      {selectedOrder ? <span className="selected-order-note">{selectedOrder.rule_label} · {selectedOrder.direction} · {exitTag(selectedOrder.exit_reason, selectedOrder.status)}</span> : <span className="selected-order-note">点击订单查看对应形态、颈线及进出场位置</span>}
+      <Select allowClear value={selectedChartRuleKey || undefined} placeholder="选择止盈条件" onChange={(value) => { setChartRuleKey(value || ""); if (value) setSelectedOrder(null); }} options={summaries.map((item) => ({ value: item.rule_key, label: item.rule_label }))} />
+      <span className="selected-order-note">{selectedChartRuleKey ? `${chartOrdersQuery.data?.total || 0} 笔订单` : selectedOrder ? `${selectedOrder.rule_label} · 单笔订单` : "选择止盈条件查看订单结构"}</span>
     </div>
-    {seriesQuery.isLoading ? <div className="backtest-chart-loading"><Spin /></div> : seriesQuery.data ? <BacktestChart series={seriesQuery.data} order={selectedOrder} /> : <Empty description="暂无K线结构" />}
+    {seriesQuery.isLoading || (Boolean(selectedChartRuleKey) && chartOrdersQuery.isLoading) ? <div className="backtest-chart-loading"><Spin /></div> : seriesQuery.data ? <BacktestChart series={seriesQuery.data} orders={chartOrders} /> : <Empty description="暂无K线结构" />}
     {selectedOrder ? <section className="backtest-chart-order-details" aria-label="当前订单详情">
       {selectedOrderDetails.map((item) => {
         const value = item.label === "净收益" ? selectedOrder.net_pnl : item.label === "实际R" ? selectedOrder.r_multiple : null;
@@ -395,8 +429,39 @@ export default function BacktestPage() {
     </div>
     <div className="backtest-orders-top-scroll" ref={topOrderScrollRef} onScroll={syncOrderTableScroll}><div /></div>
     <div className="backtest-orders-table" ref={orderTableRef}>
-      <Table rowKey="id" size="small" tableLayout="fixed" columns={orderColumns} dataSource={ordersQuery.data?.items || []} loading={ordersQuery.isLoading} scroll={{ x: 992 }} pagination={{ current: page, pageSize: 50, total: ordersQuery.data?.total || 0, showSizeChanger: false, onChange: setPage }} onRow={(row) => ({ onDoubleClick: () => openOrder(row) })} />
+      <Table
+        rowKey="id"
+        size="small"
+        tableLayout="fixed"
+        columns={orderColumns}
+        dataSource={ordersQuery.data?.items || []}
+        loading={ordersQuery.isLoading}
+        scroll={{ x: 1290 }}
+        pagination={{ current: page, pageSize: 50, total: ordersQuery.data?.total || 0, showSizeChanger: false, onChange: setPage }}
+        summary={() => {
+          const totals = ordersQuery.data?.totals;
+          return <Table.Summary.Row className="backtest-orders-total-row">
+            <Table.Summary.Cell index={0} colSpan={8}>合计</Table.Summary.Cell>
+            <Table.Summary.Cell index={8} align="right"><span className={Number(totals?.net_pnl || 0) >= 0 ? "profit" : "loss"}>{number(totals?.net_pnl)}</span></Table.Summary.Cell>
+            <Table.Summary.Cell index={9} align="right">{number(totals?.fees)}</Table.Summary.Cell>
+            <Table.Summary.Cell index={10} colSpan={5} />
+          </Table.Summary.Row>;
+        }}
+        onRow={(row) => ({ onDoubleClick: () => openOrder(row) })}
+      />
     </div>
+  </div>;
+
+  const equityView = <div className="backtest-equity-view">
+    <div className="backtest-view-toolbar">
+      <Select
+        value={selectedEquityRuleKey || undefined}
+        placeholder="选择止盈条件"
+        onChange={setEquityRuleKey}
+        options={summaries.map((item) => ({ value: item.rule_key, label: item.rule_label }))}
+      />
+    </div>
+    {equityCurveQuery.isLoading ? <div className="backtest-chart-loading"><Spin /></div> : equityCurveQuery.isError ? <Alert type="error" showIcon title="收益图加载失败" description="请确认后端服务已重启后重试。" action={<Button size="small" onClick={() => void equityCurveQuery.refetch()}>重试</Button>} /> : equityCurveQuery.data?.items.length ? <BacktestEquityChart curve={equityCurveQuery.data} /> : <Empty description="所选止盈条件暂无已平仓订单" />}
   </div>;
 
   return <div className="backtest-page">
@@ -429,7 +494,7 @@ export default function BacktestPage() {
     <div className="backtest-workbench">
       <aside className="backtest-config">
         <div className="backtest-panel-title"><Play size={17} /><div><strong>本次回测</strong><span>品种、周期与退出规则</span></div></div>
-        <Form form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["3m", "5m"], kline_count: 1000, entry_conditions: ENTRY_CONDITIONS.map((item) => item.value), other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 75, min_trend_score: 65, other_min_pattern_score: 80, other_max_trend_score: 35, stop_loss_qtr_multiplier: 0.5, rule_keys: DEFAULT_RULE_KEYS }}>
+        <Form form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["3m", "5m"], kline_count: 1000, initial_capital: 1000000, single_symbol_position_pct: 10, entry_conditions: ENTRY_CONDITIONS.map((item) => item.value), other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 75, min_trend_score: 65, other_min_pattern_score: 80, other_max_trend_score: 35, stop_loss_qtr_multiplier: 0.5, rule_keys: DEFAULT_RULE_KEYS }}>
           <Form.Item name="name" label="回测名称"><Input placeholder="留空自动按时间命名" /></Form.Item>
           <Form.Item label="品种分组" className="backtest-symbol-group-item">
             <div className="backtest-symbol-group-picker">
@@ -452,6 +517,10 @@ export default function BacktestPage() {
           <div className="backtest-number-grid">
             <Form.Item name="kline_count" label="回测K线数" rules={[{ required: true }]}><InputNumber min={120} max={8000} step={120} /></Form.Item>
             <Form.Item className="backtest-max-holding-item" name="max_holding_bars" label="最大持有K线（选填）"><InputNumber min={1} max={500} placeholder="不限制" /></Form.Item>
+          </div>
+          <div className="backtest-number-grid">
+            <Form.Item name="initial_capital" label="初始资金" rules={[{ required: true }]}><InputNumber min={1} max={1000000000} step={10000} precision={2} addonBefore="¥" /></Form.Item>
+            <Form.Item name="single_symbol_position_pct" label="单品种仓位" rules={[{ required: true }]}><InputNumber min={0.01} max={100} step={0.1} precision={2} addonAfter="%" /></Form.Item>
           </div>
           <section className="backtest-entry-section">
             <Form.Item name="entry_conditions" label="进场形态" dependencies={["other_entry_conditions"]} rules={[({ getFieldValue }) => ({ validator: (_, value: string[]) => value?.length || getFieldValue("other_entry_conditions")?.length ? Promise.resolve() : Promise.reject(new Error("至少选择一个进场形态")) })]}><Checkbox.Group className="backtest-check-grid two" options={ENTRY_CONDITIONS} /></Form.Item>
@@ -509,6 +578,7 @@ export default function BacktestPage() {
             { key: "overview", label: <span><BarChart3 size={15} />止盈对比</span>, children: overview },
             { key: "chart", label: <span><BarChart3 size={15} />K线结构</span>, children: chartView },
             { key: "orders", label: <span><ListChecks size={15} />订单详情</span>, children: ordersView },
+            { key: "equity", label: <span><BarChart3 size={15} />收益图</span>, children: equityView },
           ]} />}
         </> : <div className="backtest-empty">{detailQuery.isLoading ? <><Spin /><strong>正在加载回测详情</strong></> : <Empty description="配置左侧参数并开始策略回测" />}</div>}
       </main>

@@ -339,6 +339,7 @@ backtest_orders = Table(
     Column("alert_type", String(48), nullable=False),
     Column("direction", String(8), nullable=False),
     Column("score", Integer, nullable=False, server_default="0"),
+    Column("quantity", Integer, nullable=False, server_default="1"),
     Column("status", String(24), nullable=False),
     Column("exit_reason", String(24), nullable=True),
     Column("entry_time", DateTime, nullable=True),

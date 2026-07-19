@@ -5,7 +5,7 @@ import json
 import logging
 from dataclasses import replace
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from io import BytesIO
 from typing import Any
 from uuid import uuid4
@@ -141,6 +141,27 @@ def _position_key(symbol: str) -> str:
     return (contract_to_variety(symbol) or symbol).lower()
 
 
+def _position_quantity(
+    initial_capital: Decimal,
+    single_symbol_position_pct: Decimal,
+    entry_price: Decimal,
+    contract: dict[str, Any] | None,
+) -> int:
+    """Return the largest whole-lot position within the per-symbol margin budget."""
+    if contract is None or entry_price <= 0:
+        return 0
+    try:
+        multiplier = decimal_value(contract["multiplier"])
+        margin_rate = decimal_value(contract["margin_rate"])
+    except (KeyError, TypeError, ValueError):
+        return 0
+    margin_per_lot = entry_price * multiplier * margin_rate
+    if multiplier <= 0 or margin_rate <= 0 or margin_per_lot <= 0:
+        return 0
+    budget = initial_capital * single_symbol_position_pct / Decimal("100")
+    return int((budget / margin_per_lot).to_integral_value(rounding=ROUND_FLOOR))
+
+
 def _target_price(rule: dict[str, Any], signal: dict[str, Any], entry: float, stop: float, direction: str) -> float | None:
     metrics = signal.get("pattern_metrics") or {}
     if rule["type"] == "PATTERN_TARGET":
@@ -181,6 +202,8 @@ def _simulate_order(
     max_holding_bars: int | None,
     contract: dict[str, Any] | None,
     stop_loss_qtr_multiplier: float = 0.5,
+    initial_capital: Decimal = Decimal("1000000"),
+    single_symbol_position_pct: Decimal = Decimal("10"),
 ) -> dict[str, Any]:
     direction = signal_direction(str(signal["pattern"]), str(signal["alert_type"]))
     base = {
@@ -196,6 +219,7 @@ def _simulate_order(
         "alert_type": signal["alert_type"],
         "direction": direction,
         "score": int(signal.get("pattern_score") or signal.get("score") or 0),
+        "quantity": 0,
         "status": "INVALID",
         "exit_reason": None,
         "entry_time": None,
@@ -246,6 +270,10 @@ def _simulate_order(
         entry_fill, entry_slip = _fill_price(entry_decimal, open_side, tick, DEFAULT_SLIPPAGE_TICKS)
     else:
         entry_fill, entry_slip = entry_decimal, Decimal("0")
+    quantity = _position_quantity(initial_capital, single_symbol_position_pct, entry_decimal, contract)
+    if contract and quantity < 1:
+        return base
+    base["quantity"] = quantity
     risk = abs(entry_fill - stop_decimal)
     if risk <= 0:
         return base
@@ -297,10 +325,11 @@ def _simulate_order(
     if contract:
         exit_fill, exit_slip = _fill_price(exit_quote, close_side, tick, DEFAULT_SLIPPAGE_TICKS)
         multiplier = decimal_value(contract["multiplier"])
-        gross = (exit_fill - entry_fill) * multiplier if direction == "LONG" else (entry_fill - exit_fill) * multiplier
-        fees = _fee(entry_fill, 1, contract, "OPEN") + _fee(exit_fill, 1, contract, "CLOSE")
+        gross_per_lot = (exit_fill - entry_fill) * multiplier if direction == "LONG" else (entry_fill - exit_fill) * multiplier
+        gross = gross_per_lot * quantity
+        fees = _fee(entry_fill, quantity, contract, "OPEN") + _fee(exit_fill, quantity, contract, "CLOSE")
         net = gross - fees
-        slippage = (entry_slip + exit_slip) * multiplier
+        slippage = (entry_slip + exit_slip) * multiplier * quantity
     else:
         exit_fill, exit_slip = exit_quote, Decimal("0")
         gross = fees = net = slippage = None
@@ -357,6 +386,8 @@ def _simulate_symbol_orders(
     rules: list[dict[str, Any]],
     max_holding_bars: int | None,
     stop_loss_qtr_multiplier: float,
+    initial_capital: Decimal = Decimal("1000000"),
+    single_symbol_position_pct: Decimal = Decimal("10"),
 ) -> list[dict[str, Any]]:
     """Simulate each take-profit rule as a single-position strategy per symbol."""
     ordered_events = sorted(
@@ -395,6 +426,8 @@ def _simulate_symbol_orders(
                 max_holding_bars=max_holding_bars,
                 contract=event["contract"],
                 stop_loss_qtr_multiplier=stop_loss_qtr_multiplier,
+                initial_capital=initial_capital,
+                single_symbol_position_pct=single_symbol_position_pct,
             )
             if order["status"] == "INVALID":
                 continue
@@ -520,6 +553,8 @@ async def process_next_backtest_run() -> bool:
                     else None
                 ),
                 stop_loss_qtr_multiplier=float(request.get("stop_loss_qtr_multiplier", 0.5)),
+                initial_capital=Decimal(str(request.get("initial_capital", 1_000_000))),
+                single_symbol_position_pct=Decimal(str(request.get("single_symbol_position_pct", 10))),
             )
             save_backtest_orders(symbol_orders)
             all_orders.extend(symbol_orders)
@@ -552,7 +587,7 @@ def build_backtest_export(user_id: int, run_id: str) -> tuple[BytesIO, str]:
         rule_sheet.append([row.get(column) for column in rule_columns])
 
     order_sheet = workbook.create_sheet("订单详情")
-    order_columns = ["symbol", "timeframe", "rule_label", "pattern", "alert_type", "direction", "status", "exit_reason", "entry_time", "exit_time", "entry_price", "stop_price", "target_price", "exit_price", "net_pnl", "fees", "r_multiple", "holding_bars", "mfe_r", "mae_r"]
+    order_columns = ["symbol", "timeframe", "rule_label", "pattern", "alert_type", "direction", "quantity", "status", "exit_reason", "entry_time", "exit_time", "entry_price", "stop_price", "target_price", "exit_price", "net_pnl", "fees", "r_multiple", "holding_bars", "mfe_r", "mae_r"]
     order_sheet.append(order_columns)
     for row in orders:
         order_sheet.append([row.get(column) for column in order_columns])

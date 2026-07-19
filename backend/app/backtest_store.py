@@ -344,6 +344,14 @@ def list_backtest_orders(
     base = backtest_orders.join(backtest_runs, backtest_runs.c.id == backtest_orders.c.run_id)
     with get_engine().connect() as connection:
         total = connection.execute(select(func.count()).select_from(base).where(and_(*conditions))).scalar_one()
+        totals = connection.execute(
+            select(
+                func.coalesce(func.sum(backtest_orders.c.net_pnl), Decimal("0")).label("net_pnl"),
+                func.coalesce(func.sum(backtest_orders.c.fees), Decimal("0")).label("fees"),
+            )
+            .select_from(base)
+            .where(and_(*conditions))
+        ).mappings().one()
         rows = connection.execute(
             select(backtest_orders)
             .select_from(base)
@@ -358,11 +366,42 @@ def list_backtest_orders(
             item["signal"] = json.loads(item.pop("signal_json"))
             item["created_at"] = _utc_iso(item.get("created_at"))
             items.append(item)
-        return {"items": items, "total": total, "page": page, "page_size": page_size}
+        return {"items": items, "total": total, "page": page, "page_size": page_size, "totals": dict(totals)}
 
 
 def all_backtest_orders(user_id: int, run_id: str) -> list[dict[str, Any]]:
     return list_backtest_orders(user_id, run_id, page=1, page_size=100000)["items"]
+
+
+def backtest_equity_curve(user_id: int, run_id: str, rule_key: str) -> list[dict[str, Any]]:
+    base = backtest_orders.join(backtest_runs, backtest_runs.c.id == backtest_orders.c.run_id)
+    with get_engine().connect() as connection:
+        rows = connection.execute(
+            select(backtest_orders.c.entry_time, backtest_orders.c.exit_time, backtest_orders.c.net_pnl)
+            .select_from(base)
+            .where(and_(
+                backtest_orders.c.run_id == run_id,
+                backtest_runs.c.user_id == user_id,
+                backtest_orders.c.rule_key == rule_key,
+                backtest_orders.c.status == "CLOSED",
+                backtest_orders.c.net_pnl.is_not(None),
+            ))
+            .order_by(backtest_orders.c.exit_time.asc(), backtest_orders.c.id.asc())
+        ).mappings()
+        cumulative = Decimal("0")
+        points: list[dict[str, Any]] = []
+        for row in rows:
+            net_pnl = Decimal(str(row["net_pnl"]))
+            cumulative += net_pnl
+            points.append({
+                # Backtest candles and orders use market-local, naive timestamps.
+                # Keep the curve on that same timeline as the order details view.
+                "entry_time": row["entry_time"].isoformat() if row["entry_time"] else None,
+                "time": row["exit_time"].isoformat(),
+                "net_pnl": net_pnl,
+                "cumulative_net_pnl": cumulative,
+            })
+        return points
 
 
 def delete_backtest_run(user_id: int, run_id: str) -> None:

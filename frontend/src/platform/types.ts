@@ -167,6 +167,8 @@ export type BacktestRequest = {
   timeframes: string[];
   kline_count: number;
   max_holding_bars?: number | null;
+  initial_capital: number;
+  single_symbol_position_pct: number;
   entry_conditions: Array<
     | "head_shoulders_top:right_shoulder_confirmed"
     | "inverse_head_shoulders:right_shoulder_confirmed"
@@ -264,6 +266,7 @@ export type BacktestOrder = {
   alert_type: string;
   direction: "LONG" | "SHORT";
   score: number;
+  quantity: number;
   status: "INVALID" | "INCOMPLETE" | "CLOSED";
   exit_reason: "TAKE_PROFIT" | "STOP_LOSS" | "TIME_EXIT" | null;
   entry_time: string | null;
@@ -289,6 +292,20 @@ export type BacktestOrdersResponse = {
   total: number;
   page: number;
   page_size: number;
+  totals: {
+    net_pnl: Numeric;
+    fees: Numeric;
+  };
+};
+
+export type BacktestEquityCurve = {
+  rule_key: string;
+  items: Array<{
+    entry_time: string | null;
+    time: string;
+    net_pnl: Numeric;
+    cumulative_net_pnl: Numeric;
+  }>;
 };
 
 export type BacktestSeries = {

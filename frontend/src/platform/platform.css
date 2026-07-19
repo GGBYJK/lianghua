@@ -397,15 +397,21 @@ button, input, select { letter-spacing: 0; }
 
 .backtest-view-toolbar { min-height: 54px; padding: 9px 14px; display: flex; align-items: center; gap: 9px; border-bottom: 1px solid #e0e6e3; }
 .backtest-view-toolbar > .ant-select:first-child { min-width: 240px; }
+.backtest-chart-view .backtest-view-toolbar > .ant-select:nth-child(2) { min-width: 150px; }
 .backtest-filter-toolbar { flex-wrap: wrap; }
 .backtest-filter-toolbar .ant-select { width: 130px; }
 .backtest-orders-top-scroll { height: 16px; margin: 3px 0 0; overflow-x: auto; overflow-y: hidden; }
-.backtest-orders-top-scroll > div { width: 992px; height: 1px; }
+.backtest-orders-top-scroll > div { width: 1290px; height: 1px; }
 .backtest-orders-table .ant-table-content { scrollbar-width: none; }
 .backtest-orders-table .ant-table-content::-webkit-scrollbar { height: 0; }
+.backtest-orders-table .ant-table-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.backtest-orders-table .ant-table-tbody > tr > td:nth-child(13),
+.backtest-orders-table .ant-table-tbody > tr > td:nth-child(14) { line-height: 1.35; white-space: normal; overflow-wrap: anywhere; }
+.backtest-orders-total-row > td { background: #f6f2f1 !important; font-weight: 700; }
 .selected-order-note { min-width: 0; color: #74807b; font-size: 12px; }
 .selected-order-note .ant-tag { margin-left: 6px; }
 .backtest-chart { width: 100%; height: 540px; }
+.backtest-equity-chart { width: 100%; height: 540px; }
 .backtest-chart-loading { height: 540px; display: grid; place-items: center; }
 .backtest-chart-order-details { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-top: 1px solid #e0e6e3; background: #fffdfc; }
 .backtest-chart-order-details > div { min-width: 0; min-height: 82px; padding: 13px 14px; border-right: 1px solid #e0e6e3; border-bottom: 1px solid #e0e6e3; display: flex; flex-direction: column; justify-content: center; gap: 7px; }
