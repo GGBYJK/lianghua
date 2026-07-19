@@ -172,6 +172,8 @@ export type BacktestRequest = {
   entry_conditions: Array<
     | "head_shoulders_top:right_shoulder_confirmed"
     | "inverse_head_shoulders:right_shoulder_confirmed"
+    | "head_shoulders_top:right_neck_confirmed"
+    | "inverse_head_shoulders:right_neck_confirmed"
   >;
   other_entry_conditions: Array<
     | "head_shoulders_top:head_shoulders_top_pullback"
@@ -199,6 +201,7 @@ export type BacktestSummary = {
   id: number;
   rule_key: string;
   rule_label: string;
+  entry_condition: string;
   rule_type: BacktestRule["type"];
   multiplier: Numeric | null;
   sample_count: number;

@@ -2076,6 +2076,32 @@ def check_right_shoulder_midpoint_trigger(
     return False, None, None, None, midpoint_price
 
 
+def check_right_neck_trigger(
+    df: pd.DataFrame,
+    right_neck: PivotPoint,
+    right_shoulder: PivotPoint,
+    config: HeadShoulderTopConfig,
+    *,
+    inverse: bool,
+) -> tuple[bool, int | None, pd.Timestamp | None, float | None]:
+    """Confirm the close has reached the right-neck pivot after the right shoulder."""
+    start_index = right_shoulder.index + 1
+    end_index = min(len(df) - 1, right_shoulder.index + config.max_bars_after_right_shoulder)
+    if start_index >= len(df):
+        return False, None, None, None
+
+    for i in range(start_index, end_index + 1):
+        close_price = float(df.loc[i, "close"])
+        reached = close_price >= right_neck.price if inverse else close_price <= right_neck.price
+        if reached:
+            return True, i, df.loc[i, "datetime"], close_price
+
+        invalidated = close_price < right_shoulder.price if inverse else close_price > right_shoulder.price
+        if invalidated:
+            return False, None, None, None
+    return False, None, None, None
+
+
 def check_neckline_break_then_pullback(
     df: pd.DataFrame,
     left_neck: PivotPoint,
@@ -2147,6 +2173,7 @@ def scan_head_shoulders_top(
     config: HeadShoulderTopConfig,
     hourly_df: pd.DataFrame | None = None,
     daily_df: pd.DataFrame | None = None,
+    include_right_neck_trigger: bool = False,
 ) -> list[HeadShoulderTopSignal]:
     df = df.copy().reset_index(drop=True)
     df["datetime"] = pd.to_datetime(df["datetime"])
@@ -2255,6 +2282,70 @@ def scan_head_shoulders_top(
                     f"触发价 {trigger_price:.2f}，半程价 {midpoint_price:.2f}。"
                 ),
             ))
+
+        if include_right_neck_trigger:
+            neck_triggered, neck_trigger_index, neck_trigger_time, neck_trigger_price = check_right_neck_trigger(
+                df,
+                p4,
+                p5,
+                config,
+                inverse=False,
+            )
+            if neck_triggered and neck_trigger_index is not None and neck_trigger_price is not None:
+                neck_pattern_result = calculate_pattern_score(
+                    df,
+                    left_shoulder=p1,
+                    left_neck=p2,
+                    head=p3,
+                    right_neck=p4,
+                    right_shoulder=p5,
+                    inverse=False,
+                    qtr=qtr,
+                    trigger_index=neck_trigger_index,
+                    trigger_price=neck_trigger_price,
+                    midpoint=p4.price,
+                )
+                neck_alert_pattern_result, neck_ma60_penalty_reason = _apply_ma60_pattern_penalty(
+                    neck_pattern_result,
+                    df,
+                    left_shoulder=p1,
+                    trigger_index=neck_trigger_index,
+                    inverse=False,
+                )
+                if _pattern_quality_allows_alert(neck_alert_pattern_result, config):
+                    signals.append(HeadShoulderTopSignal(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        pattern="head_shoulders_top",
+                        alert_type="right_neck_confirmed",
+                        left_shoulder=p1,
+                        left_neck=p2,
+                        head=p3,
+                        right_neck=p4,
+                        right_shoulder=p5,
+                        neckline_price=neckline_price,
+                        confirmed=False,
+                        score=total_score,
+                        qtr=qtr,
+                        trend_label=trend_label_from_score(total_score, bullish=False),
+                        reasons=[
+                            *reasons,
+                            f"右肩形成后收盘价跌至右颈价 {p4.price:.2f}",
+                            *([neck_ma60_penalty_reason] if neck_ma60_penalty_reason is not None else []),
+                        ],
+                        retest_time=neck_trigger_time,
+                        retest_price=neck_trigger_price,
+                        pattern_score=neck_alert_pattern_result["final_score"],
+                        pattern_raw_score=neck_alert_pattern_result["raw_score"],
+                        pattern_grade=neck_alert_pattern_result["grade"],
+                        pattern_caps=neck_alert_pattern_result["caps"],
+                        pattern_sections=neck_alert_pattern_result["sections"],
+                        pattern_metrics=neck_alert_pattern_result["metrics"],
+                        message=(
+                            f"{symbol} {timeframe} 头肩顶右颈触发，当前评分 {total_score}。"
+                            f"触发收盘价 {neck_trigger_price:.2f}，右颈价 {p4.price:.2f}。"
+                        ),
+                    ))
 
         if should_emit_pullback_alert(total_score, pattern_result, config):
             (
@@ -2367,6 +2458,7 @@ def scan_inverse_head_shoulders(
     config: HeadShoulderTopConfig,
     hourly_df: pd.DataFrame | None = None,
     daily_df: pd.DataFrame | None = None,
+    include_right_neck_trigger: bool = False,
 ) -> list[HeadShoulderTopSignal]:
     df = df.copy().reset_index(drop=True)
     df["datetime"] = pd.to_datetime(df["datetime"])
@@ -2485,6 +2577,70 @@ def scan_inverse_head_shoulders(
                     f"触发价 {trigger_price:.2f}，半程价 {midpoint_price:.2f}。"
                 ),
             ))
+
+        if include_right_neck_trigger:
+            neck_triggered, neck_trigger_index, neck_trigger_time, neck_trigger_price = check_right_neck_trigger(
+                df,
+                p4,
+                p5,
+                config,
+                inverse=True,
+            )
+            if neck_triggered and neck_trigger_index is not None and neck_trigger_price is not None:
+                neck_pattern_result = calculate_pattern_score(
+                    df,
+                    left_shoulder=p1,
+                    left_neck=p2,
+                    head=p3,
+                    right_neck=p4,
+                    right_shoulder=p5,
+                    inverse=True,
+                    qtr=qtr,
+                    trigger_index=neck_trigger_index,
+                    trigger_price=neck_trigger_price,
+                    midpoint=p4.price,
+                )
+                neck_alert_pattern_result, neck_ma60_penalty_reason = _apply_ma60_pattern_penalty(
+                    neck_pattern_result,
+                    df,
+                    left_shoulder=p1,
+                    trigger_index=neck_trigger_index,
+                    inverse=True,
+                )
+                if _pattern_quality_allows_alert(neck_alert_pattern_result, config):
+                    signals.append(HeadShoulderTopSignal(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        pattern="inverse_head_shoulders",
+                        alert_type="right_neck_confirmed",
+                        left_shoulder=p1,
+                        left_neck=p2,
+                        head=p3,
+                        right_neck=p4,
+                        right_shoulder=p5,
+                        neckline_price=neckline_price,
+                        confirmed=False,
+                        score=total_score,
+                        qtr=qtr,
+                        trend_label=trend_label_from_score(total_score, bullish=True),
+                        reasons=[
+                            *reasons,
+                            f"右肩形成后收盘价涨至右颈价 {p4.price:.2f}",
+                            *([neck_ma60_penalty_reason] if neck_ma60_penalty_reason is not None else []),
+                        ],
+                        retest_time=neck_trigger_time,
+                        retest_price=neck_trigger_price,
+                        pattern_score=neck_alert_pattern_result["final_score"],
+                        pattern_raw_score=neck_alert_pattern_result["raw_score"],
+                        pattern_grade=neck_alert_pattern_result["grade"],
+                        pattern_caps=neck_alert_pattern_result["caps"],
+                        pattern_sections=neck_alert_pattern_result["sections"],
+                        pattern_metrics=neck_alert_pattern_result["metrics"],
+                        message=(
+                            f"{symbol} {timeframe} 反向头肩右颈触发，评分 {total_score}。"
+                            f"触发收盘价 {neck_trigger_price:.2f}，右颈价 {p4.price:.2f}。"
+                        ),
+                    ))
 
         if should_emit_pullback_alert(total_score, pattern_result, config):
             (
@@ -2740,9 +2896,26 @@ def scan_head_shoulders(
     config: HeadShoulderTopConfig,
     hourly_df: pd.DataFrame | None = None,
     daily_df: pd.DataFrame | None = None,
+    include_right_neck_trigger: bool = False,
 ) -> list[HeadShoulderTopSignal]:
-    signals = scan_head_shoulders_top(df, symbol=symbol, timeframe=timeframe, config=config, hourly_df=hourly_df, daily_df=daily_df)
-    signals.extend(scan_inverse_head_shoulders(df, symbol=symbol, timeframe=timeframe, config=config, hourly_df=hourly_df, daily_df=daily_df))
+    signals = scan_head_shoulders_top(
+        df,
+        symbol=symbol,
+        timeframe=timeframe,
+        config=config,
+        hourly_df=hourly_df,
+        daily_df=daily_df,
+        include_right_neck_trigger=include_right_neck_trigger,
+    )
+    signals.extend(scan_inverse_head_shoulders(
+        df,
+        symbol=symbol,
+        timeframe=timeframe,
+        config=config,
+        hourly_df=hourly_df,
+        daily_df=daily_df,
+        include_right_neck_trigger=include_right_neck_trigger,
+    ))
     if config.max_signal_age_bars > 0:
         min_right_shoulder_index = max(0, len(df) - config.max_signal_age_bars)
         signals = [

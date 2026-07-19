@@ -29,7 +29,9 @@ class BacktestCreateRequest(BaseModel):
     entry_conditions: list[Literal[
         "head_shoulders_top:right_shoulder_confirmed",
         "inverse_head_shoulders:right_shoulder_confirmed",
-    ]] = Field(default_factory=list, max_length=2)
+        "head_shoulders_top:right_neck_confirmed",
+        "inverse_head_shoulders:right_neck_confirmed",
+    ]] = Field(default_factory=list, max_length=4)
     other_entry_conditions: list[Literal[
         "head_shoulders_top:head_shoulders_top_pullback",
         "inverse_head_shoulders:inverse_head_shoulders_pullback",

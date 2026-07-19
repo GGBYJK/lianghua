@@ -12,22 +12,21 @@ type Props = {
   symbol: string;
   timeframe: string;
   ruleKey: string;
+  summaryEntryCondition: string;
   selectedOrder: BacktestOrder | null;
 };
 
-export function BacktestChartPanel({ runId, symbol, timeframe, ruleKey, selectedOrder }: Props) {
+export function BacktestChartPanel({ runId, symbol, timeframe, ruleKey, summaryEntryCondition, selectedOrder }: Props) {
   const seriesQuery = useQuery({
     queryKey: ["backtest-series", runId, symbol, timeframe],
     queryFn: () => platformApi.backtestSeries(runId, symbol, timeframe),
     staleTime: Infinity,
   });
-  const orderParams = useMemo(() => new URLSearchParams({
-    page: "1",
-    page_size: "5000",
-    symbol,
-    timeframe,
-    rule_key: ruleKey,
-  }), [ruleKey, symbol, timeframe]);
+  const orderParams = useMemo(() => {
+    const params = new URLSearchParams({ page: "1", page_size: "5000", symbol, timeframe, rule_key: ruleKey });
+    if (summaryEntryCondition) params.set("summary_entry_condition", summaryEntryCondition);
+    return params;
+  }, [ruleKey, summaryEntryCondition, symbol, timeframe]);
   const ordersQuery = useQuery({
     queryKey: ["backtest-chart-orders", runId, orderParams.toString()],
     queryFn: () => platformApi.backtestOrders(runId, orderParams),

@@ -123,13 +123,16 @@ def run_orders(
     symbol: str | None = None,
     timeframe: str | None = None,
     rule_key: str | None = None,
+    alert_type: str | None = None,
+    summary_entry_condition: str | None = None,
     exit_reason: str | None = None,
     user: dict[str, object] = Depends(require_permission("market.read")),
 ) -> dict[str, object]:
     try:
         return list_backtest_orders(
             _user_id(user), run_id, page=page, page_size=page_size,
-            symbol=symbol, timeframe=timeframe, rule_key=rule_key, exit_reason=exit_reason,
+            symbol=symbol, timeframe=timeframe, rule_key=rule_key, alert_type=alert_type,
+            summary_entry_condition=summary_entry_condition, exit_reason=exit_reason,
         )
     except BacktestStoreError as exc:
         raise _not_found(exc) from exc

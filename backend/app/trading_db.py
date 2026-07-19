@@ -303,6 +303,7 @@ backtest_rule_summaries = Table(
     Column("run_id", String(36), ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False),
     Column("rule_key", String(80), nullable=False),
     Column("rule_label", String(120), nullable=False),
+    Column("entry_condition", String(80), nullable=False),
     Column("rule_type", String(32), nullable=False),
     Column("multiplier", Numeric(16, 6), nullable=True),
     Column("sample_count", Integer, nullable=False, server_default="0"),
@@ -320,7 +321,7 @@ backtest_rule_summaries = Table(
     Column("total_r", Numeric(20, 8), nullable=False, server_default="0"),
     Column("profit_factor", Numeric(20, 8), nullable=True),
     Column("avg_holding_bars", Numeric(16, 4), nullable=False, server_default="0"),
-    UniqueConstraint("run_id", "rule_key", name="uq_backtest_rule_summary"),
+    UniqueConstraint("run_id", "rule_key", "entry_condition", name="uq_backtest_rule_summary_entry_condition"),
     Index("idx_backtest_rule_summaries_run", "run_id"),
 )
 

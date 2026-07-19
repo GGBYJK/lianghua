@@ -272,6 +272,48 @@ def test_summary_excludes_incomplete_from_win_rate() -> None:
     assert float(result["win_rate"]) == 1
 
 
+def test_summaries_create_one_row_per_take_profit_and_entry_trigger() -> None:
+    rules = [
+        {"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1},
+        {"key": "pattern", "label": "形态量度目标", "type": "PATTERN_TARGET"},
+    ]
+    base = simulate(
+        frame([(100, 101, 99, 100), (100, 106, 99, 105), (105, 106, 104, 105)]),
+        rules[0],
+    )
+    orders = []
+    for rule in rules:
+        for alert_type in (
+            "right_shoulder_confirmed",
+            "right_neck_confirmed",
+            "head_shoulders_top_pullback",
+            "inverse_head_shoulders_pullback",
+        ):
+            orders.append({**base, "id": f"{rule['key']}-{alert_type}", "rule_key": rule["key"], "alert_type": alert_type})
+
+    rows = _summaries(
+        "run",
+        rules,
+        orders,
+        [
+            "head_shoulders_top:right_shoulder_confirmed",
+            "inverse_head_shoulders:right_shoulder_confirmed",
+            "head_shoulders_top:right_neck_confirmed",
+            "inverse_head_shoulders:right_neck_confirmed",
+            "head_shoulders_top:head_shoulders_top_pullback",
+            "inverse_head_shoulders:inverse_head_shoulders_pullback",
+        ],
+    )
+
+    assert {(row["rule_key"], row["entry_condition"]) for row in rows} == {
+        ("rr-1", "right_shoulder_confirmed"),
+        ("rr-1", "right_neck_confirmed"),
+        ("pattern", "right_shoulder_confirmed"),
+        ("pattern", "right_neck_confirmed"),
+    }
+    assert all(row["sample_count"] == 3 for row in rows)
+
+
 def test_request_rejects_more_than_fifty_market_combinations() -> None:
     with pytest.raises(ValueError, match="50"):
         BacktestCreateRequest(
@@ -295,6 +337,22 @@ def test_backtest_request_uses_the_default_entry_score_thresholds() -> None:
     assert request.kline_count == 1000
     assert request.initial_capital == 1_000_000
     assert request.single_symbol_position_pct == 10
+
+
+def test_backtest_request_accepts_right_neck_entry_conditions() -> None:
+    request = BacktestCreateRequest(
+        symbols=["DCE.a2609"],
+        entry_conditions=[
+            "head_shoulders_top:right_neck_confirmed",
+            "inverse_head_shoulders:right_neck_confirmed",
+        ],
+        take_profit_rules=[{"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1}],
+    )
+
+    assert request.entry_conditions == [
+        "head_shoulders_top:right_neck_confirmed",
+        "inverse_head_shoulders:right_neck_confirmed",
+    ]
 
 
 def test_entry_condition_and_score_filters_select_only_eligible_signals() -> None:

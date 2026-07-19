@@ -330,6 +330,8 @@ def list_backtest_orders(
     symbol: str | None = None,
     timeframe: str | None = None,
     rule_key: str | None = None,
+    alert_type: str | None = None,
+    summary_entry_condition: str | None = None,
     exit_reason: str | None = None,
 ) -> dict[str, Any]:
     conditions = [backtest_orders.c.run_id == run_id, backtest_runs.c.user_id == user_id]
@@ -339,6 +341,17 @@ def list_backtest_orders(
         conditions.append(backtest_orders.c.timeframe == timeframe)
     if rule_key:
         conditions.append(backtest_orders.c.rule_key == rule_key)
+    if alert_type:
+        conditions.append(backtest_orders.c.alert_type == alert_type)
+    if summary_entry_condition:
+        pullback_types = ("head_shoulders_top_pullback", "inverse_head_shoulders_pullback")
+        if summary_entry_condition in {"right_shoulder_confirmed", "right_neck_confirmed"}:
+            conditions.append(or_(
+                backtest_orders.c.alert_type == summary_entry_condition,
+                backtest_orders.c.alert_type.in_(pullback_types),
+            ))
+        elif summary_entry_condition == "pullback":
+            conditions.append(backtest_orders.c.alert_type.in_(pullback_types))
     if exit_reason:
         conditions.append(backtest_orders.c.exit_reason == exit_reason)
     base = backtest_orders.join(backtest_runs, backtest_runs.c.id == backtest_orders.c.run_id)

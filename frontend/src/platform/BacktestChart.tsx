@@ -188,7 +188,7 @@ export function BacktestChart({ series, orders }: { series: BacktestSeries; orde
     const zoomEnd = selectedIndexes.length ? Math.min(100, ((Math.max(...selectedIndexes) + 12) / Math.max(candles.length - 1, 1)) * 100) : 100;
     chart.setOption({
       animation: false,
-      backgroundColor: "#fbfcfb",
+      backgroundColor: "#ffffff",
       legend: { top: 8, left: 10, data: ["K线", "MA5", "MA10", "MA20", "MA30", "MA60"], textStyle: { color: "#68736f", fontSize: 11 } },
       tooltip: {
         trigger: "axis",

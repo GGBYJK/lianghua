@@ -47,6 +47,7 @@ from app.strategy import (
     calculate_pattern_score,
     calculate_true_range,
     check_neckline_break_then_pullback,
+    check_right_neck_trigger,
     check_right_shoulder_midpoint_trigger,
     deduplicate_overlapping_signals,
     find_pivots,
@@ -814,6 +815,31 @@ def test_inverse_midpoint_trigger_waits_for_price_to_reach_halfway() -> None:
 
     assert not before[0]
     assert triggered == (True, 2, times[2], 105.0, 105.0)
+
+
+def test_right_neck_trigger_uses_the_trigger_candle_close_in_both_directions() -> None:
+    times = pd.date_range("2026-06-14 11:00:00", periods=4, freq="min")
+    top_frame = pd.DataFrame({"datetime": times, "close": [105.0, 95.1, 95.0, 94.5]})
+    inverse_frame = pd.DataFrame({"datetime": times, "close": [95.0, 104.9, 105.0, 105.5]})
+    config = HeadShoulderTopConfig(max_bars_after_right_shoulder=3)
+
+    top = check_right_neck_trigger(
+        top_frame,
+        PivotPoint(0, times[0], 95.0, "low"),
+        PivotPoint(0, times[0], 100.0, "high"),
+        config,
+        inverse=False,
+    )
+    inverse = check_right_neck_trigger(
+        inverse_frame,
+        PivotPoint(0, times[0], 105.0, "high"),
+        PivotPoint(0, times[0], 100.0, "low"),
+        config,
+        inverse=True,
+    )
+
+    assert top == (True, 2, times[2], 95.0)
+    assert inverse == (True, 2, times[2], 105.0)
 
 
 def test_inverse_pullback_requires_break_then_fall_to_quarter_level() -> None:

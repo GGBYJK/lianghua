@@ -61,7 +61,15 @@ def _analyze_market(
         pullback_min_pattern_score=other_min_pattern_score,
         pullback_max_trend_score=other_max_trend_score,
     )
-    signals = scan_head_shoulders(normalized, symbol, timeframe, config, hourly_df=hourly, daily_df=daily)
+    signals = scan_head_shoulders(
+        normalized,
+        symbol,
+        timeframe,
+        config,
+        hourly_df=hourly,
+        daily_df=daily,
+        include_right_neck_trigger=True,
+    )
     selected = _filter_backtest_signals(
         [signal.to_dict() for signal in signals],
         entry_conditions,
@@ -441,44 +449,80 @@ def _simulate_symbol_orders(
     return orders
 
 
-def _summaries(run_id: str, rules: list[dict[str, Any]], orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _summaries(
+    run_id: str,
+    rules: list[dict[str, Any]],
+    orders: list[dict[str, Any]],
+    entry_conditions: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    conditions = [condition for condition in (entry_conditions or []) if ":" in condition]
+    trigger_keys = list(dict.fromkeys(
+        condition.rsplit(":", 1)[-1]
+        for condition in conditions
+        if condition.rsplit(":", 1)[-1] in {"right_shoulder_confirmed", "right_neck_confirmed"}
+    ))
+    pullback_types = {
+        condition.rsplit(":", 1)[-1]
+        for condition in conditions
+        if condition.rsplit(":", 1)[-1].endswith("_pullback")
+    }
+    if not trigger_keys:
+        trigger_keys = list(dict.fromkeys(
+            str(item.get("alert_type") or "")
+            for item in orders
+            if str(item.get("alert_type") or "") in {"right_shoulder_confirmed", "right_neck_confirmed"}
+        ))
+    if not trigger_keys and pullback_types:
+        trigger_keys = ["pullback"]
+
     rows: list[dict[str, Any]] = []
     for rule in rules:
-        grouped = [item for item in orders if item["rule_key"] == rule["key"] and item["status"] != "INVALID"]
-        closed = [item for item in grouped if item["status"] == "CLOSED"]
-        outcomes = []
-        for item in closed:
-            value = item["net_pnl"] if item["cost_available"] else item["r_multiple"]
-            outcomes.append(Decimal(str(value or 0)))
-        wins = sum(value > 0 for value in outcomes)
-        losses = sum(value < 0 for value in outcomes)
-        breakevens = sum(value == 0 for value in outcomes)
-        rs = [Decimal(str(item["r_multiple"] or 0)) for item in closed]
-        positives = sum((value for value in rs if value > 0), Decimal("0"))
-        negatives = abs(sum((value for value in rs if value < 0), Decimal("0")))
-        costed = [item for item in closed if item["cost_available"]]
-        rows.append({
-            "run_id": run_id,
-            "rule_key": rule["key"],
-            "rule_label": rule["label"],
-            "rule_type": rule["type"],
-            "multiplier": rule.get("multiplier"),
-            "sample_count": len(grouped),
-            "wins": wins,
-            "losses": losses,
-            "breakevens": breakevens,
-            "incomplete": sum(item["status"] == "INCOMPLETE" for item in grouped),
-            "take_profit_hits": sum(item["exit_reason"] == "TAKE_PROFIT" for item in closed),
-            "stop_hits": sum(item["exit_reason"] == "STOP_LOSS" for item in closed),
-            "time_exits": sum(item["exit_reason"] == "TIME_EXIT" for item in closed),
-            "win_rate": Decimal(wins) / Decimal(wins + losses) if wins + losses else Decimal("0"),
-            "gross_pnl": sum((Decimal(str(item["gross_pnl"])) for item in costed), Decimal("0")) if costed else None,
-            "net_pnl": sum((Decimal(str(item["net_pnl"])) for item in costed), Decimal("0")) if costed else None,
-            "avg_r": sum(rs, Decimal("0")) / Decimal(len(rs)) if rs else Decimal("0"),
-            "total_r": sum(rs, Decimal("0")),
-            "profit_factor": positives / negatives if negatives > 0 else None,
-            "avg_holding_bars": Decimal(sum(item["holding_bars"] for item in closed)) / Decimal(len(closed)) if closed else Decimal("0"),
-        })
+        for entry_condition in trigger_keys:
+            grouped = [
+                item for item in orders
+                if item["rule_key"] == rule["key"]
+                and (
+                    item.get("alert_type") == entry_condition
+                    or (entry_condition != "pullback" and item.get("alert_type") in pullback_types)
+                    or (entry_condition == "pullback" and item.get("alert_type") in pullback_types)
+                )
+                and item["status"] != "INVALID"
+            ]
+            closed = [item for item in grouped if item["status"] == "CLOSED"]
+            outcomes = [
+                Decimal(str((item["net_pnl"] if item["cost_available"] else item["r_multiple"]) or 0))
+                for item in closed
+            ]
+            wins = sum(value > 0 for value in outcomes)
+            losses = sum(value < 0 for value in outcomes)
+            breakevens = sum(value == 0 for value in outcomes)
+            rs = [Decimal(str(item["r_multiple"] or 0)) for item in closed]
+            positives = sum((value for value in rs if value > 0), Decimal("0"))
+            negatives = abs(sum((value for value in rs if value < 0), Decimal("0")))
+            costed = [item for item in closed if item["cost_available"]]
+            rows.append({
+                "run_id": run_id,
+                "rule_key": rule["key"],
+                "rule_label": rule["label"],
+                "entry_condition": entry_condition,
+                "rule_type": rule["type"],
+                "multiplier": rule.get("multiplier"),
+                "sample_count": len(grouped),
+                "wins": wins,
+                "losses": losses,
+                "breakevens": breakevens,
+                "incomplete": sum(item["status"] == "INCOMPLETE" for item in grouped),
+                "take_profit_hits": sum(item["exit_reason"] == "TAKE_PROFIT" for item in closed),
+                "stop_hits": sum(item["exit_reason"] == "STOP_LOSS" for item in closed),
+                "time_exits": sum(item["exit_reason"] == "TIME_EXIT" for item in closed),
+                "win_rate": Decimal(wins) / Decimal(wins + losses) if wins + losses else Decimal("0"),
+                "gross_pnl": sum((Decimal(str(item["gross_pnl"])) for item in costed), Decimal("0")) if costed else None,
+                "net_pnl": sum((Decimal(str(item["net_pnl"])) for item in costed), Decimal("0")) if costed else None,
+                "avg_r": sum(rs, Decimal("0")) / Decimal(len(rs)) if rs else Decimal("0"),
+                "total_r": sum(rs, Decimal("0")),
+                "profit_factor": positives / negatives if negatives > 0 else None,
+                "avg_holding_bars": Decimal(sum(item["holding_bars"] for item in closed)) / Decimal(len(closed)) if closed else Decimal("0"),
+            })
     return rows
 
 
@@ -498,7 +542,15 @@ async def process_next_backtest_run() -> bool:
             symbol_events: list[dict[str, Any]] = []
             for timeframe in request["timeframes"]:
                 if is_backtest_cancel_requested(run_id):
-                    replace_backtest_summaries(run_id, _summaries(run_id, request["take_profit_rules"], all_orders))
+                    replace_backtest_summaries(
+                        run_id,
+                        _summaries(
+                            run_id,
+                            request["take_profit_rules"],
+                            all_orders,
+                            [*request.get("entry_conditions", []), *request.get("other_entry_conditions", [])],
+                        ),
+                    )
                     finish_backtest_run(run_id, "CANCELLED", signal_count, len(all_orders))
                     return True
                 try:
@@ -559,7 +611,15 @@ async def process_next_backtest_run() -> bool:
             save_backtest_orders(symbol_orders)
             all_orders.extend(symbol_orders)
             update_backtest_progress(run_id, completed, signal_count, len(all_orders))
-        replace_backtest_summaries(run_id, _summaries(run_id, request["take_profit_rules"], all_orders))
+        replace_backtest_summaries(
+            run_id,
+            _summaries(
+                run_id,
+                request["take_profit_rules"],
+                all_orders,
+                [*request.get("entry_conditions", []), *request.get("other_entry_conditions", [])],
+            ),
+        )
         status = "COMPLETED_WITH_ERRORS" if errors else "COMPLETED"
         finish_backtest_run(run_id, status, signal_count, len(all_orders))
     except Exception as exc:
@@ -581,7 +641,7 @@ def build_backtest_export(user_id: int, run_id: str) -> tuple[BytesIO, str]:
         summary_sheet.append([key, json.dumps(value, ensure_ascii=False) if isinstance(value, (list, dict)) else value])
 
     rule_sheet = workbook.create_sheet("止盈条件对比")
-    rule_columns = ["rule_label", "sample_count", "wins", "losses", "breakevens", "incomplete", "win_rate", "take_profit_hits", "stop_hits", "time_exits", "net_pnl", "avg_r", "total_r", "profit_factor", "avg_holding_bars"]
+    rule_columns = ["rule_label", "entry_condition", "sample_count", "wins", "losses", "breakevens", "incomplete", "win_rate", "take_profit_hits", "stop_hits", "time_exits", "net_pnl", "avg_r", "total_r", "profit_factor", "avg_holding_bars"]
     rule_sheet.append(rule_columns)
     for row in run["summaries"]:
         rule_sheet.append([row.get(column) for column in rule_columns])
