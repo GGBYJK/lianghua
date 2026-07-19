@@ -28,6 +28,7 @@ def test_backtest_uses_its_own_minimum_shape_price_gaps() -> None:
 
     assert config.min_head_to_neck_height == 10
     assert config.min_shoulder_to_neck_height == 4
+    assert config.apply_ma60_pattern_penalty is True
 
 
 def long_signal() -> dict[str, object]:
@@ -137,6 +138,43 @@ def test_entry_and_exit_use_the_trigger_candle_close() -> None:
     assert float(order["target_price"]) == 106
     assert order["exit_reason"] == "TAKE_PROFIT"
     assert float(order["exit_price"]) == 108
+
+
+@pytest.mark.parametrize(("timestamps", "expected_exit_index"), [
+    ([
+        "2026-07-17T13:30:00", "2026-07-17T13:35:00", "2026-07-17T14:50:00",
+        "2026-07-17T14:55:00", "2026-07-17T21:00:00",
+    ], 2),
+    ([
+        "2026-07-17T21:00:00", "2026-07-17T21:05:00", "2026-07-17T22:50:00",
+        "2026-07-17T22:55:00", "2026-07-18T09:00:00",
+    ], 2),
+])
+def test_no_overnight_closes_at_the_penultimate_session_candle(
+    timestamps: list[str],
+    expected_exit_index: int,
+) -> None:
+    data = frame([(100, 101, 99, 100)] * len(timestamps))
+    data["datetime"] = pd.to_datetime(timestamps)
+    signal = long_signal()
+    signal["retest_time"] = timestamps[0]
+    signal["right_shoulder"] = {"time": timestamps[0], "price": 100}
+
+    order = _simulate_order(
+        run_id="run",
+        series_id="series",
+        frame=data,
+        signal=signal,
+        rule={"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1},
+        max_holding_bars=None,
+        contract=None,
+        no_overnight=True,
+    )
+
+    assert order["status"] == "CLOSED"
+    assert order["exit_reason"] == "SESSION_EXIT"
+    assert order["exit_time"] == pd.Timestamp(timestamps[expected_exit_index]).to_pydatetime()
+    assert float(order["exit_price"]) == 100
 
 
 def test_qtr_rule_hits_take_profit() -> None:

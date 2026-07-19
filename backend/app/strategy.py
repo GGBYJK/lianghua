@@ -72,6 +72,7 @@ class HeadShoulderTopConfig:
     min_pattern_score_to_alert: int = 60
     pullback_min_pattern_score: int = PULLBACK_MIN_PATTERN_SCORE
     pullback_max_trend_score: int = PULLBACK_MAX_TREND_SCORE
+    apply_ma60_pattern_penalty: bool = False
     enable_key_zone_trend_score: bool = False
     resistance_zone_min: float = 0.0
     resistance_zone_max: float = 0.0
@@ -1176,7 +1177,7 @@ def _pattern_quality_allows_alert(pattern_result: dict[str, Any], config: HeadSh
     return int(pattern_result["final_score"]) >= config.min_pattern_score_to_alert
 
 
-def _has_close_crossed_ma60_between_left_shoulder_and_trigger(
+def _has_close_on_required_ma60_side_between_left_shoulder_and_trigger(
     df: pd.DataFrame,
     *,
     left_shoulder: PivotPoint,
@@ -1204,8 +1205,11 @@ def _apply_ma60_pattern_penalty(
     left_shoulder: PivotPoint,
     trigger_index: int,
     inverse: bool,
+    enabled: bool,
 ) -> tuple[dict[str, Any], str | None]:
-    crossed = _has_close_crossed_ma60_between_left_shoulder_and_trigger(
+    if not enabled:
+        return pattern_result, None
+    has_required_side = _has_close_on_required_ma60_side_between_left_shoulder_and_trigger(
         df,
         left_shoulder=left_shoulder,
         trigger_index=trigger_index,
@@ -1217,11 +1221,11 @@ def _apply_ma60_pattern_penalty(
             "start_index": left_shoulder.index,
             "end_index": trigger_index,
             "direction": "close_above_ma60" if inverse else "close_below_ma60",
-            "observed": crossed,
-            "penalty": 0 if crossed else 10,
+            "observed": has_required_side,
+            "penalty": 0 if has_required_side else 10,
         },
     }
-    if crossed:
+    if has_required_side:
         return {**pattern_result, "metrics": metrics}, None
 
     original_score = int(pattern_result["final_score"])
@@ -1235,8 +1239,8 @@ def _apply_ma60_pattern_penalty(
             "ma60_penalty_original_score": original_score,
         },
     }
-    direction = "涨破" if inverse else "跌破"
-    return penalized, f"左肩到信号触发区间未出现收盘价{direction} MA60，形态质量评分 -10"
+    direction = "位于 MA60 上方" if inverse else "位于 MA60 下方"
+    return penalized, f"左肩到信号触发区间未出现收盘价{direction}，形态质量评分 -10"
 
 
 def passes_head_neck_bar_limit(
@@ -2247,6 +2251,7 @@ def scan_head_shoulders_top(
             left_shoulder=p1,
             trigger_index=trigger_index,
             inverse=False,
+            enabled=config.apply_ma60_pattern_penalty,
         )
         if _pattern_quality_allows_alert(alert_pattern_result, config):
             signals.append(HeadShoulderTopSignal(
@@ -2311,6 +2316,7 @@ def scan_head_shoulders_top(
                     left_shoulder=p1,
                     trigger_index=neck_trigger_index,
                     inverse=False,
+                    enabled=config.apply_ma60_pattern_penalty,
                 )
                 if _pattern_quality_allows_alert(neck_alert_pattern_result, config):
                     signals.append(HeadShoulderTopSignal(
@@ -2542,6 +2548,7 @@ def scan_inverse_head_shoulders(
             left_shoulder=p1,
             trigger_index=trigger_index,
             inverse=True,
+            enabled=config.apply_ma60_pattern_penalty,
         )
         if _pattern_quality_allows_alert(alert_pattern_result, config):
             signals.append(HeadShoulderTopSignal(
@@ -2606,6 +2613,7 @@ def scan_inverse_head_shoulders(
                     left_shoulder=p1,
                     trigger_index=neck_trigger_index,
                     inverse=True,
+                    enabled=config.apply_ma60_pattern_penalty,
                 )
                 if _pattern_quality_allows_alert(neck_alert_pattern_result, config):
                     signals.append(HeadShoulderTopSignal(

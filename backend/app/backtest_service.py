@@ -41,6 +41,7 @@ def _backtest_shape_config(symbol: str, timeframe: str):
         load_head_shoulder_config(symbol, timeframe),
         min_head_to_neck_height=10.0,
         min_shoulder_to_neck_height=4.0,
+        apply_ma60_pattern_penalty=True,
     )
 
 
@@ -192,6 +193,35 @@ def _position_margin(order: dict[str, Any], contract: dict[str, Any] | None) -> 
         return Decimal("0")
 
 
+def _trading_session_key(timestamp: pd.Timestamp) -> tuple[str, pd.Timestamp] | None:
+    value = pd.Timestamp(timestamp)
+    minute = value.hour * 60 + value.minute
+    if minute >= 21 * 60:
+        return "night", value.normalize()
+    if minute < 9 * 60:
+        return "night", (value - pd.Timedelta(days=1)).normalize()
+    if 9 * 60 <= minute < 15 * 60:
+        return "day", value.normalize()
+    return None
+
+
+def _session_penultimate_exit_index(timestamps: pd.Series, entry_index: int) -> int | None:
+    session_key = _trading_session_key(pd.Timestamp(timestamps.iloc[entry_index]))
+    if session_key is None:
+        return None
+
+    session_indices: list[int] = []
+    for index in range(entry_index, len(timestamps)):
+        if _trading_session_key(pd.Timestamp(timestamps.iloc[index])) != session_key:
+            break
+        session_indices.append(index)
+
+    # A boundary must be present in the data; otherwise the order remains incomplete.
+    if len(session_indices) < 2 or session_indices[-1] == len(timestamps) - 1:
+        return None
+    return session_indices[-2]
+
+
 def _target_price(rule: dict[str, Any], signal: dict[str, Any], entry: float, stop: float, direction: str) -> float | None:
     metrics = signal.get("pattern_metrics") or {}
     if rule["type"] == "PATTERN_TARGET":
@@ -235,6 +265,7 @@ def _simulate_order(
     stop_loss_qtr_multiplier: float = 0.5,
     initial_capital: Decimal = Decimal("1000000"),
     single_symbol_position_pct: Decimal = Decimal("10"),
+    no_overnight: bool = False,
 ) -> dict[str, Any]:
     direction = signal_direction(str(signal["pattern"]), str(signal["alert_type"]))
     base = {
@@ -310,8 +341,15 @@ def _simulate_order(
     if risk <= 0:
         return base
 
+    session_exit_index = _session_penultimate_exit_index(timestamps, entry_index) if no_overnight else None
+    if session_exit_index is not None and session_exit_index <= entry_index:
+        return base
+
     available = len(frame) - entry_index - 1
     end_index = min(len(frame) - 1, entry_index + max_holding_bars) if max_holding_bars is not None else len(frame) - 1
+    if session_exit_index is not None:
+        end_index = min(end_index, session_exit_index)
+    forced_by_session = session_exit_index is not None and end_index == session_exit_index
     exit_reason: str | None = None
     exit_index: int | None = None
     exit_quote: Decimal | None = None
@@ -339,7 +377,7 @@ def _simulate_order(
             break
 
     if exit_index is None:
-        if max_holding_bars is None or available < max_holding_bars:
+        if not forced_by_session and (max_holding_bars is None or available < max_holding_bars):
             base.update({
                 "status": "INCOMPLETE",
                 "entry_price": entry_fill,
@@ -350,7 +388,7 @@ def _simulate_order(
                 "mae_r": max_adverse / risk,
             })
             return base
-        exit_reason, exit_index = "TIME_EXIT", end_index
+        exit_reason, exit_index = ("SESSION_EXIT" if forced_by_session else "TIME_EXIT"), end_index
         exit_quote = Decimal(str(frame.iloc[exit_index]["close"]))
 
     assert exit_quote is not None and exit_index is not None
@@ -421,6 +459,7 @@ def _simulate_portfolio_orders(
     entry_condition: str = "mixed",
     initial_capital: Decimal = Decimal("1000000"),
     single_symbol_position_pct: Decimal = Decimal("10"),
+    no_overnight: bool = False,
 ) -> list[dict[str, Any]]:
     """Simulate each rule with one shared capital pool across all selected products."""
     ordered_events = sorted(
@@ -469,6 +508,7 @@ def _simulate_portfolio_orders(
                 stop_loss_qtr_multiplier=stop_loss_qtr_multiplier,
                 initial_capital=initial_capital,
                 single_symbol_position_pct=single_symbol_position_pct,
+                no_overnight=no_overnight,
             )
             if order["status"] == "INVALID":
                 continue
@@ -566,7 +606,7 @@ def _summaries(
                 "incomplete": sum(item["status"] == "INCOMPLETE" for item in grouped),
                 "take_profit_hits": sum(item["exit_reason"] == "TAKE_PROFIT" for item in closed),
                 "stop_hits": sum(item["exit_reason"] == "STOP_LOSS" for item in closed),
-                "time_exits": sum(item["exit_reason"] == "TIME_EXIT" for item in closed),
+                "time_exits": sum(item["exit_reason"] in {"TIME_EXIT", "SESSION_EXIT"} for item in closed),
                 "win_rate": Decimal(wins) / Decimal(wins + losses) if wins + losses else Decimal("0"),
                 "gross_pnl": sum((Decimal(str(item["gross_pnl"])) for item in costed), Decimal("0")) if costed else None,
                 "net_pnl": sum((Decimal(str(item["net_pnl"])) for item in costed), Decimal("0")) if costed else None,
@@ -677,6 +717,7 @@ async def process_next_backtest_run() -> bool:
                 entry_condition=entry_condition,
                 initial_capital=Decimal(str(request.get("initial_capital", 1_000_000))),
                 single_symbol_position_pct=Decimal(str(request.get("single_symbol_position_pct", 10))),
+                no_overnight=bool(request.get("no_overnight", False)),
             )
             save_backtest_orders(portfolio_orders)
             all_orders.extend(portfolio_orders)

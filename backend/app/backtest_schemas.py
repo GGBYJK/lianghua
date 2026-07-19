@@ -26,6 +26,7 @@ class BacktestCreateRequest(BaseModel):
     max_holding_bars: int | None = Field(default=None, ge=1, le=500)
     initial_capital: float = Field(default=1_000_000, gt=0, le=1_000_000_000)
     single_symbol_position_pct: float = Field(default=10, gt=0, le=100)
+    no_overnight: bool = False
     entry_conditions: list[Literal[
         "head_shoulders_top:right_shoulder_confirmed",
         "inverse_head_shoulders:right_shoulder_confirmed",

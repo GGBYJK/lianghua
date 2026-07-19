@@ -169,6 +169,7 @@ export type BacktestRequest = {
   max_holding_bars?: number | null;
   initial_capital: number;
   single_symbol_position_pct: number;
+  no_overnight: boolean;
   entry_conditions: Array<
     | "head_shoulders_top:right_shoulder_confirmed"
     | "inverse_head_shoulders:right_shoulder_confirmed"
@@ -271,7 +272,7 @@ export type BacktestOrder = {
   score: number;
   quantity: number;
   status: "INVALID" | "INCOMPLETE" | "CLOSED";
-  exit_reason: "TAKE_PROFIT" | "STOP_LOSS" | "TIME_EXIT" | null;
+  exit_reason: "TAKE_PROFIT" | "STOP_LOSS" | "TIME_EXIT" | "SESSION_EXIT" | null;
   entry_time: string | null;
   exit_time: string | null;
   entry_price: Numeric | null;

@@ -411,6 +411,7 @@ button, input, select { letter-spacing: 0; }
 .backtest-orders-table .ant-table-tbody > tr > td:nth-child(13),
 .backtest-orders-table .ant-table-tbody > tr > td:nth-child(14) { line-height: 1.35; white-space: normal; overflow-wrap: anywhere; }
 .backtest-orders-total-row > td { background: #f6f2f1 !important; font-weight: 700; }
+.backtest-orders-total-fees-cell { overflow: visible !important; text-overflow: clip !important; white-space: nowrap !important; }
 .selected-order-note { min-width: 0; color: #74807b; font-size: 12px; }
 .selected-order-note .ant-tag { margin-left: 6px; }
 .backtest-chart { width: 100%; height: 540px; }

@@ -118,6 +118,7 @@ function exitTag(reason: BacktestOrder["exit_reason"], status: BacktestOrder["st
   if (status === "INVALID") return <Tag color="default">无效样本</Tag>;
   if (reason === "TAKE_PROFIT") return <Tag color="red">止盈</Tag>;
   if (reason === "STOP_LOSS") return <Tag color="green">止损</Tag>;
+  if (reason === "SESSION_EXIT") return <Tag color="blue">不跨夜平仓</Tag>;
   return <Tag color="warning">到期平仓</Tag>;
 }
 
@@ -274,6 +275,7 @@ export default function BacktestPage() {
       ...(maxHoldingBars === undefined ? {} : { max_holding_bars: maxHoldingBars }),
       initial_capital: Number(values.initial_capital),
       single_symbol_position_pct: Number(values.single_symbol_position_pct),
+      no_overnight: Boolean(values.no_overnight),
       entry_conditions: combineEntryConditions(
         values.entry_patterns as EntryPattern[],
         values.entry_triggers as EntryTrigger[],
@@ -495,7 +497,7 @@ export default function BacktestPage() {
             <Table.Summary.Cell index={0}>合计</Table.Summary.Cell>
             <Table.Summary.Cell index={1} colSpan={7}>{ordersQuery.data?.total || 0}行</Table.Summary.Cell>
             <Table.Summary.Cell index={8} align="right"><span className={Number(totals?.net_pnl || 0) >= 0 ? "profit" : "loss"}>{number(totals?.net_pnl)}</span></Table.Summary.Cell>
-            <Table.Summary.Cell index={9} align="right">{number(totals?.fees)}</Table.Summary.Cell>
+            <Table.Summary.Cell index={9} align="right" className="backtest-orders-total-fees-cell">{number(totals?.fees)}</Table.Summary.Cell>
             <Table.Summary.Cell index={10} colSpan={5} />
           </Table.Summary.Row>;
         }}
@@ -546,7 +548,7 @@ export default function BacktestPage() {
     <div className="backtest-workbench">
       <aside className="backtest-config">
         <div className="backtest-panel-title"><Play size={17} /><div><strong>本次回测</strong><span>品种、周期与退出规则</span></div></div>
-        <Form form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["3m", "5m"], kline_count: 1000, initial_capital: 1000000, single_symbol_position_pct: 10, entry_patterns: DEFAULT_ENTRY_PATTERNS, entry_triggers: DEFAULT_ENTRY_TRIGGERS, other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 75, min_trend_score: 65, other_min_pattern_score: 80, other_max_trend_score: 35, stop_loss_qtr_multiplier: 0.5, rule_keys: DEFAULT_RULE_KEYS }}>
+        <Form form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["3m", "5m"], kline_count: 1000, initial_capital: 1000000, single_symbol_position_pct: 10, no_overnight: false, entry_patterns: DEFAULT_ENTRY_PATTERNS, entry_triggers: DEFAULT_ENTRY_TRIGGERS, other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 75, min_trend_score: 65, other_min_pattern_score: 80, other_max_trend_score: 35, stop_loss_qtr_multiplier: 0.5, rule_keys: DEFAULT_RULE_KEYS }}>
           <Form.Item name="name" label="回测名称"><Input placeholder="留空自动按时间命名" /></Form.Item>
           <Form.Item label="品种分组" className="backtest-symbol-group-item">
             <div className="backtest-symbol-group-picker">
@@ -574,6 +576,7 @@ export default function BacktestPage() {
             <Form.Item name="initial_capital" label="初始资金" rules={[{ required: true }]}><InputNumber min={1} max={1000000000} step={10000} precision={2} addonBefore="¥" /></Form.Item>
             <Form.Item name="single_symbol_position_pct" label="单品种仓位" rules={[{ required: true }]}><InputNumber min={0.01} max={100} step={0.1} precision={2} addonAfter="%" /></Form.Item>
           </div>
+          <Form.Item name="no_overnight" label="其他约束条件" valuePropName="checked"><Checkbox>不跨夜跨日</Checkbox></Form.Item>
           <section className="backtest-entry-section">
             <Form.Item name="entry_patterns" label="进场形态" dependencies={["entry_triggers", "other_entry_conditions"]} rules={[({ getFieldValue }) => ({ validator: (_, value: EntryPattern[]) => {
               const triggers = getFieldValue("entry_triggers") as EntryTrigger[] | undefined;

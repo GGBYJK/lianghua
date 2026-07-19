@@ -1549,7 +1549,7 @@ def test_top_ma60_penalty_deducts_right_shoulder_signal_but_pullback_uses_origin
         df,
         "TEST",
         "3m",
-        HeadShoulderTopConfig(min_pattern_score_to_alert=70),
+        HeadShoulderTopConfig(min_pattern_score_to_alert=70, apply_ma60_pattern_penalty=True),
     )
 
     right_shoulder = next(signal for signal in signals if signal.alert_type == "right_shoulder_confirmed")
@@ -1557,7 +1557,7 @@ def test_top_ma60_penalty_deducts_right_shoulder_signal_but_pullback_uses_origin
     assert right_shoulder.pattern_score == 70
     assert right_shoulder.pattern_metrics["ma60_cross_check"]["observed"] is False
     assert right_shoulder.pattern_metrics["ma60_cross_check"]["penalty"] == 10
-    assert any("未出现收盘价跌破 MA60" in reason for reason in right_shoulder.reasons)
+    assert any("未出现收盘价位于 MA60 下方" in reason for reason in right_shoulder.reasons)
     assert pullback.pattern_score == 80
     assert "ma60_cross_check" not in pullback.pattern_metrics
 
@@ -1613,7 +1613,7 @@ def test_inverse_ma60_penalty_deducts_right_shoulder_signal_but_pullback_uses_or
         df,
         "TEST",
         "1m",
-        HeadShoulderTopConfig(min_pattern_score_to_alert=70),
+        HeadShoulderTopConfig(min_pattern_score_to_alert=70, apply_ma60_pattern_penalty=True),
     )
 
     right_shoulder = next(signal for signal in signals if signal.alert_type == "right_shoulder_confirmed")
@@ -1621,7 +1621,7 @@ def test_inverse_ma60_penalty_deducts_right_shoulder_signal_but_pullback_uses_or
     assert right_shoulder.pattern_score == 70
     assert right_shoulder.pattern_metrics["ma60_cross_check"]["observed"] is False
     assert right_shoulder.pattern_metrics["ma60_cross_check"]["penalty"] == 10
-    assert any("未出现收盘价涨破 MA60" in reason for reason in right_shoulder.reasons)
+    assert any("未出现收盘价位于 MA60 上方" in reason for reason in right_shoulder.reasons)
     assert pullback.pattern_score == 80
     assert "ma60_cross_check" not in pullback.pattern_metrics
 
