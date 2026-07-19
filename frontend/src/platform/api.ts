@@ -156,7 +156,11 @@ export const platformApi = {
     method: "POST", body: JSON.stringify(payload),
   }),
   backtestOrders: (runId: string, params: URLSearchParams) => request<BacktestOrdersResponse>(`/api/backtests/${runId}/orders?${params.toString()}`),
-  backtestEquityCurve: (runId: string, ruleKey: string) => request<BacktestEquityCurve>(`/api/backtests/${runId}/equity-curve?rule_key=${encodeURIComponent(ruleKey)}`),
+  backtestEquityCurve: (runId: string, ruleKey: string, summaryEntryCondition = "") => {
+    const params = new URLSearchParams({ rule_key: ruleKey });
+    if (summaryEntryCondition) params.set("summary_entry_condition", summaryEntryCondition);
+    return request<BacktestEquityCurve>(`/api/backtests/${runId}/equity-curve?${params.toString()}`);
+  },
   backtestSeries: (runId: string, symbol: string, timeframe: string) => request<BacktestSeries>(`/api/backtests/${runId}/series?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`),
   cancelBacktest: (runId: string) => request<{ ok: boolean }>(`/api/backtests/${runId}/cancel`, { method: "POST" }),
   deleteBacktest: (runId: string) => request<{ ok: boolean }>(`/api/backtests/${runId}`, { method: "DELETE" }),

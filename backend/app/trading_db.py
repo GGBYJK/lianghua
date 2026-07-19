@@ -338,6 +338,7 @@ backtest_orders = Table(
     Column("timeframe", String(16), nullable=False),
     Column("pattern", String(40), nullable=False),
     Column("alert_type", String(48), nullable=False),
+    Column("entry_condition", String(40), nullable=False, server_default="mixed"),
     Column("direction", String(8), nullable=False),
     Column("score", Integer, nullable=False, server_default="0"),
     Column("quantity", Integer, nullable=False, server_default="1"),
@@ -362,6 +363,7 @@ backtest_orders = Table(
     Column("created_at", DateTime, nullable=False, server_default=func.now()),
     Index("idx_backtest_orders_run_created", "run_id", "created_at"),
     Index("idx_backtest_orders_run_rule", "run_id", "rule_key"),
+    Index("idx_backtest_orders_run_entry_condition", "run_id", "entry_condition"),
     Index("idx_backtest_orders_run_market", "run_id", "symbol", "timeframe"),
 )
 

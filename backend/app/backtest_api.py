@@ -142,9 +142,14 @@ def run_orders(
 def run_equity_curve(
     run_id: str,
     rule_key: str = Query(min_length=1, max_length=80),
+    summary_entry_condition: str | None = Query(default=None, max_length=40),
     user: dict[str, object] = Depends(require_permission("market.read")),
 ) -> dict[str, object]:
-    return {"rule_key": rule_key, "items": backtest_equity_curve(_user_id(user), run_id, rule_key)}
+    return {
+        "rule_key": rule_key,
+        "summary_entry_condition": summary_entry_condition,
+        "items": backtest_equity_curve(_user_id(user), run_id, rule_key, summary_entry_condition),
+    }
 
 
 @router.get("/{run_id}/series")

@@ -365,7 +365,10 @@ export default function BacktestPage() {
     }));
   const selectedChartSummary = summaries.find((item) => `${item.rule_key}|${item.entry_condition}` === chartRuleKey);
   const best = summaries[0];
-  const selectedEquityRuleKey = equityRuleKey || best?.rule_key || "";
+  const selectedEquitySummary = summaries.find((item) => `${item.rule_key}|${item.entry_condition}` === equityRuleKey) || best;
+  const selectedEquityRuleKey = selectedEquitySummary?.rule_key || "";
+  const selectedEquityEntryCondition = selectedEquitySummary?.entry_condition || "";
+  const selectedEquitySummaryKey = equityRuleKey || (best ? `${best.rule_key}|${best.entry_condition}` : "");
   const selectedChartRuleKey = selectedChartSummary?.rule_key || "";
   const selectedChartEntryCondition = selectedChartSummary?.entry_condition || "";
   const selectedChartSymbol = chartSymbol;
@@ -379,9 +382,9 @@ export default function BacktestPage() {
     .map((symbol) => ({ value: symbol, label: symbol }));
   const chartTimeframeOptions = TIMEFRAMES.filter((item) => chartProductMarkets.some((market) => market.timeframe === item.value));
   const equityCurveQuery = useQuery({
-    queryKey: ["backtest-equity-curve", selectedRunId, selectedEquityRuleKey],
-    queryFn: () => platformApi.backtestEquityCurve(selectedRunId!, selectedEquityRuleKey),
-    enabled: Boolean(selectedRunId && selectedEquityRuleKey),
+    queryKey: ["backtest-equity-curve", selectedRunId, selectedEquityRuleKey, selectedEquityEntryCondition],
+    queryFn: () => platformApi.backtestEquityCurve(selectedRunId!, selectedEquityRuleKey, selectedEquityEntryCondition),
+    enabled: Boolean(selectedRunId && selectedEquityRuleKey && selectedEquityEntryCondition),
     staleTime: Infinity,
   });
   const overviewColumns: ColumnsType<BacktestSummary> = [
@@ -434,6 +437,7 @@ export default function BacktestPage() {
     { label: "出场价", value: orderPrice(selectedOrder.symbol, selectedOrder.exit_price) },
     { label: "止损价", value: orderPrice(selectedOrder.symbol, selectedOrder.stop_price) },
     { label: "目标价", value: orderPrice(selectedOrder.symbol, selectedOrder.target_price) },
+    { label: "QTR", value: selectedOrder.signal.qtr == null ? "--" : orderPrice(selectedOrder.symbol, selectedOrder.signal.qtr) },
     { label: "手数", value: selectedOrder.cost_available ? `${selectedOrder.quantity} 手` : "--" },
     { label: "止盈条件", value: selectedOrder.rule_label },
     { label: "形态质量评分", value: number(selectedOrder.signal.pattern_score ?? selectedOrder.score, 0) },
@@ -503,13 +507,13 @@ export default function BacktestPage() {
   const equityView = <div className="backtest-equity-view">
     <div className="backtest-view-toolbar">
       <Select
-        value={selectedEquityRuleKey || undefined}
-        placeholder="选择止盈条件"
+        value={selectedEquitySummaryKey || undefined}
+        placeholder="选择止盈与进场条件"
         onChange={setEquityRuleKey}
-        options={summaries.map((item) => ({ value: item.rule_key, label: item.rule_label }))}
+        options={chartSummaryOptions}
       />
     </div>
-    {equityCurveQuery.isLoading ? <div className="backtest-chart-loading"><Spin /></div> : equityCurveQuery.isError ? <Alert type="error" showIcon title="收益图加载失败" description="请确认后端服务已重启后重试。" action={<Button size="small" onClick={() => void equityCurveQuery.refetch()}>重试</Button>} /> : equityCurveQuery.data?.items.length ? <BacktestEquityChart curve={equityCurveQuery.data} /> : <Empty description="所选止盈条件暂无已平仓订单" />}
+    {equityCurveQuery.isLoading ? <div className="backtest-chart-loading"><Spin /></div> : equityCurveQuery.isError ? <Alert type="error" showIcon title="收益图加载失败" description="请确认后端服务已重启后重试。" action={<Button size="small" onClick={() => void equityCurveQuery.refetch()}>重试</Button>} /> : equityCurveQuery.data?.items.length ? <BacktestEquityChart curve={equityCurveQuery.data} /> : <Empty description="所选止盈与进场条件暂无已平仓订单" />}
   </div>;
 
   return <div className="backtest-page">

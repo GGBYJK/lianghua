@@ -344,14 +344,7 @@ def list_backtest_orders(
     if alert_type:
         conditions.append(backtest_orders.c.alert_type == alert_type)
     if summary_entry_condition:
-        pullback_types = ("head_shoulders_top_pullback", "inverse_head_shoulders_pullback")
-        if summary_entry_condition in {"right_shoulder_confirmed", "right_neck_confirmed"}:
-            conditions.append(or_(
-                backtest_orders.c.alert_type == summary_entry_condition,
-                backtest_orders.c.alert_type.in_(pullback_types),
-            ))
-        elif summary_entry_condition == "pullback":
-            conditions.append(backtest_orders.c.alert_type.in_(pullback_types))
+        conditions.append(backtest_orders.c.entry_condition == summary_entry_condition)
     if exit_reason:
         conditions.append(backtest_orders.c.exit_reason == exit_reason)
     base = backtest_orders.join(backtest_runs, backtest_runs.c.id == backtest_orders.c.run_id)
@@ -386,19 +379,27 @@ def all_backtest_orders(user_id: int, run_id: str) -> list[dict[str, Any]]:
     return list_backtest_orders(user_id, run_id, page=1, page_size=100000)["items"]
 
 
-def backtest_equity_curve(user_id: int, run_id: str, rule_key: str) -> list[dict[str, Any]]:
+def backtest_equity_curve(
+    user_id: int,
+    run_id: str,
+    rule_key: str,
+    summary_entry_condition: str | None = None,
+) -> list[dict[str, Any]]:
     base = backtest_orders.join(backtest_runs, backtest_runs.c.id == backtest_orders.c.run_id)
+    conditions = [
+        backtest_orders.c.run_id == run_id,
+        backtest_runs.c.user_id == user_id,
+        backtest_orders.c.rule_key == rule_key,
+        backtest_orders.c.status == "CLOSED",
+        backtest_orders.c.net_pnl.is_not(None),
+    ]
+    if summary_entry_condition:
+        conditions.append(backtest_orders.c.entry_condition == summary_entry_condition)
     with get_engine().connect() as connection:
         rows = connection.execute(
             select(backtest_orders.c.entry_time, backtest_orders.c.exit_time, backtest_orders.c.net_pnl)
             .select_from(base)
-            .where(and_(
-                backtest_orders.c.run_id == run_id,
-                backtest_runs.c.user_id == user_id,
-                backtest_orders.c.rule_key == rule_key,
-                backtest_orders.c.status == "CLOSED",
-                backtest_orders.c.net_pnl.is_not(None),
-            ))
+            .where(and_(*conditions))
             .order_by(backtest_orders.c.exit_time.asc(), backtest_orders.c.id.asc())
         ).mappings()
         cumulative = Decimal("0")

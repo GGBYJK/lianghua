@@ -209,6 +209,7 @@ def _simulate_order(
     rule: dict[str, Any],
     max_holding_bars: int | None,
     contract: dict[str, Any] | None,
+    entry_condition: str = "mixed",
     stop_loss_qtr_multiplier: float = 0.5,
     initial_capital: Decimal = Decimal("1000000"),
     single_symbol_position_pct: Decimal = Decimal("10"),
@@ -225,6 +226,7 @@ def _simulate_order(
         "timeframe": signal["timeframe"],
         "pattern": signal["pattern"],
         "alert_type": signal["alert_type"],
+        "entry_condition": entry_condition,
         "direction": direction,
         "score": int(signal.get("pattern_score") or signal.get("score") or 0),
         "quantity": 0,
@@ -394,6 +396,7 @@ def _simulate_symbol_orders(
     rules: list[dict[str, Any]],
     max_holding_bars: int | None,
     stop_loss_qtr_multiplier: float,
+    entry_condition: str = "mixed",
     initial_capital: Decimal = Decimal("1000000"),
     single_symbol_position_pct: Decimal = Decimal("10"),
 ) -> list[dict[str, Any]]:
@@ -433,6 +436,7 @@ def _simulate_symbol_orders(
                 rule=rule,
                 max_holding_bars=max_holding_bars,
                 contract=event["contract"],
+                entry_condition=entry_condition,
                 stop_loss_qtr_multiplier=stop_loss_qtr_multiplier,
                 initial_capital=initial_capital,
                 single_symbol_position_pct=single_symbol_position_pct,
@@ -449,31 +453,36 @@ def _simulate_symbol_orders(
     return orders
 
 
+def _entry_condition_streams(conditions: list[str]) -> tuple[list[str], set[str]]:
+    normalized = [condition for condition in conditions if ":" in condition]
+    trigger_keys = list(dict.fromkeys(
+        condition.rsplit(":", 1)[-1]
+        for condition in normalized
+        if condition.rsplit(":", 1)[-1] in {"right_shoulder_confirmed", "right_neck_confirmed"}
+    ))
+    pullback_types = {
+        condition.rsplit(":", 1)[-1]
+        for condition in normalized
+        if condition.rsplit(":", 1)[-1].endswith("_pullback")
+    }
+    if not trigger_keys and pullback_types:
+        trigger_keys = ["pullback"]
+    return trigger_keys, pullback_types
+
+
 def _summaries(
     run_id: str,
     rules: list[dict[str, Any]],
     orders: list[dict[str, Any]],
     entry_conditions: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    conditions = [condition for condition in (entry_conditions or []) if ":" in condition]
-    trigger_keys = list(dict.fromkeys(
-        condition.rsplit(":", 1)[-1]
-        for condition in conditions
-        if condition.rsplit(":", 1)[-1] in {"right_shoulder_confirmed", "right_neck_confirmed"}
-    ))
-    pullback_types = {
-        condition.rsplit(":", 1)[-1]
-        for condition in conditions
-        if condition.rsplit(":", 1)[-1].endswith("_pullback")
-    }
+    trigger_keys, pullback_types = _entry_condition_streams(entry_conditions or [])
     if not trigger_keys:
         trigger_keys = list(dict.fromkeys(
-            str(item.get("alert_type") or "")
+            str(item.get("entry_condition") if item.get("entry_condition") not in {None, "", "mixed"} else item.get("alert_type") or "")
             for item in orders
-            if str(item.get("alert_type") or "") in {"right_shoulder_confirmed", "right_neck_confirmed"}
+            if str(item.get("entry_condition") if item.get("entry_condition") not in {None, "", "mixed"} else item.get("alert_type") or "") in {"right_shoulder_confirmed", "right_neck_confirmed"}
         ))
-    if not trigger_keys and pullback_types:
-        trigger_keys = ["pullback"]
 
     rows: list[dict[str, Any]] = []
     for rule in rules:
@@ -482,9 +491,15 @@ def _summaries(
                 item for item in orders
                 if item["rule_key"] == rule["key"]
                 and (
-                    item.get("alert_type") == entry_condition
-                    or (entry_condition != "pullback" and item.get("alert_type") in pullback_types)
-                    or (entry_condition == "pullback" and item.get("alert_type") in pullback_types)
+                    (item.get("entry_condition") not in {None, "", "mixed"} and item.get("entry_condition") == entry_condition)
+                    or (
+                        item.get("entry_condition") in {None, "", "mixed"}
+                        and (
+                            item.get("alert_type") == entry_condition
+                            or (entry_condition != "pullback" and item.get("alert_type") in pullback_types)
+                            or (entry_condition == "pullback" and item.get("alert_type") in pullback_types)
+                        )
+                    )
                 )
                 and item["status"] != "INVALID"
             ]
@@ -593,24 +608,44 @@ async def process_next_backtest_run() -> bool:
                 update_backtest_progress(run_id, completed, signal_count, len(all_orders))
             if symbol_events:
                 events_by_product.setdefault(_position_key(symbol), []).extend(symbol_events)
+        configured_conditions = [*request.get("entry_conditions", []), *request.get("other_entry_conditions", [])]
+        entry_streams, pullback_types = _entry_condition_streams(configured_conditions)
         for product_events in events_by_product.values():
-            symbol_orders = await asyncio.to_thread(
-                _simulate_symbol_orders,
-                run_id=run_id,
-                events=product_events,
-                rules=request["take_profit_rules"],
-                max_holding_bars=(
-                    int(request["max_holding_bars"])
-                    if request.get("max_holding_bars") is not None
-                    else None
-                ),
-                stop_loss_qtr_multiplier=float(request.get("stop_loss_qtr_multiplier", 0.5)),
-                initial_capital=Decimal(str(request.get("initial_capital", 1_000_000))),
-                single_symbol_position_pct=Decimal(str(request.get("single_symbol_position_pct", 10))),
-            )
-            save_backtest_orders(symbol_orders)
-            all_orders.extend(symbol_orders)
-            update_backtest_progress(run_id, completed, signal_count, len(all_orders))
+            for entry_condition in entry_streams:
+                stream_events = [
+                    event for event in product_events
+                    if (
+                        event["signal"].get("alert_type") == entry_condition
+                        or (
+                            entry_condition != "pullback"
+                            and event["signal"].get("alert_type") in pullback_types
+                        )
+                        or (
+                            entry_condition == "pullback"
+                            and event["signal"].get("alert_type") in pullback_types
+                        )
+                    )
+                ]
+                if not stream_events:
+                    continue
+                symbol_orders = await asyncio.to_thread(
+                    _simulate_symbol_orders,
+                    run_id=run_id,
+                    events=stream_events,
+                    rules=request["take_profit_rules"],
+                    max_holding_bars=(
+                        int(request["max_holding_bars"])
+                        if request.get("max_holding_bars") is not None
+                        else None
+                    ),
+                    stop_loss_qtr_multiplier=float(request.get("stop_loss_qtr_multiplier", 0.5)),
+                    entry_condition=entry_condition,
+                    initial_capital=Decimal(str(request.get("initial_capital", 1_000_000))),
+                    single_symbol_position_pct=Decimal(str(request.get("single_symbol_position_pct", 10))),
+                )
+                save_backtest_orders(symbol_orders)
+                all_orders.extend(symbol_orders)
+                update_backtest_progress(run_id, completed, signal_count, len(all_orders))
         replace_backtest_summaries(
             run_id,
             _summaries(
