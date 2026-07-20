@@ -263,7 +263,7 @@ backtest_runs = Table(
     Column("id", String(36), primary_key=True),
     Column("user_id", BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
     Column("name", String(120), nullable=False, server_default=""),
-    Column("status", String(32), nullable=False, server_default="QUEUED"),
+    Column("status", String(32), nullable=False, server_default="PENDING"),
     Column("progress", Integer, nullable=False, server_default="0"),
     Column("request_json", Text, nullable=False),
     Column("total_combinations", Integer, nullable=False, server_default="0"),
@@ -271,6 +271,9 @@ backtest_runs = Table(
     Column("signal_count", Integer, nullable=False, server_default="0"),
     Column("order_count", Integer, nullable=False, server_default="0"),
     Column("cancel_requested", Boolean, nullable=False, server_default="0"),
+    Column("worker_id", String(96), nullable=True),
+    Column("heartbeat_at", DateTime, nullable=True),
+    Column("attempt_count", Integer, nullable=False, server_default="0"),
     Column("error_message", Text, nullable=True),
     Column("created_at", DateTime, nullable=False, server_default=func.now()),
     Column("started_at", DateTime, nullable=True),
@@ -278,6 +281,7 @@ backtest_runs = Table(
     Column("updated_at", DateTime, nullable=False, server_default=func.now(), onupdate=func.now()),
     Index("idx_backtest_runs_user_created", "user_id", "created_at"),
     Index("idx_backtest_runs_status_created", "status", "created_at"),
+    Index("idx_backtest_runs_status_heartbeat", "status", "heartbeat_at"),
 )
 
 backtest_series = Table(

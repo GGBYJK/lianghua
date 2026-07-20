@@ -241,7 +241,7 @@ export type BacktestError = {
 export type BacktestRun = {
   id: string;
   name: string;
-  status: "QUEUED" | "RUNNING" | "COMPLETED" | "COMPLETED_WITH_ERRORS" | "FAILED" | "CANCELLED";
+  status: "PENDING" | "QUEUED" | "RUNNING" | "COMPLETED" | "COMPLETED_WITH_ERRORS" | "FAILED" | "CANCELLED";
   progress: number;
   total_combinations: number;
   completed_combinations: number;

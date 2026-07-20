@@ -10,10 +10,11 @@ import { downloadBacktest, platformApi } from "./api";
 import type { BacktestRun } from "./types";
 
 
-const ACTIVE_STATUSES = new Set<BacktestRun["status"]>(["QUEUED", "RUNNING"]);
+const ACTIVE_STATUSES = new Set<BacktestRun["status"]>(["PENDING", "QUEUED", "RUNNING"]);
 
-function statusTag(status: BacktestRun["status"]) {
+function statusTag(status: BacktestRun["status"], cancelRequested = false) {
   const labels: Record<BacktestRun["status"], string> = {
+    PENDING: "排队中",
     QUEUED: "排队中",
     RUNNING: "运行中",
     COMPLETED: "已完成",
@@ -27,6 +28,7 @@ function statusTag(status: BacktestRun["status"]) {
     COMPLETED_WITH_ERRORS: "warning",
     FAILED: "error",
   };
+  if (status === "RUNNING" && cancelRequested) return <Tag color="warning">取消中</Tag>;
   return <Tag color={colors[status]}>{labels[status]}</Tag>;
 }
 
@@ -76,7 +78,7 @@ export default function BacktestHistoryPage() {
       title: "状态",
       dataIndex: "status",
       width: 150,
-      render: (value, row) => <div className="backtest-history-status">{statusTag(value)}{ACTIVE_STATUSES.has(row.status) ? <Progress percent={row.progress} size="small" showInfo={false} /> : null}</div>,
+      render: (value, row) => <div className="backtest-history-status">{statusTag(value, row.cancel_requested)}{ACTIVE_STATUSES.has(row.status) ? <Progress percent={row.progress} size="small" showInfo={false} /> : null}</div>,
     },
     {
       title: "品种 / 周期",
@@ -96,7 +98,7 @@ export default function BacktestHistoryPage() {
       render: (_, row) => <Space size={2}>
         <Tooltip title="查看详情"><Button type="text" icon={<Eye size={16} />} onClick={() => navigate(`/analysis/backtest/${row.id}`)} /></Tooltip>
         {!ACTIVE_STATUSES.has(row.status) ? <Tooltip title="导出Excel"><Button type="text" icon={<Download size={16} />} onClick={() => void downloadBacktest(row.id)} /></Tooltip> : null}
-        {ACTIVE_STATUSES.has(row.status) ? <Tooltip title="取消回测"><Button type="text" danger icon={<X size={16} />} onClick={() => cancelMutation.mutate(row.id)} /></Tooltip> : null}
+        {ACTIVE_STATUSES.has(row.status) && !row.cancel_requested ? <Tooltip title="取消回测"><Button type="text" danger icon={<X size={16} />} onClick={() => cancelMutation.mutate(row.id)} /></Tooltip> : null}
         {!ACTIVE_STATUSES.has(row.status) ? <Popconfirm title="删除这次回测？" description="汇总、订单和K线结构将一并删除。" onConfirm={() => deleteMutation.mutate(row.id)}><Tooltip title="删除"><Button type="text" danger icon={<Trash2 size={16} />} /></Tooltip></Popconfirm> : null}
       </Space>,
     },

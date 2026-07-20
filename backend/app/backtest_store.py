@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import time
 import zlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Callable, TypeVar
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, delete, desc, func, insert, or_, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from .trading_db import (
     backtest_errors,
@@ -27,7 +30,35 @@ class BacktestStoreError(ValueError):
     pass
 
 
+class BacktestLeaseLostError(RuntimeError):
+    pass
+
+
 SHANGHAI_TIMEZONE = ZoneInfo("Asia/Shanghai")
+logger = logging.getLogger("app.backtest_store")
+BACKTEST_STALE_SECONDS = int(os.getenv("BACKTEST_STALE_SECONDS", "120"))
+BACKTEST_MAX_ATTEMPTS = int(os.getenv("BACKTEST_MAX_ATTEMPTS", "3"))
+BACKTEST_DB_RETRY_ATTEMPTS = int(os.getenv("BACKTEST_DB_RETRY_ATTEMPTS", "3"))
+BACKTEST_DB_RETRY_DELAY = float(os.getenv("BACKTEST_DB_RETRY_DELAY", "0.25"))
+T = TypeVar("T")
+
+
+def _retry_database_write(name: str, operation: Callable[[], T]) -> T:
+    for attempt in range(1, BACKTEST_DB_RETRY_ATTEMPTS + 1):
+        try:
+            return operation()
+        except DBAPIError:
+            if attempt >= BACKTEST_DB_RETRY_ATTEMPTS:
+                raise
+            logger.warning(
+                "backtest database write failed; retrying: operation=%s attempt=%s",
+                name,
+                attempt,
+                exc_info=True,
+            )
+            get_engine().dispose()
+            time.sleep(BACKTEST_DB_RETRY_DELAY * attempt)
+    raise RuntimeError("unreachable")
 
 
 def _json_default(value: Any) -> str:
@@ -72,7 +103,7 @@ def create_backtest_run(user_id: int, payload: dict[str, Any]) -> dict[str, Any]
             id=run_id,
             user_id=user_id,
             name=name,
-            status="QUEUED",
+            status="PENDING",
             progress=0,
             request_json=_dump(payload),
             total_combinations=total,
@@ -191,78 +222,203 @@ def get_backtest_run(user_id: int, run_id: str) -> dict[str, Any]:
         return result
 
 
-def claim_next_backtest_run() -> dict[str, Any] | None:
+def claim_next_backtest_run(worker_id: str) -> dict[str, Any] | None:
     with get_engine().begin() as connection:
         row = connection.execute(
             select(backtest_runs)
-            .where(backtest_runs.c.status == "QUEUED")
+            .where(backtest_runs.c.status == "PENDING")
             .order_by(backtest_runs.c.created_at)
             .limit(1)
             .with_for_update(skip_locked=True)
         ).mappings().first()
         if row is None:
             return None
+        now = utc_now()
         connection.execute(update(backtest_runs).where(backtest_runs.c.id == row["id"]).values(
-            status="RUNNING", started_at=utc_now(), updated_at=utc_now(), progress=1,
+            status="RUNNING", started_at=now, updated_at=now, heartbeat_at=now,
+            worker_id=worker_id, attempt_count=backtest_runs.c.attempt_count + 1,
+            error_message=None, progress=1,
         ))
         claimed = dict(row)
         claimed["status"] = "RUNNING"
+        claimed["worker_id"] = worker_id
+        claimed["attempt_count"] = int(claimed.get("attempt_count") or 0) + 1
         claimed["request"] = json.loads(claimed.pop("request_json"))
         return claimed
 
 
-def update_backtest_progress(run_id: str, completed: int, signals: int, orders: int) -> None:
-    with get_engine().begin() as connection:
-        total = connection.execute(select(backtest_runs.c.total_combinations).where(backtest_runs.c.id == run_id)).scalar_one()
-        progress = 99 if completed >= total else max(1, int(completed * 100 / max(total, 1)))
-        connection.execute(update(backtest_runs).where(backtest_runs.c.id == run_id).values(
-            completed_combinations=completed,
-            signal_count=signals,
-            order_count=orders,
-            progress=progress,
-            updated_at=utc_now(),
-        ))
+def touch_backtest_heartbeat(run_id: str, worker_id: str) -> bool:
+    def write() -> bool:
+        now = utc_now()
+        with get_engine().begin() as connection:
+            result = connection.execute(update(backtest_runs).where(and_(
+                backtest_runs.c.id == run_id,
+                backtest_runs.c.status == "RUNNING",
+                backtest_runs.c.worker_id == worker_id,
+            )).values(heartbeat_at=now, updated_at=now))
+            return result.rowcount == 1
+
+    return _retry_database_write("heartbeat", write)
 
 
-def finish_backtest_run(run_id: str, status: str, signals: int, orders: int, error_message: str | None = None) -> None:
-    with get_engine().begin() as connection:
-        connection.execute(update(backtest_runs).where(backtest_runs.c.id == run_id).values(
-            status=status,
-            progress=100,
-            signal_count=signals,
-            order_count=orders,
-            error_message=error_message,
-            completed_at=utc_now(),
-            updated_at=utc_now(),
-        ))
+def update_backtest_progress(
+    run_id: str,
+    completed: int,
+    signals: int,
+    orders: int,
+    worker_id: str | None = None,
+) -> None:
+    def write() -> None:
+        with get_engine().begin() as connection:
+            total = connection.execute(
+                select(backtest_runs.c.total_combinations).where(backtest_runs.c.id == run_id)
+            ).scalar_one()
+            progress = 99 if completed >= total else max(1, int(completed * 100 / max(total, 1)))
+            conditions = [backtest_runs.c.id == run_id, backtest_runs.c.status == "RUNNING"]
+            if worker_id is not None:
+                conditions.append(backtest_runs.c.worker_id == worker_id)
+            result = connection.execute(update(backtest_runs).where(and_(*conditions)).values(
+                completed_combinations=completed,
+                signal_count=signals,
+                order_count=orders,
+                progress=progress,
+                heartbeat_at=utc_now(),
+                updated_at=utc_now(),
+            ))
+            if result.rowcount != 1:
+                raise BacktestLeaseLostError(f"backtest lease lost: {run_id}")
+
+    _retry_database_write("progress", write)
 
 
-def request_backtest_cancel(user_id: int, run_id: str) -> None:
-    with get_engine().begin() as connection:
-        row = connection.execute(select(backtest_runs.c.status).where(and_(
-            backtest_runs.c.id == run_id,
-            backtest_runs.c.user_id == user_id,
-        )).with_for_update()).mappings().first()
-        if row is None or row["status"] not in {"QUEUED", "RUNNING"}:
-            raise BacktestStoreError("回测任务不存在或已结束")
-        if row["status"] == "QUEUED":
-            connection.execute(update(backtest_runs).where(backtest_runs.c.id == run_id).values(
-                status="CANCELLED",
-                cancel_requested=True,
+def finish_backtest_run(
+    run_id: str,
+    status: str,
+    signals: int,
+    orders: int,
+    error_message: str | None = None,
+    worker_id: str | None = None,
+) -> None:
+    def write() -> None:
+        with get_engine().begin() as connection:
+            conditions = [backtest_runs.c.id == run_id]
+            if worker_id is not None:
+                conditions.extend((backtest_runs.c.status == "RUNNING", backtest_runs.c.worker_id == worker_id))
+            result = connection.execute(update(backtest_runs).where(and_(*conditions)).values(
+                status=status,
                 progress=100,
+                signal_count=signals,
+                order_count=orders,
+                worker_id=None,
+                heartbeat_at=None,
+                error_message=error_message,
                 completed_at=utc_now(),
                 updated_at=utc_now(),
             ))
-        else:
-            connection.execute(update(backtest_runs).where(backtest_runs.c.id == run_id).values(
-                cancel_requested=True,
-                updated_at=utc_now(),
-            ))
+            if result.rowcount != 1:
+                raise BacktestLeaseLostError(f"backtest lease lost: {run_id}")
+
+    _retry_database_write("finish", write)
+
+
+def _stale_run_condition(cutoff: datetime) -> Any:
+    return or_(
+        backtest_runs.c.heartbeat_at < cutoff,
+        and_(backtest_runs.c.heartbeat_at.is_(None), backtest_runs.c.updated_at < cutoff),
+    )
+
+
+def recover_stale_backtest_runs(
+    stale_seconds: int = BACKTEST_STALE_SECONDS,
+    max_attempts: int = BACKTEST_MAX_ATTEMPTS,
+) -> dict[str, int]:
+    cutoff = utc_now() - timedelta(seconds=stale_seconds)
+
+    def write() -> dict[str, int]:
+        result = {"requeued": 0, "cancelled": 0, "failed": 0}
+        with get_engine().begin() as connection:
+            rows = connection.execute(
+                select(backtest_runs)
+                .where(and_(backtest_runs.c.status == "RUNNING", _stale_run_condition(cutoff)))
+                .with_for_update(skip_locked=True)
+            ).mappings().all()
+            for row in rows:
+                run_id = str(row["id"])
+                now = utc_now()
+                if row["cancel_requested"]:
+                    connection.execute(update(backtest_runs).where(backtest_runs.c.id == run_id).values(
+                        status="CANCELLED", progress=100, worker_id=None, heartbeat_at=None,
+                        completed_at=now, updated_at=now,
+                    ))
+                    result["cancelled"] += 1
+                    continue
+                if int(row["attempt_count"] or 0) >= max_attempts:
+                    connection.execute(update(backtest_runs).where(backtest_runs.c.id == run_id).values(
+                        status="FAILED", progress=100, worker_id=None, heartbeat_at=None,
+                        error_message="Backtest worker stopped repeatedly; automatic retry limit reached.",
+                        completed_at=now, updated_at=now,
+                    ))
+                    result["failed"] += 1
+                    continue
+
+                connection.execute(delete(backtest_orders).where(backtest_orders.c.run_id == run_id))
+                connection.execute(delete(backtest_rule_summaries).where(backtest_rule_summaries.c.run_id == run_id))
+                connection.execute(delete(backtest_errors).where(backtest_errors.c.run_id == run_id))
+                connection.execute(delete(backtest_series).where(backtest_series.c.run_id == run_id))
+                connection.execute(update(backtest_runs).where(backtest_runs.c.id == run_id).values(
+                    status="PENDING", progress=0, completed_combinations=0, signal_count=0, order_count=0,
+                    worker_id=None, heartbeat_at=None, started_at=None, completed_at=None,
+                    error_message="Backtest worker stopped; task was automatically requeued.", updated_at=now,
+                ))
+                result["requeued"] += 1
+        return result
+
+    return _retry_database_write("stale recovery", write)
+
+
+def request_backtest_cancel(
+    user_id: int,
+    run_id: str,
+    stale_seconds: int = BACKTEST_STALE_SECONDS,
+) -> None:
+    def write() -> None:
+        with get_engine().begin() as connection:
+            row = connection.execute(select(backtest_runs).where(and_(
+                backtest_runs.c.id == run_id,
+                backtest_runs.c.user_id == user_id,
+            )).with_for_update()).mappings().first()
+            if row is None or row["status"] not in {"PENDING", "QUEUED", "RUNNING"}:
+                raise BacktestStoreError("回测任务不存在或已结束")
+            now = utc_now()
+            heartbeat = row["heartbeat_at"] or row["updated_at"]
+            is_stale = heartbeat is None or heartbeat < now - timedelta(seconds=stale_seconds)
+            if row["status"] in {"PENDING", "QUEUED"} or is_stale:
+                connection.execute(update(backtest_runs).where(backtest_runs.c.id == run_id).values(
+                    status="CANCELLED",
+                    cancel_requested=True,
+                    progress=100,
+                    worker_id=None,
+                    heartbeat_at=None,
+                    completed_at=now,
+                    updated_at=now,
+                ))
+            else:
+                connection.execute(update(backtest_runs).where(backtest_runs.c.id == run_id).values(
+                    cancel_requested=True,
+                    updated_at=now,
+                ))
+
+    _retry_database_write("cancel", write)
 
 
 def is_backtest_cancel_requested(run_id: str) -> bool:
-    with get_engine().connect() as connection:
-        return bool(connection.execute(select(backtest_runs.c.cancel_requested).where(backtest_runs.c.id == run_id)).scalar())
+    def read() -> bool:
+        with get_engine().connect() as connection:
+            return bool(connection.execute(
+                select(backtest_runs.c.cancel_requested).where(backtest_runs.c.id == run_id)
+            ).scalar())
+
+    return _retry_database_write("cancel check", read)
 
 
 def save_backtest_series(run_id: str, symbol: str, timeframe: str, payload: dict[str, Any]) -> str:
@@ -308,10 +464,13 @@ def save_backtest_orders(rows: list[dict[str, Any]]) -> None:
 
 
 def replace_backtest_summaries(run_id: str, rows: list[dict[str, Any]]) -> None:
-    with get_engine().begin() as connection:
-        connection.execute(delete(backtest_rule_summaries).where(backtest_rule_summaries.c.run_id == run_id))
-        if rows:
-            connection.execute(insert(backtest_rule_summaries), rows)
+    def write() -> None:
+        with get_engine().begin() as connection:
+            connection.execute(delete(backtest_rule_summaries).where(backtest_rule_summaries.c.run_id == run_id))
+            if rows:
+                connection.execute(insert(backtest_rule_summaries), rows)
+
+    _retry_database_write("summary replacement", write)
 
 
 def add_backtest_error(run_id: str, symbol: str, timeframe: str, message: str) -> None:
@@ -423,7 +582,7 @@ def delete_backtest_run(user_id: int, run_id: str) -> None:
         result = connection.execute(delete(backtest_runs).where(and_(
             backtest_runs.c.id == run_id,
             backtest_runs.c.user_id == user_id,
-            ~backtest_runs.c.status.in_(["QUEUED", "RUNNING"]),
+            ~backtest_runs.c.status.in_(["PENDING", "QUEUED", "RUNNING"]),
         )))
         if result.rowcount == 0:
             raise BacktestStoreError("运行中的任务不能删除，或回测记录不存在")

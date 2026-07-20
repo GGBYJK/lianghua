@@ -6,12 +6,14 @@ import os
 import socket
 from datetime import timedelta
 from decimal import Decimal
+from typing import Awaitable, Callable
 from uuid import uuid4
 
 from sqlalchemy import insert, select, update
 
 from .market_client import MarketApiError, fetch_kline_from_market, shutdown_market_clients
 from .backtest_service import process_next_backtest_run
+from .backtest_store import recover_stale_backtest_runs
 from .monitor import monitor_watch_pool_loop
 from .trading_db import get_engine, init_trading_database, utc_now, worker_leases
 from .trading_service import process_exit_rules_once
@@ -68,10 +70,16 @@ async def refresh_symbol(symbol: str) -> None:
 
 
 async def trading_loop(stop_event: asyncio.Event) -> None:
+    lease_warning_logged = False
     while not stop_event.is_set():
         if not renew_lease():
-            logger.warning("another paper trading worker owns the lease")
+            if not lease_warning_logged:
+                logger.warning("another paper trading worker owns the lease")
+                lease_warning_logged = True
         else:
+            if lease_warning_logged:
+                logger.info("paper trading worker lease acquired")
+                lease_warning_logged = False
             symbols = watched_symbols()
             results = await asyncio.gather(*(refresh_symbol(symbol) for symbol in symbols), return_exceptions=True)
             for symbol, result in zip(symbols, results):
@@ -92,12 +100,33 @@ async def trading_loop(stop_event: asyncio.Event) -> None:
 async def backtest_loop(stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
         try:
-            processed = await process_next_backtest_run()
+            recovered = await asyncio.to_thread(recover_stale_backtest_runs)
+            if any(recovered.values()):
+                logger.warning("recovered stale backtests: %s", recovered)
+            processed = await process_next_backtest_run(OWNER_ID)
         except Exception:
             logger.exception("backtest worker iteration failed")
             processed = False
         if processed:
             continue
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=1.0)
+        except asyncio.TimeoutError:
+            pass
+
+
+async def supervise_loop(
+    name: str,
+    loop: Callable[[asyncio.Event], Awaitable[None]],
+    stop_event: asyncio.Event,
+) -> None:
+    while not stop_event.is_set():
+        try:
+            await loop(stop_event)
+        except Exception:
+            logger.exception("worker loop crashed; restarting: loop=%s", name)
+        if stop_event.is_set():
+            return
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=1.0)
         except asyncio.TimeoutError:
@@ -111,10 +140,19 @@ async def run() -> None:
     mode = os.getenv("WORKER_MODE", "all").strip().lower()
     tasks: list[asyncio.Task[None]] = []
     if mode in {"all", "market"}:
-        tasks.append(asyncio.create_task(monitor_watch_pool_loop(stop_event), name="watch-pool-monitor"))
-        tasks.append(asyncio.create_task(trading_loop(stop_event), name="paper-trading-worker"))
+        tasks.append(asyncio.create_task(
+            supervise_loop("watch-pool-monitor", monitor_watch_pool_loop, stop_event),
+            name="watch-pool-monitor-supervisor",
+        ))
+        tasks.append(asyncio.create_task(
+            supervise_loop("paper-trading-worker", trading_loop, stop_event),
+            name="paper-trading-worker-supervisor",
+        ))
     if mode in {"all", "backtest"}:
-        tasks.append(asyncio.create_task(backtest_loop(stop_event), name="strategy-backtest-worker"))
+        tasks.append(asyncio.create_task(
+            supervise_loop("strategy-backtest-worker", backtest_loop, stop_event),
+            name="strategy-backtest-worker-supervisor",
+        ))
     if not tasks:
         raise ValueError(f"unsupported WORKER_MODE: {mode}")
     logger.info("worker started: owner=%s mode=%s", OWNER_ID, mode)

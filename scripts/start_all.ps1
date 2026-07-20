@@ -5,6 +5,7 @@ $backendDir = Join-Path $root "backend"
 $frontendDir = Join-Path $root "frontend"
 $runtimeDir = Join-Path $root ".run"
 $backendPidFile = Join-Path $runtimeDir "backend.pid"
+$workerPidFile = Join-Path $runtimeDir "worker.pid"
 $frontendPidFile = Join-Path $runtimeDir "frontend.pid"
 
 New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
@@ -109,6 +110,7 @@ function Wait-ForUrl {
 
 Write-Host "Stopping previous services..."
 Stop-PidFileProcess -Path $backendPidFile
+Stop-PidFileProcess -Path $workerPidFile
 Stop-PidFileProcess -Path $frontendPidFile
 Stop-PortProcess -Port 8010
 Stop-PortProcess -Port 5173
@@ -133,12 +135,42 @@ if (-not (Test-Path $viteScript)) {
 }
 
 $backendRunner = Join-Path $PSScriptRoot "run_backend.py"
+$workerRunner = Join-Path $PSScriptRoot "run_worker.py"
 $backendOut = Join-Path $backendDir "backend.out.log"
 $backendErr = Join-Path $backendDir "backend.err.log"
+$workerOut = Join-Path $backendDir "worker.out.log"
+$workerErr = Join-Path $backendDir "worker.err.log"
 $frontendOut = Join-Path $frontendDir "frontend.out.log"
 $frontendErr = Join-Path $frontendDir "frontend.err.log"
 
 try {
+    Write-Host "Applying database migrations..."
+    Push-Location $backendDir
+    try {
+        & $python -m alembic upgrade head
+        if ($LASTEXITCODE -ne 0) {
+            throw "Database migration failed with code $LASTEXITCODE."
+        }
+    } finally {
+        Pop-Location
+    }
+
+    Write-Host "Starting worker..."
+    $workerProcess = Start-Process `
+        -FilePath $python `
+        -ArgumentList ('"{0}"' -f $workerRunner) `
+        -WorkingDirectory $backendDir `
+        -RedirectStandardOutput $workerOut `
+        -RedirectStandardError $workerErr `
+        -WindowStyle Hidden `
+        -PassThru
+    Set-Content -Path $workerPidFile -Value $workerProcess.Id
+    Start-Sleep -Seconds 2
+    $workerProcess.Refresh()
+    if ($workerProcess.HasExited) {
+        throw "Worker exited during startup with code $($workerProcess.ExitCode)."
+    }
+
     Write-Host "Starting backend..."
     $backendProcess = Start-Process `
         -FilePath $python `
@@ -165,16 +197,19 @@ try {
     Wait-ForUrl -Name "Frontend" -Url "http://127.0.0.1:5173" -Process $frontendProcess
 
     Write-Host "Services started successfully."
+    Write-Host "Worker PID:   $($workerProcess.Id)"
     Write-Host "Backend PID:  $($backendProcess.Id)"
     Write-Host "Frontend PID: $($frontendProcess.Id)"
 } catch {
     Stop-PidFileProcess -Path $backendPidFile
+    Stop-PidFileProcess -Path $workerPidFile
     Stop-PidFileProcess -Path $frontendPidFile
     Stop-PortProcess -Port 8010
     Stop-PortProcess -Port 5173
 
     Write-Error $_
     Write-Host "Backend log:  $backendErr"
+    Write-Host "Worker log:   $workerErr"
     Write-Host "Frontend log: $frontendErr"
     exit 1
 }

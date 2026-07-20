@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from dataclasses import replace
 from datetime import datetime
 from decimal import ROUND_FLOOR, Decimal
@@ -14,6 +15,7 @@ import pandas as pd
 from openpyxl import Workbook
 
 from .backtest_store import (
+    BacktestLeaseLostError,
     add_backtest_error,
     all_backtest_orders,
     claim_next_backtest_run,
@@ -23,6 +25,7 @@ from .backtest_store import (
     replace_backtest_summaries,
     save_backtest_orders,
     save_backtest_series,
+    touch_backtest_heartbeat,
     update_backtest_progress,
 )
 from .config import load_head_shoulder_config
@@ -34,6 +37,28 @@ from .trading_store import get_contract_spec
 
 
 logger = logging.getLogger("app.backtest")
+BACKTEST_HEARTBEAT_SECONDS = float(os.getenv("BACKTEST_HEARTBEAT_SECONDS", "10"))
+
+
+async def _heartbeat_backtest_run(
+    run_id: str,
+    worker_id: str,
+    stop_event: asyncio.Event,
+    lease_lost: asyncio.Event,
+) -> None:
+    while not stop_event.is_set():
+        try:
+            owned = await asyncio.to_thread(touch_backtest_heartbeat, run_id, worker_id)
+        except Exception:
+            logger.exception("backtest heartbeat failed: run=%s worker=%s", run_id, worker_id)
+        else:
+            if not owned:
+                lease_lost.set()
+                return
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=BACKTEST_HEARTBEAT_SECONDS)
+        except asyncio.TimeoutError:
+            pass
 
 
 def _backtest_shape_config(symbol: str, timeframe: str):
@@ -618,8 +643,8 @@ def _summaries(
     return rows
 
 
-async def process_next_backtest_run() -> bool:
-    run = claim_next_backtest_run()
+async def process_next_backtest_run(worker_id: str) -> bool:
+    run = claim_next_backtest_run(worker_id)
     if run is None:
         return False
     run_id = run["id"]
@@ -628,11 +653,19 @@ async def process_next_backtest_run() -> bool:
     signal_count = 0
     completed = 0
     errors = 0
+    heartbeat_stop = asyncio.Event()
+    lease_lost = asyncio.Event()
+    heartbeat_task = asyncio.create_task(
+        _heartbeat_backtest_run(run_id, worker_id, heartbeat_stop, lease_lost),
+        name=f"backtest-heartbeat-{run_id}",
+    )
     try:
         all_events: list[dict[str, Any]] = []
         for symbol in request["symbols"]:
             symbol_events: list[dict[str, Any]] = []
             for timeframe in request["timeframes"]:
+                if lease_lost.is_set():
+                    raise BacktestLeaseLostError(f"backtest lease lost: {run_id}")
                 if is_backtest_cancel_requested(run_id):
                     replace_backtest_summaries(
                         run_id,
@@ -643,7 +676,9 @@ async def process_next_backtest_run() -> bool:
                             [*request.get("entry_conditions", []), *request.get("other_entry_conditions", [])],
                         ),
                     )
-                    finish_backtest_run(run_id, "CANCELLED", signal_count, len(all_orders))
+                    finish_backtest_run(
+                        run_id, "CANCELLED", signal_count, len(all_orders), worker_id=worker_id,
+                    )
                     return True
                 try:
                     support_limit = max(240, min(int(request["kline_count"]), 600))
@@ -682,7 +717,9 @@ async def process_next_backtest_run() -> bool:
                     logger.exception("backtest combination failed: run=%s symbol=%s timeframe=%s", run_id, symbol, timeframe)
                     add_backtest_error(run_id, symbol, timeframe, str(exc))
                 completed += 1
-                update_backtest_progress(run_id, completed, signal_count, len(all_orders))
+                update_backtest_progress(
+                    run_id, completed, signal_count, len(all_orders), worker_id=worker_id,
+                )
             all_events.extend(symbol_events)
         configured_conditions = [*request.get("entry_conditions", []), *request.get("other_entry_conditions", [])]
         entry_streams, pullback_types = _entry_condition_streams(configured_conditions)
@@ -721,7 +758,9 @@ async def process_next_backtest_run() -> bool:
             )
             save_backtest_orders(portfolio_orders)
             all_orders.extend(portfolio_orders)
-            update_backtest_progress(run_id, completed, signal_count, len(all_orders))
+            update_backtest_progress(
+                run_id, completed, signal_count, len(all_orders), worker_id=worker_id,
+            )
         replace_backtest_summaries(
             run_id,
             _summaries(
@@ -732,10 +771,17 @@ async def process_next_backtest_run() -> bool:
             ),
         )
         status = "COMPLETED_WITH_ERRORS" if errors else "COMPLETED"
-        finish_backtest_run(run_id, status, signal_count, len(all_orders))
+        finish_backtest_run(run_id, status, signal_count, len(all_orders), worker_id=worker_id)
+    except BacktestLeaseLostError:
+        logger.warning("backtest worker lost task ownership: run=%s worker=%s", run_id, worker_id)
     except Exception as exc:
         logger.exception("backtest run failed: run=%s", run_id)
-        finish_backtest_run(run_id, "FAILED", signal_count, len(all_orders), str(exc))
+        finish_backtest_run(
+            run_id, "FAILED", signal_count, len(all_orders), str(exc), worker_id=worker_id,
+        )
+    finally:
+        heartbeat_stop.set()
+        await heartbeat_task
     return True
 
 

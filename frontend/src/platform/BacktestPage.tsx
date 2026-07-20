@@ -49,7 +49,7 @@ type EntryTrigger = "right_shoulder_confirmed" | "right_neck_confirmed";
 
 const DEFAULT_ENTRY_PATTERNS: EntryPattern[] = ["head_shoulders_top", "inverse_head_shoulders"];
 const DEFAULT_ENTRY_TRIGGERS: EntryTrigger[] = ["right_shoulder_confirmed"];
-const ACTIVE_STATUSES = new Set(["QUEUED", "RUNNING"]);
+const ACTIVE_STATUSES = new Set(["PENDING", "QUEUED", "RUNNING"]);
 const ENTRY_PATTERNS: Array<{ label: string; value: EntryPattern }> = [
   { label: "头肩顶 · 做空", value: "head_shoulders_top" },
   { label: "反向头肩 · 做多", value: "inverse_head_shoulders" },
@@ -105,11 +105,12 @@ function contractSymbolKeys(symbol: string) {
   return keys;
 }
 
-function statusTag(status: BacktestRun["status"]) {
+function statusTag(status: BacktestRun["status"], cancelRequested = false) {
   const labels: Record<string, string> = {
-    QUEUED: "排队中", RUNNING: "运行中", COMPLETED: "已完成", COMPLETED_WITH_ERRORS: "部分完成", FAILED: "失败", CANCELLED: "已取消",
+    PENDING: "排队中", QUEUED: "排队中", RUNNING: "运行中", COMPLETED: "已完成", COMPLETED_WITH_ERRORS: "部分完成", FAILED: "失败", CANCELLED: "已取消",
   };
   const colors: Record<string, string> = { QUEUED: "default", RUNNING: "processing", COMPLETED: "success", COMPLETED_WITH_ERRORS: "warning", FAILED: "error" };
+  if (status === "RUNNING" && cancelRequested) return <Tag color="warning">取消中</Tag>;
   return <Tag color={colors[status]}>{labels[status] || status}</Tag>;
 }
 
@@ -629,7 +630,7 @@ export default function BacktestPage() {
         {detail ? <>
           <div className="backtest-run-strip">
             <div><strong>{detail.name}</strong><span>{dateTime(detail.created_at)} · {detail.request.symbols.length}个品种 / {detail.request.timeframes.length}个周期</span></div>
-            <div className="backtest-run-progress">{statusTag(detail.status)}<Progress percent={detail.progress} size="small" showInfo={ACTIVE_STATUSES.has(detail.status)} />{ACTIVE_STATUSES.has(detail.status) ? <Button size="small" danger icon={<X size={14} />} onClick={() => cancelMutation.mutate(detail.id)}>取消</Button> : null}</div>
+            <div className="backtest-run-progress">{statusTag(detail.status, detail.cancel_requested)}<Progress percent={detail.progress} size="small" showInfo={ACTIVE_STATUSES.has(detail.status)} />{ACTIVE_STATUSES.has(detail.status) && !detail.cancel_requested ? <Button size="small" danger icon={<X size={14} />} onClick={() => cancelMutation.mutate(detail.id)}>取消</Button> : null}</div>
           </div>
           <section className="backtest-stat-band">
             <Statistic title="识别信号" value={detail.signal_count} />
