@@ -209,8 +209,8 @@ button, input, select { letter-spacing: 0; }
 .order-id { font-family: Consolas, monospace; }
 
 .backtest-page {
-  width: min(1760px, 100%);
-  margin: 0 auto;
+  width: 100%;
+  margin: 0;
   padding: 24px 26px 48px;
 }
 
@@ -262,9 +262,13 @@ button, input, select { letter-spacing: 0; }
 
 .backtest-workbench {
   display: grid;
-  grid-template-columns: 330px minmax(0, 1fr);
+  grid-template-columns: minmax(560px, 680px) minmax(0, 1fr);
   align-items: start;
   gap: 16px;
+}
+
+.backtest-workbench.config-collapsed {
+  grid-template-columns: 48px minmax(0, 1fr);
 }
 
 .backtest-config,
@@ -283,6 +287,11 @@ button, input, select { letter-spacing: 0; }
   border-top: 3px solid #4a3533;
 }
 
+.config-collapsed .backtest-config {
+  overflow: hidden;
+  padding: 10px 8px;
+}
+
 .backtest-panel-title {
   display: flex;
   align-items: center;
@@ -296,11 +305,52 @@ button, input, select { letter-spacing: 0; }
 .backtest-panel-title div { display: flex; flex-direction: column; }
 .backtest-panel-title strong { color: #241f1e; font-size: 15px; }
 .backtest-panel-title span { color: #7a8582; font-size: 11px; }
+.backtest-config-toggle {
+  margin-left: auto;
+  color: #6b625f;
+}
+.config-collapsed .backtest-panel-title {
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border-bottom: 0;
+}
+.config-collapsed .backtest-panel-title > svg,
+.config-collapsed .backtest-panel-title > div,
+.config-collapsed .backtest-config-form {
+  display: none;
+}
+.config-collapsed .backtest-config-toggle {
+  margin-left: 0;
+  transform: rotate(180deg);
+}
 .backtest-config .ant-form-item { margin-bottom: 15px; }
 .backtest-config .ant-form-item-label { padding-bottom: 5px; }
 .backtest-config .ant-form-item-label label { color: #53615d; font-size: 12px; font-weight: 700; }
 .backtest-config .ant-select,
 .backtest-config .ant-input-number { width: 100%; }
+
+.backtest-config-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 10px;
+  align-items: start;
+}
+
+.backtest-config-column {
+  min-width: 0;
+}
+
+.backtest-basic-section {
+  margin-bottom: 15px;
+  padding: 10px;
+  background: #fffafa;
+  border: 1px dashed #b33a3a;
+}
+
+.backtest-config-form > .ant-btn {
+  grid-column: 1 / -1;
+}
 
 .backtest-symbol-group-item { margin-bottom: 12px !important; }
 .backtest-symbol-group-picker { display: grid; grid-template-columns: minmax(0, 1fr) 38px auto; gap: 6px; }
@@ -350,6 +400,8 @@ button, input, select { letter-spacing: 0; }
 .pattern-target-help { max-width: 260px; line-height: 1.55; }
 
 .backtest-number-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.backtest-position-size-grid { grid-template-columns: repeat(2, minmax(118px, 1fr)); }
+.backtest-position-size-grid .ant-form-item { margin-bottom: 15px; }
 .backtest-max-holding-item .ant-form-item-label label { white-space: nowrap; }
 .backtest-entry-section {
   margin-bottom: 15px;
@@ -359,6 +411,7 @@ button, input, select { letter-spacing: 0; }
 }
 .backtest-entry-section .ant-form-item { margin-bottom: 10px; }
 .backtest-entry-section .backtest-number-grid .ant-form-item { margin-bottom: 0; }
+.backtest-exit-section .custom-rule-row { margin-bottom: 0; }
 .backtest-score-grid { gap: 6px; }
 .backtest-score-grid .ant-form-item-label label { font-size: 11px; white-space: nowrap; }
 .custom-rule-row { display: grid; grid-template-columns: 1fr 86px 38px; gap: 6px; margin: -8px 0 16px; }
@@ -442,7 +495,8 @@ button, input, select { letter-spacing: 0; }
 
 @media (max-width: 1320px) {
   .backtest-history-band { grid-template-columns: minmax(190px, 1.2fr) repeat(4, minmax(110px, 1fr)); }
-  .backtest-workbench { grid-template-columns: 300px minmax(0, 1fr); }
+  .backtest-workbench { grid-template-columns: 460px minmax(0, 1fr); }
+  .backtest-config-form { grid-template-columns: 1fr; }
   .backtest-stat-band { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
   .backtest-stat-band .ant-statistic:nth-child(3) { border-right: 0; }
 }
@@ -454,6 +508,7 @@ button, input, select { letter-spacing: 0; }
   .backtest-history-band .ant-statistic:nth-child(odd) { border-right: 0; }
   .backtest-page { padding: 18px 14px 36px; }
   .backtest-workbench { grid-template-columns: 1fr; }
+  .backtest-workbench.config-collapsed { grid-template-columns: 1fr; }
   .backtest-config { position: static; max-height: none; }
   .backtest-results { min-height: 600px; }
   .backtest-run-strip { align-items: flex-start; flex-direction: column; }

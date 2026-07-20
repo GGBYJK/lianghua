@@ -25,7 +25,9 @@ class BacktestCreateRequest(BaseModel):
     kline_count: int = Field(default=1000, ge=120, le=8000)
     max_holding_bars: int | None = Field(default=None, ge=1, le=500)
     initial_capital: float = Field(default=1_000_000, gt=0, le=1_000_000_000)
-    single_symbol_position_pct: float = Field(default=10, gt=0, le=100)
+    position_sizing_mode: Literal["PERCENT", "FIXED_LOTS"] = "PERCENT"
+    single_symbol_position_pct: float | None = Field(default=10, gt=0, le=100)
+    single_symbol_lots: int | None = Field(default=None, ge=1, le=1_000_000)
     no_overnight: bool = False
     entry_conditions: list[Literal[
         "head_shoulders_top:right_shoulder_confirmed",
@@ -59,6 +61,14 @@ class BacktestCreateRequest(BaseModel):
             raise ValueError("至少选择一个进场形态")
         if len(self.symbols) * len(self.timeframes) > 50:
             raise ValueError("单次回测最多包含 50 个品种周期组合")
+        if self.position_sizing_mode == "PERCENT":
+            if self.single_symbol_position_pct is None:
+                raise ValueError("按仓位比例回测时必须填写单品种仓位")
+            self.single_symbol_lots = None
+        else:
+            if self.single_symbol_lots is None:
+                raise ValueError("按固定手数回测时必须填写单品种手数")
+            self.single_symbol_position_pct = None
         return self
 
 

@@ -185,11 +185,13 @@ def _position_key(symbol: str) -> str:
 
 def _position_quantity(
     initial_capital: Decimal,
-    single_symbol_position_pct: Decimal,
+    single_symbol_position_pct: Decimal | None,
     entry_price: Decimal,
     contract: dict[str, Any] | None,
+    position_sizing_mode: str = "PERCENT",
+    single_symbol_lots: int | None = None,
 ) -> int:
-    """Return the largest whole-lot position within the per-symbol margin budget."""
+    """Return fixed lots or the largest whole-lot position within the margin budget."""
     if contract is None or entry_price <= 0:
         return 0
     try:
@@ -199,6 +201,10 @@ def _position_quantity(
         return 0
     margin_per_lot = entry_price * multiplier * margin_rate
     if multiplier <= 0 or margin_rate <= 0 or margin_per_lot <= 0:
+        return 0
+    if position_sizing_mode == "FIXED_LOTS":
+        return single_symbol_lots or 0
+    if single_symbol_position_pct is None:
         return 0
     budget = initial_capital * single_symbol_position_pct / Decimal("100")
     return int((budget / margin_per_lot).to_integral_value(rounding=ROUND_FLOOR))
@@ -289,7 +295,9 @@ def _simulate_order(
     entry_condition: str = "mixed",
     stop_loss_qtr_multiplier: float = 0.5,
     initial_capital: Decimal = Decimal("1000000"),
-    single_symbol_position_pct: Decimal = Decimal("10"),
+    single_symbol_position_pct: Decimal | None = Decimal("10"),
+    position_sizing_mode: str = "PERCENT",
+    single_symbol_lots: int | None = None,
     no_overnight: bool = False,
 ) -> dict[str, Any]:
     direction = signal_direction(str(signal["pattern"]), str(signal["alert_type"]))
@@ -358,7 +366,14 @@ def _simulate_order(
         entry_fill, entry_slip = _fill_price(entry_decimal, open_side, tick, DEFAULT_SLIPPAGE_TICKS)
     else:
         entry_fill, entry_slip = entry_decimal, Decimal("0")
-    quantity = _position_quantity(initial_capital, single_symbol_position_pct, entry_decimal, contract)
+    quantity = _position_quantity(
+        initial_capital,
+        single_symbol_position_pct,
+        entry_decimal,
+        contract,
+        position_sizing_mode,
+        single_symbol_lots,
+    )
     if contract and quantity < 1:
         return base
     base["quantity"] = quantity
@@ -483,7 +498,9 @@ def _simulate_portfolio_orders(
     stop_loss_qtr_multiplier: float,
     entry_condition: str = "mixed",
     initial_capital: Decimal = Decimal("1000000"),
-    single_symbol_position_pct: Decimal = Decimal("10"),
+    single_symbol_position_pct: Decimal | None = Decimal("10"),
+    position_sizing_mode: str = "PERCENT",
+    single_symbol_lots: int | None = None,
     no_overnight: bool = False,
 ) -> list[dict[str, Any]]:
     """Simulate each rule with one shared capital pool across all selected products."""
@@ -533,6 +550,8 @@ def _simulate_portfolio_orders(
                 stop_loss_qtr_multiplier=stop_loss_qtr_multiplier,
                 initial_capital=initial_capital,
                 single_symbol_position_pct=single_symbol_position_pct,
+                position_sizing_mode=position_sizing_mode,
+                single_symbol_lots=single_symbol_lots,
                 no_overnight=no_overnight,
             )
             if order["status"] == "INVALID":
@@ -753,7 +772,17 @@ async def process_next_backtest_run(worker_id: str) -> bool:
                 stop_loss_qtr_multiplier=float(request.get("stop_loss_qtr_multiplier", 0.5)),
                 entry_condition=entry_condition,
                 initial_capital=Decimal(str(request.get("initial_capital", 1_000_000))),
-                single_symbol_position_pct=Decimal(str(request.get("single_symbol_position_pct", 10))),
+                single_symbol_position_pct=(
+                    Decimal(str(request["single_symbol_position_pct"]))
+                    if request.get("single_symbol_position_pct") is not None
+                    else None
+                ),
+                position_sizing_mode=str(request.get("position_sizing_mode", "PERCENT")),
+                single_symbol_lots=(
+                    int(request["single_symbol_lots"])
+                    if request.get("single_symbol_lots") is not None
+                    else None
+                ),
                 no_overnight=bool(request.get("no_overnight", False)),
             )
             save_backtest_orders(portfolio_orders)

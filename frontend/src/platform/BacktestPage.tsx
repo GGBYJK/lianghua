@@ -11,6 +11,7 @@ import {
   Modal,
   Popconfirm,
   Progress,
+  Segmented,
   Select,
   Space,
   Spin,
@@ -160,6 +161,7 @@ export default function BacktestPage() {
   const [selectedSymbolGroupId, setSelectedSymbolGroupId] = useState<string>();
   const [symbolGroupModalOpen, setSymbolGroupModalOpen] = useState(false);
   const [symbolGroupName, setSymbolGroupName] = useState("");
+  const [configCollapsed, setConfigCollapsed] = useState(false);
   const topOrderScrollRef = useRef<HTMLDivElement>(null);
   const orderTableRef = useRef<HTMLDivElement>(null);
 
@@ -268,6 +270,7 @@ export default function BacktestPage() {
   function submit(values: Record<string, unknown>) {
     const selectedKeys = values.rule_keys as string[];
     const maxHoldingBars = values.max_holding_bars == null ? undefined : Number(values.max_holding_bars);
+    const positionSizingMode = values.position_sizing_mode as BacktestRequest["position_sizing_mode"];
     const payload: BacktestRequest = {
       name: String(values.name || ""),
       symbols: values.symbols as string[],
@@ -275,7 +278,10 @@ export default function BacktestPage() {
       kline_count: Number(values.kline_count),
       ...(maxHoldingBars === undefined ? {} : { max_holding_bars: maxHoldingBars }),
       initial_capital: Number(values.initial_capital),
-      single_symbol_position_pct: Number(values.single_symbol_position_pct),
+      position_sizing_mode: positionSizingMode,
+      ...(positionSizingMode === "PERCENT"
+        ? { single_symbol_position_pct: Number(values.single_symbol_position_pct) }
+        : { single_symbol_lots: Number(values.single_symbol_lots) }),
       no_overnight: Boolean(values.no_overnight),
       entry_conditions: combineEntryConditions(
         values.entry_patterns as EntryPattern[],
@@ -546,12 +552,14 @@ export default function BacktestPage() {
         {detail && !ACTIVE_STATUSES.has(detail.status) ? <Button icon={<Download size={17} />} onClick={() => void downloadBacktest(detail.id)}>导出Excel</Button> : null}
       </Space>
     </header>
-    <div className="backtest-workbench">
+    <div className={`backtest-workbench${configCollapsed ? " config-collapsed" : ""}`}>
       <aside className="backtest-config">
-        <div className="backtest-panel-title"><Play size={17} /><div><strong>本次回测</strong><span>品种、周期与退出规则</span></div></div>
-        <Form form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["3m", "5m"], kline_count: 1000, initial_capital: 1000000, single_symbol_position_pct: 10, no_overnight: false, entry_patterns: DEFAULT_ENTRY_PATTERNS, entry_triggers: DEFAULT_ENTRY_TRIGGERS, other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 75, min_trend_score: 65, other_min_pattern_score: 80, other_max_trend_score: 35, stop_loss_qtr_multiplier: 0.5, rule_keys: DEFAULT_RULE_KEYS }}>
+        <div className="backtest-panel-title"><Play size={17} /><div><strong>本次回测</strong><span>品种、周期与退出规则</span></div><Tooltip title={configCollapsed ? "展开本次回测" : "收起本次回测"}><Button className="backtest-config-toggle" type="text" size="small" icon={<ArrowLeft size={15} />} onClick={() => setConfigCollapsed((value) => !value)} /></Tooltip></div>
+        <Form className="backtest-config-form" form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["3m", "5m"], kline_count: 1000, initial_capital: 1000000, position_sizing_mode: "PERCENT", single_symbol_position_pct: 10, single_symbol_lots: 1, no_overnight: false, entry_patterns: DEFAULT_ENTRY_PATTERNS, entry_triggers: DEFAULT_ENTRY_TRIGGERS, other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 75, min_trend_score: 65, other_min_pattern_score: 80, other_max_trend_score: 35, stop_loss_qtr_multiplier: 0.5, rule_keys: DEFAULT_RULE_KEYS }}>
+          <div className="backtest-config-column">
+          <div className="backtest-basic-section">
           <Form.Item name="name" label="回测名称"><Input placeholder="留空自动按时间命名" /></Form.Item>
-          <Form.Item label="品种分组" className="backtest-symbol-group-item">
+          <Form.Item label="品种分组" className="backtest-symbol-group-item backtest-span-full">
             <div className="backtest-symbol-group-picker">
               <Select
                 allowClear
@@ -567,17 +575,29 @@ export default function BacktestPage() {
               </Popconfirm> : null}
             </div>
           </Form.Item>
-          <Form.Item name="symbols" label="回测品种" rules={[{ required: true, message: "至少选择一个品种" }]}><Select mode="multiple" showSearch maxTagCount="responsive" placeholder="搜索并加入本次回测" options={symbolOptions} optionFilterProp="searchText" /></Form.Item>
+          <Form.Item className="backtest-span-full" name="symbols" label="回测品种" rules={[{ required: true, message: "至少选择一个品种" }]}><Select mode="multiple" showSearch maxTagCount="responsive" placeholder="搜索并加入本次回测" options={symbolOptions} optionFilterProp="searchText" /></Form.Item>
           <Form.Item name="timeframes" label="回测周期" rules={[{ required: true, message: "至少选择一个回测周期" }]}><Select mode="multiple" maxTagCount="responsive" placeholder="选择回测周期" options={TIMEFRAMES} /></Form.Item>
           <div className="backtest-number-grid">
             <Form.Item name="kline_count" label="回测K线数" rules={[{ required: true }]}><InputNumber min={120} max={8000} step={120} /></Form.Item>
             <Form.Item className="backtest-max-holding-item" name="max_holding_bars" label="最大持有K线（选填）"><InputNumber min={1} max={500} placeholder="不限制" /></Form.Item>
           </div>
-          <div className="backtest-number-grid">
-            <Form.Item name="initial_capital" label="初始资金" rules={[{ required: true }]}><InputNumber min={1} max={1000000000} step={10000} precision={2} addonBefore="¥" /></Form.Item>
-            <Form.Item name="single_symbol_position_pct" label="单品种仓位" rules={[{ required: true }]}><InputNumber min={0.01} max={100} step={0.1} precision={2} addonAfter="%" /></Form.Item>
+          <Form.Item name="initial_capital" label="初始资金" rules={[{ required: true }]}><InputNumber min={1} max={1000000000} step={10000} precision={2} addonBefore="¥" /></Form.Item>
+          <Form.Item name="position_sizing_mode" label="单品种仓位方式" rules={[{ required: true }]}>
+            <Segmented block options={[{ label: "按仓位比例", value: "PERCENT" }, { label: "按固定手数", value: "FIXED_LOTS" }]} />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(previous, current) => previous.position_sizing_mode !== current.position_sizing_mode}>
+            {({ getFieldValue }) => {
+              const fixedLots = getFieldValue("position_sizing_mode") === "FIXED_LOTS";
+              return <div className="backtest-number-grid backtest-position-size-grid">
+                <Form.Item name="single_symbol_position_pct" label="单品种仓位" rules={fixedLots ? [] : [{ required: true, message: "请填写单品种仓位" }]}><InputNumber disabled={fixedLots} min={0.01} max={100} step={0.1} precision={2} addonAfter="%" /></Form.Item>
+                <Form.Item name="single_symbol_lots" label="单品种手数" rules={fixedLots ? [{ required: true, message: "请填写单品种手数" }] : []}><InputNumber disabled={!fixedLots} min={1} max={1000000} step={1} precision={0} addonAfter="手" /></Form.Item>
+              </div>;
+            }}
+          </Form.Item>
           </div>
           <Form.Item name="no_overnight" label="其他约束条件" valuePropName="checked"><Checkbox>不跨夜跨日</Checkbox></Form.Item>
+          </div>
+          <div className="backtest-config-column">
           <section className="backtest-entry-section">
             <Form.Item name="entry_patterns" label="进场形态" dependencies={["entry_triggers", "other_entry_conditions"]} rules={[({ getFieldValue }) => ({ validator: (_, value: EntryPattern[]) => {
               const triggers = getFieldValue("entry_triggers") as EntryTrigger[] | undefined;
@@ -602,8 +622,9 @@ export default function BacktestPage() {
               <Form.Item name="other_max_trend_score" label="趋势评分 ≤"><InputNumber min={0} max={100} step={1} /></Form.Item>
             </div>
           </section>
+          <section className="backtest-entry-section backtest-exit-section">
           <Form.Item name="stop_loss_qtr_multiplier" label="止损条件（QTR 倍数）" rules={[{ required: true }]}><InputNumber min={0.1} max={20} step={0.1} /></Form.Item>
-          <Form.Item name="rule_keys" label="止盈条件" rules={[{ required: true, message: "至少勾选一个止盈条件" }]}>
+          <Form.Item className="backtest-span-full" name="rule_keys" label="止盈条件" rules={[{ required: true, message: "至少勾选一个止盈条件" }]}>
             <Checkbox.Group className="backtest-rule-grid">
               {ruleCatalog.map((rule) => <Checkbox key={rule.key} value={rule.key} className={rule.type === "PATTERN_TARGET" ? "pattern-target-rule" : undefined}>
                 <span className="rule-label-with-help">
@@ -617,10 +638,12 @@ export default function BacktestPage() {
               </Checkbox>)}
             </Checkbox.Group>
           </Form.Item>
-          <div className="custom-rule-row">
+          <div className="custom-rule-row backtest-span-full">
             <Select value={customDraft.type} onChange={(value) => setCustomDraft((item) => ({ ...item, type: value }))} options={[{ value: "RR", label: "R" }, { value: "QTR", label: "QTR" }]} />
             <InputNumber min={0.1} max={20} step={0.1} value={customDraft.multiplier} onChange={(value) => setCustomDraft((item) => ({ ...item, multiplier: Number(value) || 1 }))} />
             <Tooltip title="添加止盈条件"><Button icon={<Plus size={16} />} onClick={addCustomRule} /></Tooltip>
+          </div>
+          </section>
           </div>
           <Button block type="primary" htmlType="submit" icon={<Play size={16} />} loading={createMutation.isPending}>开始策略回测</Button>
         </Form>

@@ -168,7 +168,9 @@ export type BacktestRequest = {
   kline_count: number;
   max_holding_bars?: number | null;
   initial_capital: number;
-  single_symbol_position_pct: number;
+  position_sizing_mode: "PERCENT" | "FIXED_LOTS";
+  single_symbol_position_pct?: number;
+  single_symbol_lots?: number;
   no_overnight: boolean;
   entry_conditions: Array<
     | "head_shoulders_top:right_shoulder_confirmed"

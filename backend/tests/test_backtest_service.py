@@ -88,6 +88,43 @@ def test_position_quantity_uses_initial_capital_and_single_symbol_position_limit
     assert quantity == 19
 
 
+def test_position_quantity_can_use_fixed_lots() -> None:
+    quantity = _position_quantity(
+        initial_capital=Decimal("1000000"),
+        single_symbol_position_pct=None,
+        entry_price=Decimal("4683"),
+        contract={"multiplier": Decimal("10"), "margin_rate": Decimal("0.11")},
+        position_sizing_mode="FIXED_LOTS",
+        single_symbol_lots=7,
+    )
+
+    assert quantity == 7
+
+
+def test_simulated_order_uses_fixed_lot_position_sizing() -> None:
+    order = _simulate_order(
+        run_id="run",
+        series_id="series",
+        frame=frame([(100, 101, 99, 100), (100, 106, 99, 105), (105, 106, 104, 105)]),
+        signal=long_signal(),
+        rule={"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1},
+        max_holding_bars=3,
+        contract={
+            "multiplier": Decimal("10"),
+            "margin_rate": Decimal("0.1"),
+            "price_tick": Decimal("1"),
+            "fee_mode": "FIXED",
+            "fee_value": Decimal("0"),
+        },
+        position_sizing_mode="FIXED_LOTS",
+        single_symbol_position_pct=None,
+        single_symbol_lots=7,
+    )
+
+    assert order["quantity"] == 7
+    assert order["status"] == "CLOSED"
+
+
 def test_multi_product_backtest_skips_signals_until_shared_capital_is_released() -> None:
     data = frame([
         (100, 101, 99, 100),
@@ -421,7 +458,33 @@ def test_backtest_request_uses_the_default_entry_score_thresholds() -> None:
     assert request.timeframes == ["3m", "5m"]
     assert request.kline_count == 1000
     assert request.initial_capital == 1_000_000
+    assert request.position_sizing_mode == "PERCENT"
     assert request.single_symbol_position_pct == 10
+    assert request.single_symbol_lots is None
+
+
+def test_backtest_request_accepts_fixed_lot_position_sizing() -> None:
+    request = BacktestCreateRequest(
+        symbols=["DCE.a2609"],
+        position_sizing_mode="FIXED_LOTS",
+        single_symbol_lots=3,
+        entry_conditions=["head_shoulders_top:right_shoulder_confirmed"],
+        take_profit_rules=[{"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1}],
+    )
+
+    assert request.position_sizing_mode == "FIXED_LOTS"
+    assert request.single_symbol_lots == 3
+    assert request.single_symbol_position_pct is None
+
+
+def test_backtest_request_rejects_fixed_lot_mode_without_lots() -> None:
+    with pytest.raises(ValueError, match="手数"):
+        BacktestCreateRequest(
+            symbols=["DCE.a2609"],
+            position_sizing_mode="FIXED_LOTS",
+            entry_conditions=["head_shoulders_top:right_shoulder_confirmed"],
+            take_profit_rules=[{"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1}],
+        )
 
 
 def test_backtest_request_accepts_right_neck_entry_conditions() -> None:
