@@ -562,10 +562,10 @@ def test_backtest_request_uses_the_default_entry_score_thresholds() -> None:
     assert request.min_trend_score == 65
     assert request.timeframes == ["3m", "5m"]
     assert request.kline_count == 1000
-    assert request.initial_capital == 1_000_000
-    assert request.position_sizing_mode == "PERCENT"
-    assert request.single_symbol_position_pct == 10
-    assert request.single_symbol_lots is None
+    assert request.initial_capital == 100_000
+    assert request.position_sizing_mode == "FIXED_LOTS"
+    assert request.single_symbol_position_pct is None
+    assert request.single_symbol_lots == 2
 
 
 def test_neckline_scale_out_request_forces_two_lots_and_builtin_exit_rule() -> None:
@@ -596,11 +596,12 @@ def test_backtest_request_accepts_fixed_lot_position_sizing() -> None:
     assert request.single_symbol_position_pct is None
 
 
-def test_backtest_request_rejects_fixed_lot_mode_without_lots() -> None:
+def test_backtest_request_rejects_explicitly_empty_fixed_lots() -> None:
     with pytest.raises(ValueError, match="手数"):
         BacktestCreateRequest(
             symbols=["DCE.a2609"],
             position_sizing_mode="FIXED_LOTS",
+            single_symbol_lots=None,
             entry_conditions=["head_shoulders_top:right_shoulder_confirmed"],
             take_profit_rules=[{"key": "rr-1", "label": "1R", "type": "RR", "multiplier": 1}],
         )

@@ -585,7 +585,7 @@ export default function BacktestPage() {
     <div className={`backtest-workbench${configCollapsed ? " config-collapsed" : ""}`}>
       <aside className="backtest-config">
         <div className="backtest-panel-title"><Play size={17} /><div><strong>本次回测</strong><span>品种、周期与退出规则</span></div><Tooltip title={configCollapsed ? "展开本次回测" : "收起本次回测"}><Button className="backtest-config-toggle" type="text" size="small" icon={<ArrowLeft size={15} />} onClick={() => setConfigCollapsed((value) => !value)} /></Tooltip></div>
-        <Form className="backtest-config-form" form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["3m", "5m"], kline_count: 1000, initial_capital: 1000000, position_sizing_mode: "PERCENT", single_symbol_position_pct: 10, single_symbol_lots: 1, no_overnight: false, exit_strategy: "MANUAL", entry_patterns: DEFAULT_ENTRY_PATTERNS, entry_triggers: DEFAULT_ENTRY_TRIGGERS, other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 75, min_trend_score: 65, other_min_pattern_score: 80, other_max_trend_score: 35, stop_loss_qtr_multiplier: 0.5, rule_keys: DEFAULT_RULE_KEYS }}>
+        <Form className="backtest-config-form" form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["3m", "5m"], kline_count: 1000, initial_capital: 100000, position_sizing_mode: "FIXED_LOTS", single_symbol_position_pct: 10, single_symbol_lots: 2, no_overnight: false, exit_strategy: "MANUAL", entry_patterns: DEFAULT_ENTRY_PATTERNS, entry_triggers: DEFAULT_ENTRY_TRIGGERS, other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 75, min_trend_score: 65, other_min_pattern_score: 80, other_max_trend_score: 35, stop_loss_qtr_multiplier: 0.5, rule_keys: DEFAULT_RULE_KEYS }}>
           <div className="backtest-config-column">
           <div className="backtest-basic-section">
           <Form.Item name="name" label="回测名称"><Input placeholder="留空自动按时间命名" /></Form.Item>
@@ -653,30 +653,42 @@ export default function BacktestPage() {
             </div>
           </section>
           <section className="backtest-entry-section backtest-exit-section">
-          <Form.Item className="backtest-span-full" name="exit_strategy" label="退出方式">
-            <Segmented className="backtest-exit-strategy" block onChange={(value) => {
-              if (value === "NECKLINE_SCALE_OUT") form.setFieldsValue({ position_sizing_mode: "FIXED_LOTS", single_symbol_lots: 2 });
-            }} options={[{ label: "自定义止盈止损", value: "MANUAL" }, { label: "颈线减仓+结构目标跟随", value: "NECKLINE_SCALE_OUT" }]} />
-          </Form.Item>
-          <Form.Item name="stop_loss_qtr_multiplier" label="止损条件（QTR 倍数）" dependencies={["exit_strategy"]} rules={necklineStrategy ? [] : [{ required: true }]}><InputNumber disabled={necklineStrategy} min={0.1} max={20} step={0.1} /></Form.Item>
-          <Form.Item className="backtest-span-full" name="rule_keys" label="止盈条件" dependencies={["exit_strategy"]} rules={necklineStrategy ? [] : [{ required: true, message: "至少勾选一个止盈条件" }]}>
-            <Checkbox.Group disabled={necklineStrategy} className="backtest-rule-grid">
-              {ruleCatalog.map((rule) => <Checkbox key={rule.key} value={rule.key} className={rule.type === "PATTERN_TARGET" ? "pattern-target-rule" : undefined}>
-                <span className="rule-label-with-help">
-                  <span>{rule.label}</span>
-                  {rule.type === "PATTERN_TARGET" ? <Tooltip
-                    trigger="click"
-                    title={<div className="pattern-target-help">头肩顶做空：量出“头部到颈线”的垂直高度 H，从跌破时的颈线位置向下投射 H，得到目标价。<br /><br />反向头肩做多：同样量出高度 H，从突破时的颈线位置向上投射 H，得到目标价。</div>}
-                  ><Button type="text" size="small" className="rule-help" htmlType="button" aria-label="查看形态量度目标说明" icon={<CircleHelp size={15} />} onClick={(event) => { event.preventDefault(); event.stopPropagation(); }} /></Tooltip> : null}
-                </span>
-                {rule.key.startsWith("custom-") ? <button type="button" className="rule-remove" aria-label="删除条件" onClick={(event) => { event.preventDefault(); setCustomRules((items) => items.filter((item) => item.key !== rule.key)); }}>×</button> : null}
-              </Checkbox>)}
-            </Checkbox.Group>
-          </Form.Item>
-          <div className="custom-rule-row backtest-span-full">
-            <Select disabled={necklineStrategy} value={customDraft.type} onChange={(value) => setCustomDraft((item) => ({ ...item, type: value }))} options={[{ value: "RR", label: "R" }, { value: "QTR", label: "QTR" }]} />
-            <InputNumber disabled={necklineStrategy} min={0.1} max={20} step={0.1} value={customDraft.multiplier} onChange={(value) => setCustomDraft((item) => ({ ...item, multiplier: Number(value) || 1 }))} />
-            <Tooltip title="添加止盈条件"><Button disabled={necklineStrategy} icon={<Plus size={16} />} onClick={addCustomRule} /></Tooltip>
+          <Form.Item name="exit_strategy" hidden><Input /></Form.Item>
+          <div className="backtest-exit-heading">退出方式</div>
+          <div className="backtest-exit-method-grid">
+            <div className="backtest-exit-column backtest-exit-manual">
+              <div className="backtest-exit-column-title">自定义止盈止损</div>
+              <Form.Item name="stop_loss_qtr_multiplier" label="止损条件（QTR倍数）" dependencies={["exit_strategy"]} rules={necklineStrategy ? [] : [{ required: true }]}><InputNumber disabled={necklineStrategy} min={0.1} max={20} step={0.1} /></Form.Item>
+              <Form.Item name="rule_keys" label="止盈条件" dependencies={["exit_strategy"]} rules={necklineStrategy ? [] : [{ required: true, message: "至少勾选一个止盈条件" }]}>
+                <Checkbox.Group disabled={necklineStrategy} className="backtest-rule-grid">
+                  {ruleCatalog.map((rule) => <Checkbox key={rule.key} value={rule.key} className={rule.type === "PATTERN_TARGET" ? "pattern-target-rule" : undefined}>
+                    <span className="rule-label-with-help">
+                      <span>{rule.label}</span>
+                      {rule.type === "PATTERN_TARGET" ? <Tooltip
+                        trigger="click"
+                        title={<div className="pattern-target-help">头肩顶做空：量出“头部到颈线”的垂直高度 H，从跌破时的颈线位置向下投射 H，得到目标价。<br /><br />反向头肩做多：同样量出高度 H，从突破时的颈线位置向上投射 H，得到目标价。</div>}
+                      ><Button type="text" size="small" className="rule-help" htmlType="button" aria-label="查看形态量度目标说明" icon={<CircleHelp size={15} />} onClick={(event) => { event.preventDefault(); event.stopPropagation(); }} /></Tooltip> : null}
+                    </span>
+                    {rule.key.startsWith("custom-") ? <button type="button" className="rule-remove" aria-label="删除条件" onClick={(event) => { event.preventDefault(); setCustomRules((items) => items.filter((item) => item.key !== rule.key)); }}>×</button> : null}
+                  </Checkbox>)}
+                </Checkbox.Group>
+              </Form.Item>
+              <div className="custom-rule-row">
+                <Select disabled={necklineStrategy} value={customDraft.type} onChange={(value) => setCustomDraft((item) => ({ ...item, type: value }))} options={[{ value: "RR", label: "R" }, { value: "QTR", label: "QTR" }]} />
+                <InputNumber controls={false} disabled={necklineStrategy} min={0.1} max={20} step={0.1} value={customDraft.multiplier} onChange={(value) => setCustomDraft((item) => ({ ...item, multiplier: Number(value) || 1 }))} />
+                <Tooltip title="添加止盈条件"><Button disabled={necklineStrategy} icon={<Plus size={16} />} onClick={addCustomRule} /></Tooltip>
+              </div>
+            </div>
+            <div className="backtest-exit-column backtest-exit-strategies">
+              <div className="backtest-exit-column-title">策略退出</div>
+              <div className="backtest-exit-strategy-list">
+                <Checkbox checked={necklineStrategy} onChange={(event) => {
+                  const enabled = event.target.checked;
+                  form.setFieldValue("exit_strategy", enabled ? "NECKLINE_SCALE_OUT" : "MANUAL");
+                  if (enabled) form.setFieldsValue({ position_sizing_mode: "FIXED_LOTS", single_symbol_lots: 2 });
+                }}>颈线减仓+结构目标跟随</Checkbox>
+              </div>
+            </div>
           </div>
           </section>
           </div>

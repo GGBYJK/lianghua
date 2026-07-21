@@ -411,8 +411,27 @@ button, input, select { letter-spacing: 0; }
 }
 .backtest-entry-section .ant-form-item { margin-bottom: 10px; }
 .backtest-entry-section .backtest-number-grid .ant-form-item { margin-bottom: 0; }
-.backtest-exit-section .custom-rule-row { margin-bottom: 0; }
-.backtest-exit-strategy .ant-segmented-item-label { min-height: 34px; padding: 6px 8px; display: grid; place-items: center; line-height: 1.25; white-space: normal; }
+.backtest-exit-section { padding: 0; overflow: hidden; }
+.backtest-exit-section .custom-rule-row { margin: -2px 0 0; }
+.backtest-exit-heading { padding: 10px 12px 8px; color: #655d5a; font-size: 12px; font-weight: 600; }
+.backtest-exit-method-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-top: 1px solid #ead7d5; }
+.backtest-exit-column { min-width: 0; padding: 11px 12px 12px; }
+.backtest-exit-column + .backtest-exit-column { border-left: 1px solid #ead7d5; }
+.backtest-exit-column-title { min-height: 28px; margin-bottom: 8px; color: #342b29; font-size: 13px; font-weight: 700; }
+.backtest-exit-manual .ant-form-item-label { overflow: visible; white-space: nowrap; }
+.backtest-exit-manual .ant-form-item-label > label { width: max-content; max-width: none; height: auto; font-size: 11px; white-space: nowrap; }
+.backtest-exit-manual .ant-input-number { width: 100%; }
+.backtest-exit-manual .backtest-rule-grid { grid-template-columns: 1fr; }
+.backtest-exit-manual .custom-rule-row { grid-template-columns: 52px 46px 28px; gap: 3px; justify-content: start; }
+.backtest-exit-manual .custom-rule-row .ant-select { min-width: 52px; }
+.backtest-exit-manual .custom-rule-row .ant-input-number { width: 46px; min-width: 0; }
+.backtest-exit-manual .custom-rule-row .ant-select-selector,
+.backtest-exit-manual .custom-rule-row .ant-input-number-input { font-size: 11px; }
+.backtest-exit-manual .custom-rule-row .ant-btn { width: 28px; min-width: 28px; padding-inline: 0; }
+.backtest-exit-manual .custom-rule-row .ant-btn svg { width: 12px; height: 12px; }
+.backtest-exit-strategy-list { border-top: 1px solid #eadfdd; }
+.backtest-exit-strategy-list .ant-checkbox-wrapper { width: 100%; min-height: 44px; margin: 0; padding: 10px 0; align-items: flex-start; color: #4f4542; line-height: 1.45; }
+.backtest-exit-strategy-list .ant-checkbox + span { min-width: 0; overflow-wrap: anywhere; }
 .backtest-score-grid { gap: 6px; }
 .backtest-score-grid .ant-form-item-label label { font-size: 11px; white-space: nowrap; }
 .custom-rule-row { display: grid; grid-template-columns: 1fr 86px 38px; gap: 6px; margin: -8px 0 16px; }
@@ -529,6 +548,8 @@ button, input, select { letter-spacing: 0; }
   .backtest-check-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .backtest-check-grid.two,
   .backtest-rule-grid { grid-template-columns: 1fr; }
+  .backtest-exit-method-grid { grid-template-columns: 1fr; }
+  .backtest-exit-column + .backtest-exit-column { border-top: 1px solid #ead7d5; border-left: 0; }
   .backtest-view-toolbar { align-items: stretch; flex-direction: column; }
   .backtest-view-toolbar > .ant-select:first-child { width: 100%; min-width: 0; }
   .backtest-chart-order-details > div { flex-basis: calc(50% - 1px); min-width: 0; }

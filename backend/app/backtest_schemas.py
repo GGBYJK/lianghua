@@ -24,10 +24,10 @@ class BacktestCreateRequest(BaseModel):
     timeframes: list[Literal["1m", "3m", "5m", "15m", "30m", "1h", "1d"]] = Field(default_factory=lambda: ["3m", "5m"], min_length=1, max_length=7)
     kline_count: int = Field(default=1000, ge=120, le=8000)
     max_holding_bars: int | None = Field(default=None, ge=1, le=500)
-    initial_capital: float = Field(default=1_000_000, gt=0, le=1_000_000_000)
-    position_sizing_mode: Literal["PERCENT", "FIXED_LOTS"] = "PERCENT"
-    single_symbol_position_pct: float | None = Field(default=10, gt=0, le=100)
-    single_symbol_lots: int | None = Field(default=None, ge=1, le=1_000_000)
+    initial_capital: float = Field(default=100_000, gt=0, le=1_000_000_000)
+    position_sizing_mode: Literal["PERCENT", "FIXED_LOTS"] = "FIXED_LOTS"
+    single_symbol_position_pct: float | None = Field(default=None, gt=0, le=100)
+    single_symbol_lots: int | None = Field(default=2, ge=1, le=1_000_000)
     no_overnight: bool = False
     exit_strategy: Literal["MANUAL", "NECKLINE_SCALE_OUT"] = "MANUAL"
     entry_conditions: list[Literal[
