@@ -412,6 +412,7 @@ button, input, select { letter-spacing: 0; }
 .backtest-entry-section .ant-form-item { margin-bottom: 10px; }
 .backtest-entry-section .backtest-number-grid .ant-form-item { margin-bottom: 0; }
 .backtest-exit-section .custom-rule-row { margin-bottom: 0; }
+.backtest-exit-strategy .ant-segmented-item-label { min-height: 34px; padding: 6px 8px; display: grid; place-items: center; line-height: 1.25; white-space: normal; }
 .backtest-score-grid { gap: 6px; }
 .backtest-score-grid .ant-form-item-label label { font-size: 11px; white-space: nowrap; }
 .custom-rule-row { display: grid; grid-template-columns: 1fr 86px 38px; gap: 6px; margin: -8px 0 16px; }

@@ -157,7 +157,7 @@ export type MarketQuote = {
 export type BacktestRule = {
   key: string;
   label: string;
-  type: "PATTERN_TARGET" | "RR" | "QTR";
+  type: "PATTERN_TARGET" | "RR" | "QTR" | "NECKLINE_SCALE_OUT";
   multiplier?: number | null;
 };
 
@@ -172,6 +172,7 @@ export type BacktestRequest = {
   single_symbol_position_pct?: number;
   single_symbol_lots?: number;
   no_overnight: boolean;
+  exit_strategy: "MANUAL" | "NECKLINE_SCALE_OUT";
   entry_conditions: Array<
     | "head_shoulders_top:right_shoulder_confirmed"
     | "inverse_head_shoulders:right_shoulder_confirmed"
@@ -186,7 +187,7 @@ export type BacktestRequest = {
   min_trend_score: number;
   other_min_pattern_score: number;
   other_max_trend_score: number;
-  stop_loss_qtr_multiplier: number;
+  stop_loss_qtr_multiplier?: number | null;
   take_profit_rules: BacktestRule[];
 };
 
@@ -276,6 +277,10 @@ export type BacktestOrder = {
   status: "INVALID" | "INCOMPLETE" | "CLOSED";
   exit_reason: "TAKE_PROFIT" | "STOP_LOSS" | "TIME_EXIT" | "SESSION_EXIT" | null;
   entry_time: string | null;
+  partial_exit_time: string | null;
+  partial_exit_price: Numeric | null;
+  partial_exit_quantity: number;
+  partial_net_pnl: Numeric | null;
   exit_time: string | null;
   entry_price: Numeric | null;
   stop_price: Numeric | null;

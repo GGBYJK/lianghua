@@ -148,6 +148,8 @@ export default function BacktestPage() {
   const queryClient = useQueryClient();
   const [api, contextHolder] = message.useMessage();
   const [form] = Form.useForm();
+  const exitStrategy = Form.useWatch("exit_strategy", form) || "MANUAL";
+  const necklineStrategy = exitStrategy === "NECKLINE_SCALE_OUT";
   const selectedRunId = runId || null;
   const [activeTab, setActiveTab] = useState("overview");
   const [page, setPage] = useState(1);
@@ -269,9 +271,12 @@ export default function BacktestPage() {
     return () => tableContent.removeEventListener("scroll", syncTopScroll);
   }, [ordersQuery.data, ordersQuery.isLoading]);
   function submit(values: Record<string, unknown>) {
-    const selectedKeys = values.rule_keys as string[];
+    const selectedKeys = (values.rule_keys || []) as string[];
     const maxHoldingBars = values.max_holding_bars == null ? undefined : Number(values.max_holding_bars);
-    const positionSizingMode = values.position_sizing_mode as BacktestRequest["position_sizing_mode"];
+    const selectedExitStrategy = values.exit_strategy as BacktestRequest["exit_strategy"];
+    const positionSizingMode = selectedExitStrategy === "NECKLINE_SCALE_OUT"
+      ? "FIXED_LOTS"
+      : values.position_sizing_mode as BacktestRequest["position_sizing_mode"];
     const payload: BacktestRequest = {
       name: String(values.name || ""),
       symbols: values.symbols as string[],
@@ -280,10 +285,13 @@ export default function BacktestPage() {
       ...(maxHoldingBars === undefined ? {} : { max_holding_bars: maxHoldingBars }),
       initial_capital: Number(values.initial_capital),
       position_sizing_mode: positionSizingMode,
-      ...(positionSizingMode === "PERCENT"
+      ...(selectedExitStrategy === "NECKLINE_SCALE_OUT"
+        ? { single_symbol_lots: 2 }
+        : positionSizingMode === "PERCENT"
         ? { single_symbol_position_pct: Number(values.single_symbol_position_pct) }
         : { single_symbol_lots: Number(values.single_symbol_lots) }),
       no_overnight: Boolean(values.no_overnight),
+      exit_strategy: selectedExitStrategy,
       entry_conditions: combineEntryConditions(
         values.entry_patterns as EntryPattern[],
         values.entry_triggers as EntryTrigger[],
@@ -293,8 +301,12 @@ export default function BacktestPage() {
       min_trend_score: Number(values.min_trend_score || 0),
       other_min_pattern_score: Number(values.other_min_pattern_score ?? 80),
       other_max_trend_score: Number(values.other_max_trend_score ?? 35),
-      stop_loss_qtr_multiplier: Number(values.stop_loss_qtr_multiplier ?? 0.5),
-      take_profit_rules: ruleCatalog.filter((rule) => selectedKeys.includes(rule.key)),
+      ...(selectedExitStrategy === "MANUAL" ? {
+        stop_loss_qtr_multiplier: Number(values.stop_loss_qtr_multiplier ?? 0.5),
+        take_profit_rules: ruleCatalog.filter((rule) => selectedKeys.includes(rule.key)),
+      } : {
+        take_profit_rules: [],
+      }),
     };
     createMutation.mutate(payload);
   }
@@ -450,6 +462,10 @@ export default function BacktestPage() {
     { label: "方向", value: <Tag color={selectedOrder.direction === "LONG" ? "red" : "green"}>{directionLabel(selectedOrder)}</Tag> },
     { label: "结果", value: exitTag(selectedOrder.exit_reason, selectedOrder.status) },
     { label: "进场价", value: orderPrice(selectedOrder.symbol, selectedOrder.entry_price) },
+    ...(selectedOrder.partial_exit_quantity ? [
+      { label: "第一手减仓价", value: orderPrice(selectedOrder.symbol, selectedOrder.partial_exit_price) },
+      { label: "第一手减仓时间", value: formatMarketDateTime(selectedOrder.partial_exit_time) },
+    ] : []),
     { label: "出场价", value: orderPrice(selectedOrder.symbol, selectedOrder.exit_price) },
     { label: "止损价", value: orderPrice(selectedOrder.symbol, selectedOrder.stop_price) },
     { label: "目标价", value: orderPrice(selectedOrder.symbol, selectedOrder.target_price) },
@@ -569,7 +585,7 @@ export default function BacktestPage() {
     <div className={`backtest-workbench${configCollapsed ? " config-collapsed" : ""}`}>
       <aside className="backtest-config">
         <div className="backtest-panel-title"><Play size={17} /><div><strong>本次回测</strong><span>品种、周期与退出规则</span></div><Tooltip title={configCollapsed ? "展开本次回测" : "收起本次回测"}><Button className="backtest-config-toggle" type="text" size="small" icon={<ArrowLeft size={15} />} onClick={() => setConfigCollapsed((value) => !value)} /></Tooltip></div>
-        <Form className="backtest-config-form" form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["3m", "5m"], kline_count: 1000, initial_capital: 1000000, position_sizing_mode: "PERCENT", single_symbol_position_pct: 10, single_symbol_lots: 1, no_overnight: false, entry_patterns: DEFAULT_ENTRY_PATTERNS, entry_triggers: DEFAULT_ENTRY_TRIGGERS, other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 75, min_trend_score: 65, other_min_pattern_score: 80, other_max_trend_score: 35, stop_loss_qtr_multiplier: 0.5, rule_keys: DEFAULT_RULE_KEYS }}>
+        <Form className="backtest-config-form" form={form} layout="vertical" onFinish={submit} initialValues={{ name: "", symbols: [], timeframes: ["3m", "5m"], kline_count: 1000, initial_capital: 1000000, position_sizing_mode: "PERCENT", single_symbol_position_pct: 10, single_symbol_lots: 1, no_overnight: false, exit_strategy: "MANUAL", entry_patterns: DEFAULT_ENTRY_PATTERNS, entry_triggers: DEFAULT_ENTRY_TRIGGERS, other_entry_conditions: OTHER_ENTRY_CONDITIONS.map((item) => item.value), min_pattern_score: 75, min_trend_score: 65, other_min_pattern_score: 80, other_max_trend_score: 35, stop_loss_qtr_multiplier: 0.5, rule_keys: DEFAULT_RULE_KEYS }}>
           <div className="backtest-config-column">
           <div className="backtest-basic-section">
           <Form.Item name="name" label="回测名称"><Input placeholder="留空自动按时间命名" /></Form.Item>
@@ -597,14 +613,14 @@ export default function BacktestPage() {
           </div>
           <Form.Item name="initial_capital" label="初始资金" rules={[{ required: true }]}><InputNumber min={1} max={1000000000} step={10000} precision={2} addonBefore="¥" /></Form.Item>
           <Form.Item name="position_sizing_mode" label="单品种仓位方式" rules={[{ required: true }]}>
-            <Segmented block options={[{ label: "按仓位比例", value: "PERCENT" }, { label: "按固定手数", value: "FIXED_LOTS" }]} />
+            <Segmented disabled={necklineStrategy} block options={[{ label: "按仓位比例", value: "PERCENT" }, { label: "按固定手数", value: "FIXED_LOTS" }]} />
           </Form.Item>
           <Form.Item noStyle shouldUpdate={(previous, current) => previous.position_sizing_mode !== current.position_sizing_mode}>
             {({ getFieldValue }) => {
-              const fixedLots = getFieldValue("position_sizing_mode") === "FIXED_LOTS";
+              const fixedLots = necklineStrategy || getFieldValue("position_sizing_mode") === "FIXED_LOTS";
               return <div className="backtest-number-grid backtest-position-size-grid">
                 <Form.Item name="single_symbol_position_pct" label="单品种仓位" rules={fixedLots ? [] : [{ required: true, message: "请填写单品种仓位" }]}><InputNumber disabled={fixedLots} min={0.01} max={100} step={0.1} precision={2} addonAfter="%" /></Form.Item>
-                <Form.Item name="single_symbol_lots" label="单品种手数" rules={fixedLots ? [{ required: true, message: "请填写单品种手数" }] : []}><InputNumber disabled={!fixedLots} min={1} max={1000000} step={1} precision={0} addonAfter="手" /></Form.Item>
+                <Form.Item name="single_symbol_lots" label="单品种手数" rules={fixedLots ? [{ required: true, message: "请填写单品种手数" }] : []}><InputNumber disabled={necklineStrategy || !fixedLots} min={1} max={1000000} step={1} precision={0} addonAfter="手" /></Form.Item>
               </div>;
             }}
           </Form.Item>
@@ -637,9 +653,14 @@ export default function BacktestPage() {
             </div>
           </section>
           <section className="backtest-entry-section backtest-exit-section">
-          <Form.Item name="stop_loss_qtr_multiplier" label="止损条件（QTR 倍数）" rules={[{ required: true }]}><InputNumber min={0.1} max={20} step={0.1} /></Form.Item>
-          <Form.Item className="backtest-span-full" name="rule_keys" label="止盈条件" rules={[{ required: true, message: "至少勾选一个止盈条件" }]}>
-            <Checkbox.Group className="backtest-rule-grid">
+          <Form.Item className="backtest-span-full" name="exit_strategy" label="退出方式">
+            <Segmented className="backtest-exit-strategy" block onChange={(value) => {
+              if (value === "NECKLINE_SCALE_OUT") form.setFieldsValue({ position_sizing_mode: "FIXED_LOTS", single_symbol_lots: 2 });
+            }} options={[{ label: "自定义止盈止损", value: "MANUAL" }, { label: "颈线减仓+结构目标跟随", value: "NECKLINE_SCALE_OUT" }]} />
+          </Form.Item>
+          <Form.Item name="stop_loss_qtr_multiplier" label="止损条件（QTR 倍数）" dependencies={["exit_strategy"]} rules={necklineStrategy ? [] : [{ required: true }]}><InputNumber disabled={necklineStrategy} min={0.1} max={20} step={0.1} /></Form.Item>
+          <Form.Item className="backtest-span-full" name="rule_keys" label="止盈条件" dependencies={["exit_strategy"]} rules={necklineStrategy ? [] : [{ required: true, message: "至少勾选一个止盈条件" }]}>
+            <Checkbox.Group disabled={necklineStrategy} className="backtest-rule-grid">
               {ruleCatalog.map((rule) => <Checkbox key={rule.key} value={rule.key} className={rule.type === "PATTERN_TARGET" ? "pattern-target-rule" : undefined}>
                 <span className="rule-label-with-help">
                   <span>{rule.label}</span>
@@ -653,9 +674,9 @@ export default function BacktestPage() {
             </Checkbox.Group>
           </Form.Item>
           <div className="custom-rule-row backtest-span-full">
-            <Select value={customDraft.type} onChange={(value) => setCustomDraft((item) => ({ ...item, type: value }))} options={[{ value: "RR", label: "R" }, { value: "QTR", label: "QTR" }]} />
-            <InputNumber min={0.1} max={20} step={0.1} value={customDraft.multiplier} onChange={(value) => setCustomDraft((item) => ({ ...item, multiplier: Number(value) || 1 }))} />
-            <Tooltip title="添加止盈条件"><Button icon={<Plus size={16} />} onClick={addCustomRule} /></Tooltip>
+            <Select disabled={necklineStrategy} value={customDraft.type} onChange={(value) => setCustomDraft((item) => ({ ...item, type: value }))} options={[{ value: "RR", label: "R" }, { value: "QTR", label: "QTR" }]} />
+            <InputNumber disabled={necklineStrategy} min={0.1} max={20} step={0.1} value={customDraft.multiplier} onChange={(value) => setCustomDraft((item) => ({ ...item, multiplier: Number(value) || 1 }))} />
+            <Tooltip title="添加止盈条件"><Button disabled={necklineStrategy} icon={<Plus size={16} />} onClick={addCustomRule} /></Tooltip>
           </div>
           </section>
           </div>

@@ -126,6 +126,110 @@ def test_simulated_order_uses_fixed_lot_position_sizing() -> None:
     assert order["status"] == "CLOSED"
 
 
+def test_neckline_scale_out_uses_two_lots_two_tick_slippage_and_two_targets() -> None:
+    order = _simulate_order(
+        run_id="run",
+        series_id="series",
+        frame=frame([
+            (100, 101, 99, 100),
+            (100, 107, 99, 106),
+            (106, 113, 103, 112),
+        ]),
+        signal=long_signal(),
+        rule={
+            "key": "neckline-scale-out",
+            "label": "颈线减仓+结构目标跟随",
+            "type": "NECKLINE_SCALE_OUT",
+        },
+        max_holding_bars=3,
+        contract={
+            "multiplier": Decimal("10"),
+            "margin_rate": Decimal("0.1"),
+            "price_tick": Decimal("1"),
+            "fee_mode": "FIXED",
+            "fee_value": Decimal("0"),
+        },
+    )
+
+    assert order["status"] == "CLOSED"
+    assert order["exit_reason"] == "TAKE_PROFIT"
+    assert order["quantity"] == 2
+    assert order["entry_price"] == Decimal("102")
+    assert order["partial_exit_quantity"] == 1
+    assert order["partial_exit_price"] == Decimal("104")
+    assert order["target_price"] == Decimal("112")
+    assert order["exit_price"] == Decimal("107")
+    assert order["net_pnl"] == Decimal("100")
+    assert order["slippage"] == Decimal("80")
+    assert order["r_multiple"] == Decimal("1.25")
+
+
+def test_neckline_scale_out_uses_stop_first_when_one_bar_hits_both_sides() -> None:
+    order = _simulate_order(
+        run_id="run",
+        series_id="series",
+        frame=frame([(100, 101, 99, 100), (100, 107, 97, 103)]),
+        signal=long_signal(),
+        rule={
+            "key": "neckline-scale-out",
+            "label": "颈线减仓+结构目标跟随",
+            "type": "NECKLINE_SCALE_OUT",
+        },
+        max_holding_bars=3,
+        contract={
+            "multiplier": Decimal("10"),
+            "margin_rate": Decimal("0.1"),
+            "price_tick": Decimal("1"),
+            "fee_mode": "FIXED",
+            "fee_value": Decimal("0"),
+        },
+    )
+
+    assert order["exit_reason"] == "STOP_LOSS"
+    assert order["partial_exit_quantity"] == 0
+    assert order["exit_price"] == Decimal("96")
+
+
+def test_neckline_scale_out_releases_half_margin_for_other_products() -> None:
+    data = frame([
+        (100, 101, 99, 100),
+        (100, 107, 99, 106),
+        (106, 107, 103, 106),
+        (106, 113, 103, 112),
+    ])
+    first = long_signal()
+    first["symbol"] = "DCE.a2609"
+    second = long_signal()
+    second["symbol"] = "DCE.b2609"
+    second["retest_time"] = "2026-07-17T09:10:00"
+    second["right_shoulder"] = {"time": "2026-07-17T09:10:00", "price": 100}
+    contract = {
+        "multiplier": Decimal("10"),
+        "margin_rate": Decimal("0.1"),
+        "price_tick": Decimal("1"),
+        "fee_mode": "FIXED",
+        "fee_value": Decimal("0"),
+    }
+
+    orders = _simulate_portfolio_orders(
+        run_id="run",
+        events=[
+            {"series_id": "a", "frame": data, "signal": first, "contract": contract},
+            {"series_id": "b", "frame": data, "signal": second, "contract": contract},
+        ],
+        rules=[{
+            "key": "neckline-scale-out",
+            "label": "颈线减仓+结构目标跟随",
+            "type": "NECKLINE_SCALE_OUT",
+        }],
+        max_holding_bars=None,
+        stop_loss_qtr_multiplier=0.5,
+        initial_capital=Decimal("320"),
+    )
+
+    assert [order["symbol"] for order in orders] == ["DCE.a2609", "DCE.b2609"]
+
+
 def test_multi_product_backtest_skips_signals_until_shared_capital_is_released() -> None:
     data = frame([
         (100, 101, 99, 100),
@@ -462,6 +566,20 @@ def test_backtest_request_uses_the_default_entry_score_thresholds() -> None:
     assert request.position_sizing_mode == "PERCENT"
     assert request.single_symbol_position_pct == 10
     assert request.single_symbol_lots is None
+
+
+def test_neckline_scale_out_request_forces_two_lots_and_builtin_exit_rule() -> None:
+    request = BacktestCreateRequest(
+        symbols=["DCE.a2609"],
+        entry_conditions=["head_shoulders_top:right_shoulder_confirmed"],
+        exit_strategy="NECKLINE_SCALE_OUT",
+    )
+
+    assert request.position_sizing_mode == "FIXED_LOTS"
+    assert request.single_symbol_lots == 2
+    assert request.single_symbol_position_pct is None
+    assert request.stop_loss_qtr_multiplier is None
+    assert request.take_profit_rules[0].key == "neckline-scale-out"
 
 
 def test_backtest_request_accepts_fixed_lot_position_sizing() -> None:

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 class TakeProfitRuleRequest(BaseModel):
     key: str = Field(min_length=1, max_length=80)
     label: str = Field(min_length=1, max_length=120)
-    type: Literal["PATTERN_TARGET", "RR", "QTR"]
+    type: Literal["PATTERN_TARGET", "RR", "QTR", "NECKLINE_SCALE_OUT"]
     multiplier: float | None = Field(default=None, gt=0, le=20)
 
     @model_validator(mode="after")
@@ -29,6 +29,7 @@ class BacktestCreateRequest(BaseModel):
     single_symbol_position_pct: float | None = Field(default=10, gt=0, le=100)
     single_symbol_lots: int | None = Field(default=None, ge=1, le=1_000_000)
     no_overnight: bool = False
+    exit_strategy: Literal["MANUAL", "NECKLINE_SCALE_OUT"] = "MANUAL"
     entry_conditions: list[Literal[
         "head_shoulders_top:right_shoulder_confirmed",
         "inverse_head_shoulders:right_shoulder_confirmed",
@@ -43,8 +44,8 @@ class BacktestCreateRequest(BaseModel):
     min_trend_score: int = Field(default=65, ge=0, le=100)
     other_min_pattern_score: int = Field(default=80, ge=0, le=100)
     other_max_trend_score: int = Field(default=35, ge=0, le=100)
-    stop_loss_qtr_multiplier: float = Field(default=0.5, gt=0, le=20)
-    take_profit_rules: list[TakeProfitRuleRequest] = Field(min_length=1, max_length=20)
+    stop_loss_qtr_multiplier: float | None = Field(default=0.5, gt=0, le=20)
+    take_profit_rules: list[TakeProfitRuleRequest] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def normalize_and_validate(self) -> "BacktestCreateRequest":
@@ -52,6 +53,18 @@ class BacktestCreateRequest(BaseModel):
         self.timeframes = list(dict.fromkeys(self.timeframes))
         self.entry_conditions = list(dict.fromkeys(self.entry_conditions))
         self.other_entry_conditions = list(dict.fromkeys(self.other_entry_conditions))
+        if self.exit_strategy == "NECKLINE_SCALE_OUT":
+            self.position_sizing_mode = "FIXED_LOTS"
+            self.single_symbol_position_pct = None
+            self.single_symbol_lots = 2
+            self.stop_loss_qtr_multiplier = None
+            self.take_profit_rules = [TakeProfitRuleRequest(
+                key="neckline-scale-out",
+                label="颈线减仓+结构目标跟随",
+                type="NECKLINE_SCALE_OUT",
+            )]
+        elif self.stop_loss_qtr_multiplier is None or not self.take_profit_rules:
+            raise ValueError("自定义退出方式必须填写止损并至少选择一个止盈条件")
         keys = [rule.key for rule in self.take_profit_rules]
         if len(keys) != len(set(keys)):
             raise ValueError("止盈条件 key 不能重复")

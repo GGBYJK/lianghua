@@ -556,21 +556,46 @@ def backtest_equity_curve(
         conditions.append(backtest_orders.c.entry_condition == summary_entry_condition)
     with get_engine().connect() as connection:
         rows = connection.execute(
-            select(backtest_orders.c.entry_time, backtest_orders.c.exit_time, backtest_orders.c.net_pnl)
+            select(
+                backtest_orders.c.id,
+                backtest_orders.c.entry_time,
+                backtest_orders.c.partial_exit_time,
+                backtest_orders.c.partial_net_pnl,
+                backtest_orders.c.exit_time,
+                backtest_orders.c.net_pnl,
+            )
             .select_from(base)
             .where(and_(*conditions))
-            .order_by(backtest_orders.c.exit_time.asc(), backtest_orders.c.id.asc())
         ).mappings()
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            partial_net = Decimal(str(row["partial_net_pnl"] or 0))
+            if row["partial_exit_time"] is not None and row["partial_net_pnl"] is not None:
+                events.append({
+                    "entry_time": row["entry_time"],
+                    "time": row["partial_exit_time"],
+                    "net_pnl": partial_net,
+                    "order_id": row["id"],
+                    "event_order": 0,
+                })
+            events.append({
+                "entry_time": row["entry_time"],
+                "time": row["exit_time"],
+                "net_pnl": Decimal(str(row["net_pnl"])) - partial_net,
+                "order_id": row["id"],
+                "event_order": 1,
+            })
+        events.sort(key=lambda item: (item["time"], item["order_id"], item["event_order"]))
         cumulative = Decimal("0")
         points: list[dict[str, Any]] = []
-        for row in rows:
-            net_pnl = Decimal(str(row["net_pnl"]))
+        for event in events:
+            net_pnl = event["net_pnl"]
             cumulative += net_pnl
             points.append({
                 # Backtest candles and orders use market-local, naive timestamps.
                 # Keep the curve on that same timeline as the order details view.
-                "entry_time": row["entry_time"].isoformat() if row["entry_time"] else None,
-                "time": row["exit_time"].isoformat(),
+                "entry_time": event["entry_time"].isoformat() if event["entry_time"] else None,
+                "time": event["time"].isoformat(),
                 "net_pnl": net_pnl,
                 "cumulative_net_pnl": cumulative,
             })
@@ -592,14 +617,26 @@ def _capital_usage_points(
             "realized_pnl": Decimal("0"),
         })
         entry_event["margin_change"] += margin
+        quantity = Decimal(str(row.get("quantity") or 0))
+        partial_quantity = Decimal(str(row.get("partial_exit_quantity") or 0))
+        partial_margin = margin * partial_quantity / quantity if quantity > 0 else Decimal("0")
+        partial_time = row.get("partial_exit_time")
+        partial_net = Decimal(str(row.get("partial_net_pnl") or 0))
+        if partial_time is not None and partial_quantity > 0:
+            partial_event = events.setdefault(partial_time, {
+                "margin_change": Decimal("0"),
+                "realized_pnl": Decimal("0"),
+            })
+            partial_event["margin_change"] -= partial_margin
+            partial_event["realized_pnl"] += partial_net
         exit_time = row.get("exit_time")
         if exit_time is not None:
             exit_event = events.setdefault(exit_time, {
                 "margin_change": Decimal("0"),
                 "realized_pnl": Decimal("0"),
             })
-            exit_event["margin_change"] -= margin
-            exit_event["realized_pnl"] += Decimal(str(row.get("net_pnl") or 0))
+            exit_event["margin_change"] -= margin - partial_margin
+            exit_event["realized_pnl"] += Decimal(str(row.get("net_pnl") or 0)) - partial_net
 
     used_margin = Decimal("0")
     total_funds = initial_capital
@@ -648,7 +685,11 @@ def backtest_capital_usage(
         rows = [dict(row) for row in connection.execute(
             select(
                 backtest_orders.c.entry_time,
+                backtest_orders.c.partial_exit_time,
+                backtest_orders.c.partial_exit_quantity,
+                backtest_orders.c.partial_net_pnl,
                 backtest_orders.c.exit_time,
+                backtest_orders.c.quantity,
                 backtest_orders.c.margin,
                 backtest_orders.c.net_pnl,
             )

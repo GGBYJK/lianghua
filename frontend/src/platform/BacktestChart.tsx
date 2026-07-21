@@ -124,6 +124,10 @@ export function BacktestChart({ series, orders }: { series: BacktestSeries; orde
         const index = rawTimes.indexOf(order.entry_time);
         if (index >= 0) addMarker(index, (candles[index].open + candles[index].close) / 2, "进", "#1168a8", markerOffset, 0.42);
       }
+      if (order.partial_exit_time && order.partial_exit_price != null) {
+        const index = rawTimes.indexOf(order.partial_exit_time);
+        if (index >= 0) addMarker(index, candles[index].close, "减", "#b7791f", markerOffset, 0.42);
+      }
       if (order.exit_time && order.exit_price != null) {
         const index = rawTimes.indexOf(order.exit_time);
         if (index >= 0) addMarker(index, candles[index].close, "出", order.exit_reason === "TAKE_PROFIT" ? "#b33a3a" : "#16805b", markerOffset, 0.42);
@@ -181,6 +185,7 @@ export function BacktestChart({ series, orders }: { series: BacktestSeries; orde
     const selectedIndexes = orders.length === 1 ? [
       ...STRUCTURE_POINTS.map(([key]) => signalPoint(orders[0].signal, key)).map((point) => point ? rawTimes.indexOf(point.time) : -1),
       orders[0].entry_time ? rawTimes.indexOf(orders[0].entry_time) : -1,
+      orders[0].partial_exit_time ? rawTimes.indexOf(orders[0].partial_exit_time) : -1,
       orders[0].exit_time ? rawTimes.indexOf(orders[0].exit_time) : -1,
     ].filter((index) => index >= 0) : [];
     const defaultZoomStart = Math.max(0, 100 - Math.min(100, 12000 / Math.max(candles.length, 1)));

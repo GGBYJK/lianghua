@@ -6,7 +6,7 @@ import logging
 import os
 from dataclasses import replace
 from datetime import datetime
-from decimal import ROUND_FLOOR, Decimal
+from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 from io import BytesIO
 from typing import Any
 from uuid import uuid4
@@ -38,6 +38,14 @@ from .trading_store import get_contract_spec
 
 logger = logging.getLogger("app.backtest")
 BACKTEST_HEARTBEAT_SECONDS = float(os.getenv("BACKTEST_HEARTBEAT_SECONDS", "10"))
+NECKLINE_SCALE_OUT_SLIPPAGE_TICKS = Decimal("2")
+NECKLINE_SCALE_OUT_QUANTITY = 2
+NECKLINE_SCALE_OUT_STOP_QTR = 0.5
+NECKLINE_SCALE_OUT_MIN_FIRST_TARGET_R = Decimal("0.8")
+NECKLINE_SCALE_OUT_TRAIL_TRIGGER_R = Decimal("1.5")
+NECKLINE_SCALE_OUT_FINAL_TARGET_R = Decimal("2.5")
+NECKLINE_SCALE_OUT_TRAIL_QTR = Decimal("0.25")
+NECKLINE_SCALE_OUT_STALE_BARS = 10
 
 
 async def _heartbeat_backtest_run(
@@ -283,25 +291,16 @@ def _stop_price(signal: dict[str, Any], direction: str, qtr_multiplier: float) -
     return anchor - distance if direction == "LONG" else anchor + distance
 
 
-def _simulate_order(
-    *,
+def _order_base(
     run_id: str,
     series_id: str,
-    frame: pd.DataFrame,
     signal: dict[str, Any],
     rule: dict[str, Any],
-    max_holding_bars: int | None,
+    entry_condition: str,
+    direction: str,
     contract: dict[str, Any] | None,
-    entry_condition: str = "mixed",
-    stop_loss_qtr_multiplier: float = 0.5,
-    initial_capital: Decimal = Decimal("1000000"),
-    single_symbol_position_pct: Decimal | None = Decimal("10"),
-    position_sizing_mode: str = "PERCENT",
-    single_symbol_lots: int | None = None,
-    no_overnight: bool = False,
 ) -> dict[str, Any]:
-    direction = signal_direction(str(signal["pattern"]), str(signal["alert_type"]))
-    base = {
+    return {
         "id": str(uuid4()),
         "run_id": run_id,
         "series_id": series_id,
@@ -322,6 +321,10 @@ def _simulate_order(
         "entry_time": None,
         "exit_time": None,
         "entry_price": None,
+        "partial_exit_time": None,
+        "partial_exit_price": None,
+        "partial_exit_quantity": 0,
+        "partial_net_pnl": None,
         "stop_price": None,
         "target_price": None,
         "exit_price": None,
@@ -336,6 +339,296 @@ def _simulate_order(
         "cost_available": contract is not None,
         "signal_json": json.dumps(signal, ensure_ascii=False, separators=(",", ":")),
     }
+
+
+def _directional_profit(entry: Decimal, exit_price: Decimal, direction: str) -> Decimal:
+    return exit_price - entry if direction == "LONG" else entry - exit_price
+
+
+def _simulate_neckline_scale_out_order(
+    *,
+    run_id: str,
+    series_id: str,
+    frame: pd.DataFrame,
+    signal: dict[str, Any],
+    rule: dict[str, Any],
+    max_holding_bars: int | None,
+    contract: dict[str, Any] | None,
+    entry_condition: str,
+    initial_capital: Decimal,
+    no_overnight: bool,
+) -> dict[str, Any]:
+    direction = signal_direction(str(signal["pattern"]), str(signal["alert_type"]))
+    base = _order_base(run_id, series_id, signal, rule, entry_condition, direction, contract)
+    signal_time = _signal_time(signal)
+    if not signal_time:
+        return base
+    timestamps = pd.to_datetime(frame["datetime"])
+    matches = timestamps[timestamps == pd.Timestamp(signal_time)].index
+    if len(matches) == 0:
+        return base
+    entry_index = int(matches[0])
+    entry_quote = Decimal(str(frame.iloc[entry_index]["close"]))
+    tick = decimal_value(contract["price_tick"]) if contract else Decimal("0")
+    open_side = "BUY" if direction == "LONG" else "SELL"
+    close_side = "SELL" if direction == "LONG" else "BUY"
+    if contract:
+        entry_fill, entry_slip = _fill_price(
+            entry_quote, open_side, tick, NECKLINE_SCALE_OUT_SLIPPAGE_TICKS,
+        )
+    else:
+        entry_fill, entry_slip = entry_quote, Decimal("0")
+
+    stop = _stop_price(signal, direction, NECKLINE_SCALE_OUT_STOP_QTR)
+    right_neck = signal.get("right_neck") or {}
+    pattern_metrics = signal.get("pattern_metrics") or {}
+    try:
+        neck_price = Decimal(str(right_neck["price"]))
+        qtr = Decimal(str(signal["qtr"]))
+    except (KeyError, TypeError, ValueError):
+        return base
+    if stop is None or qtr <= 0:
+        return base
+    stop_price = _round_price(Decimal(str(stop)), tick) if contract else Decimal(str(stop))
+    risk = abs(entry_fill - stop_price)
+    if risk <= 0:
+        return base
+    valid_stop = stop_price < entry_fill if direction == "LONG" else stop_price > entry_fill
+    if not valid_stop:
+        return base
+
+    neck_profit = _directional_profit(entry_fill, neck_price, direction)
+    use_neck_target = (
+        neck_profit >= risk * NECKLINE_SCALE_OUT_MIN_FIRST_TARGET_R
+        and neck_profit < risk * NECKLINE_SCALE_OUT_FINAL_TARGET_R
+    )
+    first_target = neck_price if use_neck_target else (
+        entry_fill + risk if direction == "LONG" else entry_fill - risk
+    )
+    first_target = _round_price(first_target, tick) if contract else first_target
+    capped_target = (
+        entry_fill + risk * NECKLINE_SCALE_OUT_FINAL_TARGET_R
+        if direction == "LONG" else entry_fill - risk * NECKLINE_SCALE_OUT_FINAL_TARGET_R
+    )
+    try:
+        pattern_target = Decimal(str(pattern_metrics.get("target")))
+    except (InvalidOperation, TypeError, ValueError):
+        pattern_target = capped_target
+    pattern_target_valid = (
+        pattern_target > first_target if direction == "LONG" else pattern_target < first_target
+    )
+    if not pattern_target_valid:
+        pattern_target = capped_target
+    final_target = min(pattern_target, capped_target) if direction == "LONG" else max(pattern_target, capped_target)
+    final_target = _round_price(final_target, tick) if contract else final_target
+    if not (first_target < final_target if direction == "LONG" else first_target > final_target):
+        return base
+
+    quantity = NECKLINE_SCALE_OUT_QUANTITY
+    margin = (
+        entry_fill
+        * Decimal(quantity)
+        * decimal_value(contract["multiplier"])
+        * decimal_value(contract["margin_rate"])
+        if contract else None
+    )
+    if margin is not None and margin > initial_capital:
+        return base
+    base.update({
+        "quantity": quantity,
+        "margin": margin,
+        "entry_time": timestamps.iloc[entry_index].to_pydatetime(),
+        "entry_price": entry_fill,
+        "stop_price": stop_price,
+        "target_price": final_target,
+    })
+
+    session_exit_index = _session_penultimate_exit_index(timestamps, entry_index) if no_overnight else None
+    if session_exit_index is not None and session_exit_index <= entry_index:
+        return base
+    end_index = min(len(frame) - 1, entry_index + max_holding_bars) if max_holding_bars is not None else len(frame) - 1
+    if session_exit_index is not None:
+        end_index = min(end_index, session_exit_index)
+    forced_by_session = session_exit_index is not None and end_index == session_exit_index
+    forced_by_max_holding = max_holding_bars is not None and end_index == entry_index + max_holding_bars
+
+    partial_index: int | None = None
+    partial_fill: Decimal | None = None
+    partial_slip = Decimal("0")
+    partial_net: Decimal | None = None
+    current_stop = stop_price
+    neck_confirmed = entry_quote >= neck_price if direction == "LONG" else entry_quote <= neck_price
+    neck_touched = neck_confirmed
+    closes_back_inside = 0
+    max_favorable = Decimal("0")
+    max_adverse = Decimal("0")
+    exit_index: int | None = None
+    exit_quote: Decimal | None = None
+    exit_reason: str | None = None
+
+    for index in range(entry_index + 1, end_index + 1):
+        row = frame.iloc[index]
+        low = Decimal(str(row["low"]))
+        high = Decimal(str(row["high"]))
+        close = Decimal(str(row["close"]))
+        if direction == "LONG":
+            max_favorable = max(max_favorable, high - entry_fill)
+            max_adverse = max(max_adverse, entry_fill - low)
+            stop_hit = low <= current_stop
+            first_target_hit = high >= first_target
+            final_target_hit = high >= final_target
+            neck_touched = neck_touched or high >= neck_price
+        else:
+            max_favorable = max(max_favorable, entry_fill - low)
+            max_adverse = max(max_adverse, high - entry_fill)
+            stop_hit = high >= current_stop
+            first_target_hit = low <= first_target
+            final_target_hit = low <= final_target
+            neck_touched = neck_touched or low <= neck_price
+
+        if stop_hit:
+            exit_index, exit_quote, exit_reason = index, current_stop, "STOP_LOSS"
+            break
+
+        if partial_index is None and first_target_hit:
+            partial_index = index
+            if contract:
+                partial_fill, partial_slip = _fill_price(
+                    first_target, close_side, tick, NECKLINE_SCALE_OUT_SLIPPAGE_TICKS,
+                )
+                multiplier = decimal_value(contract["multiplier"])
+                partial_gross = _directional_profit(entry_fill, partial_fill, direction) * multiplier
+                partial_net = partial_gross - _fee(entry_fill, 1, contract, "OPEN") - _fee(partial_fill, 1, contract, "CLOSE")
+            else:
+                partial_fill = first_target
+            current_stop = entry_fill
+
+        if partial_index is not None and final_target_hit:
+            exit_index, exit_quote, exit_reason = index, final_target, "TAKE_PROFIT"
+            break
+
+        beyond_neck = close >= neck_price if direction == "LONG" else close <= neck_price
+        if beyond_neck:
+            neck_confirmed = True
+            closes_back_inside = 0
+        elif neck_confirmed:
+            closes_back_inside += 1
+            if partial_index is not None and closes_back_inside >= 2:
+                exit_index, exit_quote, exit_reason = index, close, "TIME_EXIT"
+                break
+
+        trail_triggered = max_favorable >= risk * NECKLINE_SCALE_OUT_TRAIL_TRIGGER_R
+        if partial_index is not None and neck_confirmed and trail_triggered:
+            neck_stop = (
+                neck_price - qtr * NECKLINE_SCALE_OUT_TRAIL_QTR
+                if direction == "LONG" else neck_price + qtr * NECKLINE_SCALE_OUT_TRAIL_QTR
+            )
+            neck_stop = _round_price(neck_stop, tick) if contract else neck_stop
+            current_stop = max(current_stop, neck_stop) if direction == "LONG" else min(current_stop, neck_stop)
+
+        if index - entry_index >= NECKLINE_SCALE_OUT_STALE_BARS and not neck_touched:
+            exit_index, exit_quote, exit_reason = index, close, "TIME_EXIT"
+            break
+
+    if exit_index is None:
+        if not forced_by_session and not forced_by_max_holding:
+            base.update({
+                "status": "INCOMPLETE",
+                "partial_exit_time": timestamps.iloc[partial_index].to_pydatetime() if partial_index is not None else None,
+                "partial_exit_price": partial_fill,
+                "partial_exit_quantity": 1 if partial_index is not None else 0,
+                "partial_net_pnl": partial_net,
+                "holding_bars": max(0, len(frame) - entry_index - 1),
+                "mfe_r": max_favorable / risk,
+                "mae_r": max_adverse / risk,
+            })
+            return base
+        exit_index = end_index
+        exit_quote = Decimal(str(frame.iloc[exit_index]["close"]))
+        exit_reason = "SESSION_EXIT" if forced_by_session else "TIME_EXIT"
+
+    assert exit_quote is not None and exit_reason is not None
+    if contract:
+        final_fill, final_slip = _fill_price(
+            exit_quote, close_side, tick, NECKLINE_SCALE_OUT_SLIPPAGE_TICKS,
+        )
+        multiplier = decimal_value(contract["multiplier"])
+        final_quantity = 1 if partial_fill is not None else quantity
+        final_gross = _directional_profit(entry_fill, final_fill, direction) * multiplier * final_quantity
+        if partial_fill is not None:
+            partial_gross = _directional_profit(entry_fill, partial_fill, direction) * multiplier
+            gross = partial_gross + final_gross
+            fees = (
+                _fee(entry_fill, quantity, contract, "OPEN")
+                + _fee(partial_fill, 1, contract, "CLOSE")
+                + _fee(final_fill, 1, contract, "CLOSE")
+            )
+            exit_fill = (partial_fill + final_fill) / Decimal(quantity)
+            slippage = (entry_slip * quantity + partial_slip + final_slip) * multiplier
+        else:
+            gross = final_gross
+            fees = _fee(entry_fill, quantity, contract, "OPEN") + _fee(final_fill, quantity, contract, "CLOSE")
+            exit_fill = final_fill
+            slippage = (entry_slip + final_slip) * multiplier * quantity
+        net = gross - fees
+    else:
+        final_fill = exit_quote
+        exit_fill = (partial_fill + final_fill) / Decimal(quantity) if partial_fill is not None else final_fill
+        gross = fees = net = slippage = None
+    average_price_pnl = _directional_profit(entry_fill, exit_fill, direction)
+    base.update({
+        "status": "CLOSED",
+        "exit_reason": exit_reason,
+        "exit_time": timestamps.iloc[exit_index].to_pydatetime(),
+        "partial_exit_time": timestamps.iloc[partial_index].to_pydatetime() if partial_index is not None else None,
+        "partial_exit_price": partial_fill,
+        "partial_exit_quantity": 1 if partial_index is not None else 0,
+        "partial_net_pnl": partial_net,
+        "exit_price": exit_fill,
+        "gross_pnl": gross,
+        "net_pnl": net,
+        "fees": fees,
+        "slippage": slippage,
+        "r_multiple": average_price_pnl / risk,
+        "holding_bars": exit_index - entry_index,
+        "mfe_r": max_favorable / risk,
+        "mae_r": max_adverse / risk,
+    })
+    return base
+
+
+def _simulate_order(
+    *,
+    run_id: str,
+    series_id: str,
+    frame: pd.DataFrame,
+    signal: dict[str, Any],
+    rule: dict[str, Any],
+    max_holding_bars: int | None,
+    contract: dict[str, Any] | None,
+    entry_condition: str = "mixed",
+    stop_loss_qtr_multiplier: float = 0.5,
+    initial_capital: Decimal = Decimal("1000000"),
+    single_symbol_position_pct: Decimal | None = Decimal("10"),
+    position_sizing_mode: str = "PERCENT",
+    single_symbol_lots: int | None = None,
+    no_overnight: bool = False,
+) -> dict[str, Any]:
+    direction = signal_direction(str(signal["pattern"]), str(signal["alert_type"]))
+    if rule["type"] == "NECKLINE_SCALE_OUT":
+        return _simulate_neckline_scale_out_order(
+            run_id=run_id,
+            series_id=series_id,
+            frame=frame,
+            signal=signal,
+            rule=rule,
+            max_holding_bars=max_holding_bars,
+            contract=contract,
+            entry_condition=entry_condition,
+            initial_capital=initial_capital,
+            no_overnight=no_overnight,
+        )
+    base = _order_base(run_id, series_id, signal, rule, entry_condition, direction, contract)
     signal_time = _signal_time(signal)
     if not signal_time:
         return base
@@ -532,6 +825,16 @@ def _simulate_portfolio_orders(
                 continue
 
             for product, active in list(active_positions.items()):
+                partial_exit_time = active.get("partial_exit_time")
+                if (
+                    partial_exit_time is not None
+                    and not active.get("partial_margin_released")
+                    and signal_time > partial_exit_time
+                ):
+                    released_margin = active["partial_margin"]
+                    reserved_margin -= released_margin
+                    active["margin"] -= released_margin
+                    active["partial_margin_released"] = True
                 exit_time = active["exit_time"]
                 if exit_time is not None and signal_time > exit_time:
                     reserved_margin -= active["margin"]
@@ -571,7 +874,20 @@ def _simulate_portfolio_orders(
 
             previous_by_head[head_key] = {"signal": signal, "exit_reason": order["exit_reason"]}
             exit_time = pd.Timestamp(order["exit_time"]) if order["exit_time"] is not None else None
-            active_positions[product_key] = {"exit_time": exit_time, "margin": margin}
+            partial_exit_time = (
+                pd.Timestamp(order["partial_exit_time"])
+                if order.get("partial_exit_time") is not None else None
+            )
+            partial_quantity = Decimal(str(order.get("partial_exit_quantity") or 0))
+            order_quantity = Decimal(str(order.get("quantity") or 0))
+            partial_margin = margin * partial_quantity / order_quantity if order_quantity > 0 else Decimal("0")
+            active_positions[product_key] = {
+                "exit_time": exit_time,
+                "margin": margin,
+                "partial_exit_time": partial_exit_time,
+                "partial_margin": partial_margin,
+                "partial_margin_released": False,
+            }
             reserved_margin += margin
             orders.append(order)
     return orders
@@ -777,7 +1093,7 @@ async def process_next_backtest_run(worker_id: str) -> bool:
                     if request.get("max_holding_bars") is not None
                     else None
                 ),
-                stop_loss_qtr_multiplier=float(request.get("stop_loss_qtr_multiplier", 0.5)),
+                stop_loss_qtr_multiplier=float(request.get("stop_loss_qtr_multiplier") or 0.5),
                 entry_condition=entry_condition,
                 initial_capital=Decimal(str(request.get("initial_capital", 1_000_000))),
                 single_symbol_position_pct=(
@@ -841,7 +1157,7 @@ def build_backtest_export(user_id: int, run_id: str) -> tuple[BytesIO, str]:
         rule_sheet.append([row.get(column) for column in rule_columns])
 
     order_sheet = workbook.create_sheet("订单详情")
-    order_columns = ["symbol", "timeframe", "rule_label", "pattern", "alert_type", "direction", "quantity", "status", "exit_reason", "entry_time", "exit_time", "entry_price", "stop_price", "target_price", "exit_price", "net_pnl", "fees", "r_multiple", "holding_bars", "mfe_r", "mae_r"]
+    order_columns = ["symbol", "timeframe", "rule_label", "pattern", "alert_type", "direction", "quantity", "status", "exit_reason", "entry_time", "partial_exit_time", "exit_time", "entry_price", "partial_exit_price", "partial_exit_quantity", "stop_price", "target_price", "exit_price", "partial_net_pnl", "net_pnl", "fees", "slippage", "r_multiple", "holding_bars", "mfe_r", "mae_r"]
     order_sheet.append(order_columns)
     for row in orders:
         order_sheet.append([row.get(column) for column in order_columns])

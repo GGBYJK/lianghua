@@ -214,3 +214,22 @@ def test_capital_usage_tracks_margin_and_realized_funds() -> None:
     assert points[1]["usage_rate"] == Decimal("50")
     assert points[2]["total_funds"] == Decimal("1050")
     assert points[3]["total_funds"] == Decimal("1025")
+
+
+def test_capital_usage_releases_margin_at_partial_exit() -> None:
+    opened_at = utc_now()
+    rows = [{
+        "entry_time": opened_at,
+        "partial_exit_time": opened_at + timedelta(minutes=5),
+        "partial_exit_quantity": 1,
+        "partial_net_pnl": Decimal("20"),
+        "exit_time": opened_at + timedelta(minutes=10),
+        "quantity": 2,
+        "margin": Decimal("200"),
+        "net_pnl": Decimal("50"),
+    }]
+
+    points = _capital_usage_points(rows, Decimal("1000"))
+
+    assert [point["used_margin"] for point in points] == [Decimal("200"), Decimal("100"), Decimal("0")]
+    assert [point["total_funds"] for point in points] == [Decimal("1000"), Decimal("1020"), Decimal("1050")]
