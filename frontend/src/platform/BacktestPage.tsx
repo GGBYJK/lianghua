@@ -30,6 +30,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { listContracts } from "../api";
 import { downloadBacktest, platformApi } from "./api";
 import { BacktestChartPanel } from "./BacktestChartPanel";
+import { BacktestCapitalUsageChart } from "./BacktestCapitalUsageChart";
 import { BacktestEquityChart } from "./BacktestEquityChart";
 import type { BacktestOrder, BacktestRequest, BacktestRule, BacktestRun, BacktestSummary } from "./types";
 import { formatApiDateTime, formatMarketDateTime } from "../time";
@@ -396,6 +397,12 @@ export default function BacktestPage() {
     enabled: Boolean(selectedRunId && selectedEquityRuleKey && selectedEquityEntryCondition),
     staleTime: Infinity,
   });
+  const capitalUsageQuery = useQuery({
+    queryKey: ["backtest-capital-usage", selectedRunId, selectedEquityRuleKey, selectedEquityEntryCondition],
+    queryFn: () => platformApi.backtestCapitalUsage(selectedRunId!, selectedEquityRuleKey, selectedEquityEntryCondition),
+    enabled: Boolean(selectedRunId && selectedEquityRuleKey && selectedEquityEntryCondition),
+    staleTime: Infinity,
+  });
   const overviewColumns: ColumnsType<BacktestSummary> = [
     { title: "止盈条件", dataIndex: "rule_label", fixed: "left", width: 132, render: (value) => <strong>{value}</strong> },
     { title: "进场条件", dataIndex: "entry_condition", width: 142, render: (value) => entryConditionLabel(value) },
@@ -522,7 +529,14 @@ export default function BacktestPage() {
         options={chartSummaryOptions}
       />
     </div>
-    {equityCurveQuery.isLoading ? <div className="backtest-chart-loading"><Spin /></div> : equityCurveQuery.isError ? <Alert type="error" showIcon title="收益图加载失败" description="请确认后端服务已重启后重试。" action={<Button size="small" onClick={() => void equityCurveQuery.refetch()}>重试</Button>} /> : equityCurveQuery.data?.items.length ? <BacktestEquityChart curve={equityCurveQuery.data} /> : <Empty description="所选止盈与进场条件暂无已平仓订单" />}
+    <section className="backtest-equity-panel">
+      <div className="backtest-equity-panel-heading"><strong>收益图</strong></div>
+      {equityCurveQuery.isLoading ? <div className="backtest-chart-loading"><Spin /></div> : equityCurveQuery.isError ? <Alert type="error" showIcon title="收益图加载失败" description="请确认后端服务已重启后重试。" action={<Button size="small" onClick={() => void equityCurveQuery.refetch()}>重试</Button>} /> : equityCurveQuery.data?.items.length ? <BacktestEquityChart curve={equityCurveQuery.data} /> : <Empty description="所选止盈与进场条件暂无已平仓订单" />}
+    </section>
+    <section className="backtest-equity-panel">
+      <div className="backtest-equity-panel-heading"><strong>资金使用率</strong></div>
+      {capitalUsageQuery.isLoading ? <div className="backtest-capital-usage-loading"><Spin /></div> : capitalUsageQuery.isError ? <Alert type="error" showIcon title="资金使用率加载失败" action={<Button size="small" onClick={() => void capitalUsageQuery.refetch()}>重试</Button>} /> : capitalUsageQuery.data?.items.length ? <BacktestCapitalUsageChart usage={capitalUsageQuery.data} /> : <Empty description="暂无可计算保证金占用的订单" />}
+    </section>
   </div>;
 
   return <div className="backtest-page">

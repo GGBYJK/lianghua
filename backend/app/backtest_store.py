@@ -577,6 +577,87 @@ def backtest_equity_curve(
         return points
 
 
+def _capital_usage_points(
+    rows: list[dict[str, Any]],
+    initial_capital: Decimal,
+) -> list[dict[str, Any]]:
+    events: dict[datetime, dict[str, Decimal]] = {}
+    for row in rows:
+        margin = Decimal(str(row.get("margin") or 0))
+        entry_time = row.get("entry_time")
+        if margin <= 0 or entry_time is None:
+            continue
+        entry_event = events.setdefault(entry_time, {
+            "margin_change": Decimal("0"),
+            "realized_pnl": Decimal("0"),
+        })
+        entry_event["margin_change"] += margin
+        exit_time = row.get("exit_time")
+        if exit_time is not None:
+            exit_event = events.setdefault(exit_time, {
+                "margin_change": Decimal("0"),
+                "realized_pnl": Decimal("0"),
+            })
+            exit_event["margin_change"] -= margin
+            exit_event["realized_pnl"] += Decimal(str(row.get("net_pnl") or 0))
+
+    used_margin = Decimal("0")
+    total_funds = initial_capital
+    points: list[dict[str, Any]] = []
+    for event_time in sorted(events):
+        event = events[event_time]
+        used_margin = max(Decimal("0"), used_margin + event["margin_change"])
+        total_funds += event["realized_pnl"]
+        usage_rate = used_margin / total_funds * Decimal("100") if total_funds > 0 else Decimal("0")
+        points.append({
+            "time": event_time.isoformat(),
+            "used_margin": used_margin,
+            "total_funds": total_funds,
+            "usage_rate": usage_rate,
+        })
+    return points
+
+
+def backtest_capital_usage(
+    user_id: int,
+    run_id: str,
+    rule_key: str,
+    summary_entry_condition: str | None = None,
+) -> list[dict[str, Any]]:
+    base = backtest_orders.join(backtest_runs, backtest_runs.c.id == backtest_orders.c.run_id)
+    conditions = [
+        backtest_orders.c.run_id == run_id,
+        backtest_runs.c.user_id == user_id,
+        backtest_orders.c.rule_key == rule_key,
+        backtest_orders.c.status.in_(["CLOSED", "INCOMPLETE"]),
+        backtest_orders.c.entry_time.is_not(None),
+        backtest_orders.c.margin.is_not(None),
+    ]
+    if summary_entry_condition:
+        conditions.append(backtest_orders.c.entry_condition == summary_entry_condition)
+    with get_engine().connect() as connection:
+        run_row = connection.execute(
+            select(backtest_runs.c.request_json).where(and_(
+                backtest_runs.c.id == run_id,
+                backtest_runs.c.user_id == user_id,
+            ))
+        ).first()
+        if run_row is None:
+            raise BacktestStoreError("回测任务不存在")
+        initial_capital = Decimal(str(json.loads(run_row[0]).get("initial_capital", 1_000_000)))
+        rows = [dict(row) for row in connection.execute(
+            select(
+                backtest_orders.c.entry_time,
+                backtest_orders.c.exit_time,
+                backtest_orders.c.margin,
+                backtest_orders.c.net_pnl,
+            )
+            .select_from(base)
+            .where(and_(*conditions))
+        ).mappings()]
+    return _capital_usage_points(rows, initial_capital)
+
+
 def delete_backtest_run(user_id: int, run_id: str) -> None:
     with get_engine().begin() as connection:
         result = connection.execute(delete(backtest_runs).where(and_(

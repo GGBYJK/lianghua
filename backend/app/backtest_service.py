@@ -316,6 +316,7 @@ def _simulate_order(
         "direction": direction,
         "score": int(signal.get("pattern_score") or signal.get("score") or 0),
         "quantity": 0,
+        "margin": None,
         "status": "INVALID",
         "exit_reason": None,
         "entry_time": None,
@@ -377,6 +378,13 @@ def _simulate_order(
     if contract and quantity < 1:
         return base
     base["quantity"] = quantity
+    base["margin"] = (
+        entry_fill
+        * Decimal(quantity)
+        * decimal_value(contract["multiplier"])
+        * decimal_value(contract["margin_rate"])
+        if contract else None
+    )
     risk = abs(entry_fill - stop_decimal)
     if risk <= 0:
         return base

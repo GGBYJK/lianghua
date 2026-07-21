@@ -13,6 +13,7 @@ import type {
   TradeSignal,
   BacktestOrdersResponse,
   BacktestEquityCurve,
+  BacktestCapitalUsage,
   BacktestRequest,
   BacktestRun,
   BacktestSeries,
@@ -160,6 +161,11 @@ export const platformApi = {
     const params = new URLSearchParams({ rule_key: ruleKey });
     if (summaryEntryCondition) params.set("summary_entry_condition", summaryEntryCondition);
     return request<BacktestEquityCurve>(`/api/backtests/${runId}/equity-curve?${params.toString()}`);
+  },
+  backtestCapitalUsage: (runId: string, ruleKey: string, summaryEntryCondition = "") => {
+    const params = new URLSearchParams({ rule_key: ruleKey });
+    if (summaryEntryCondition) params.set("summary_entry_condition", summaryEntryCondition);
+    return request<BacktestCapitalUsage>(`/api/backtests/${runId}/capital-usage?${params.toString()}`);
   },
   backtestSeries: (runId: string, symbol: string, timeframe: string) => request<BacktestSeries>(`/api/backtests/${runId}/series?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`),
   cancelBacktest: (runId: string) => request<{ ok: boolean }>(`/api/backtests/${runId}/cancel`, { method: "POST" }),

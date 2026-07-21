@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import create_engine, func, insert, select
@@ -9,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app import backtest_store
 from app.backtest_store import (
+    _capital_usage_points,
     _retry_database_write,
     claim_next_backtest_run,
     recover_stale_backtest_runs,
@@ -188,3 +190,27 @@ def test_database_write_retries_transient_errors(monkeypatch: pytest.MonkeyPatch
     assert _retry_database_write("test", operation) == "ok"
     assert attempts == 3
     assert engine.disposed == 2
+
+
+def test_capital_usage_tracks_margin_and_realized_funds() -> None:
+    rows = [
+        {
+            "entry_time": utc_now(),
+            "exit_time": utc_now() + timedelta(minutes=10),
+            "margin": Decimal("200"),
+            "net_pnl": Decimal("50"),
+        },
+        {
+            "entry_time": utc_now() + timedelta(minutes=5),
+            "exit_time": utc_now() + timedelta(minutes=15),
+            "margin": Decimal("300"),
+            "net_pnl": Decimal("-25"),
+        },
+    ]
+
+    points = _capital_usage_points(rows, Decimal("1000"))
+
+    assert [point["used_margin"] for point in points] == [Decimal("200"), Decimal("500"), Decimal("300"), Decimal("0")]
+    assert points[1]["usage_rate"] == Decimal("50")
+    assert points[2]["total_funds"] == Decimal("1050")
+    assert points[3]["total_funds"] == Decimal("1025")

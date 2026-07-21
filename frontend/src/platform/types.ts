@@ -314,6 +314,17 @@ export type BacktestEquityCurve = {
   }>;
 };
 
+export type BacktestCapitalUsage = {
+  rule_key: string;
+  summary_entry_condition?: string | null;
+  items: Array<{
+    time: string;
+    used_margin: Numeric;
+    total_funds: Numeric;
+    usage_rate: Numeric;
+  }>;
+};
+
 export type BacktestSeries = {
   symbol: string;
   timeframe: string;

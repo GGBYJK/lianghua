@@ -122,6 +122,7 @@ def test_simulated_order_uses_fixed_lot_position_sizing() -> None:
     )
 
     assert order["quantity"] == 7
+    assert order["margin"] == Decimal("707")
     assert order["status"] == "CLOSED"
 
 
