@@ -29,7 +29,7 @@ from .backtest_store import (
     update_backtest_progress,
 )
 from .config import load_head_shoulder_config
-from .market_client import fetch_kline_from_market
+from .kline_service import load_kline_for_backtest
 from .strategy import add_ma_columns, add_macd_columns, find_pivots, prepare_chart_payload, scan_head_shoulders, signal_direction
 from .market_client import contract_to_variety
 from .trading_service import DEFAULT_SLIPPAGE_TICKS, _fee, _fill_price, _round_price, decimal_value
@@ -1026,9 +1026,9 @@ async def process_next_backtest_run(worker_id: str) -> bool:
                 try:
                     support_limit = max(240, min(int(request["kline_count"]), 600))
                     frame, hourly, daily = await asyncio.gather(
-                        fetch_kline_from_market(symbol, timeframe, int(request["kline_count"])),
-                        fetch_kline_from_market(symbol, "1h", support_limit),
-                        fetch_kline_from_market(symbol, "1d", support_limit),
+                        load_kline_for_backtest(symbol, timeframe, int(request["kline_count"])),
+                        load_kline_for_backtest(symbol, "1h", support_limit),
+                        load_kline_for_backtest(symbol, "1d", support_limit),
                     )
                     frame, selected, chart = await asyncio.to_thread(
                         _analyze_market,

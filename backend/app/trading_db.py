@@ -12,6 +12,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -30,6 +31,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.engine import Engine, URL
+from sqlalchemy.dialects.mysql import LONGBLOB
 
 
 logger = logging.getLogger("app.trading_db")
@@ -410,11 +412,93 @@ worker_leases = Table(
     Column("updated_at", DateTime, nullable=False),
 )
 
+kline_datasets = Table(
+    "kline_datasets",
+    metadata,
+    Column("id", String(36), primary_key=True),
+    Column("symbol", String(40), nullable=False),
+    Column("timeframe", String(16), nullable=False),
+    Column("provider", String(24), nullable=False),
+    Column("target_count", Integer, nullable=False, server_default="10000"),
+    Column("auto_update", Boolean, nullable=False, server_default="1"),
+    Column("status", String(24), nullable=False, server_default="IDLE"),
+    Column("row_count", Integer, nullable=False, server_default="0"),
+    Column("revision", Integer, nullable=False, server_default="0"),
+    Column("start_time", DateTime, nullable=True),
+    Column("end_time", DateTime, nullable=True),
+    Column("last_synced_at", DateTime, nullable=True),
+    Column("last_error", Text, nullable=True),
+    Column("created_by", BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+    Column("created_at", DateTime, nullable=False, server_default=func.now()),
+    Column("updated_at", DateTime, nullable=False, server_default=func.now(), onupdate=func.now()),
+    UniqueConstraint("provider", "symbol", "timeframe", name="uq_kline_dataset_market"),
+    Index("idx_kline_datasets_auto_symbol", "auto_update", "symbol", "timeframe"),
+)
+
+market_analysis_cache = Table(
+    "market_analysis_cache",
+    metadata,
+    Column("cache_key", String(64), primary_key=True),
+    Column("symbol", String(40), nullable=False),
+    Column("timeframe", String(16), nullable=False),
+    Column("requested_count", Integer, nullable=False),
+    Column("provider", String(24), nullable=False),
+    Column("config_hash", String(64), nullable=False),
+    Column("algorithm_version", String(48), nullable=False),
+    Column("main_signature", String(160), nullable=False),
+    Column("hourly_signature", String(160), nullable=False),
+    Column("daily_signature", String(160), nullable=False),
+    Column("payload_blob", LargeBinary().with_variant(LONGBLOB, "mysql"), nullable=False),
+    Column("calculation_ms", Integer, nullable=False),
+    Column("hit_count", Integer, nullable=False, server_default="0"),
+    Column("last_accessed_at", DateTime, nullable=False, server_default=func.now()),
+    Column("created_at", DateTime, nullable=False, server_default=func.now()),
+    Column("updated_at", DateTime, nullable=False, server_default=func.now(), onupdate=func.now()),
+    Index("idx_market_analysis_lookup", "provider", "symbol", "timeframe", "requested_count"),
+    Index("idx_market_analysis_accessed", "last_accessed_at"),
+)
+
+kline_bars = Table(
+    "kline_bars",
+    metadata,
+    Column("dataset_id", String(36), ForeignKey("kline_datasets.id", ondelete="CASCADE"), primary_key=True),
+    Column("bar_time", DateTime, primary_key=True),
+    Column("open", Numeric(24, 8), nullable=False),
+    Column("high", Numeric(24, 8), nullable=False),
+    Column("low", Numeric(24, 8), nullable=False),
+    Column("close", Numeric(24, 8), nullable=False),
+    Column("volume", Numeric(28, 8), nullable=False),
+    Column("updated_at", DateTime, nullable=False, server_default=func.now(), onupdate=func.now()),
+    Index("idx_kline_bars_dataset_time", "dataset_id", "bar_time"),
+)
+
+kline_sync_jobs = Table(
+    "kline_sync_jobs",
+    metadata,
+    Column("id", String(36), primary_key=True),
+    Column("dataset_id", String(36), ForeignKey("kline_datasets.id", ondelete="CASCADE"), nullable=False),
+    Column("trigger_type", String(16), nullable=False),
+    Column("schedule_date", Date, nullable=True),
+    Column("sequence", Integer, nullable=False, server_default="0"),
+    Column("status", String(24), nullable=False, server_default="QUEUED"),
+    Column("requested_count", Integer, nullable=False),
+    Column("fetched_count", Integer, nullable=False, server_default="0"),
+    Column("written_count", Integer, nullable=False, server_default="0"),
+    Column("error_message", Text, nullable=True),
+    Column("worker_id", String(96), nullable=True),
+    Column("created_at", DateTime, nullable=False, server_default=func.now()),
+    Column("started_at", DateTime, nullable=True),
+    Column("completed_at", DateTime, nullable=True),
+    UniqueConstraint("dataset_id", "trigger_type", "schedule_date", name="uq_kline_sync_scheduled"),
+    Index("idx_kline_sync_jobs_status_created", "status", "created_at"),
+    Index("idx_kline_sync_jobs_dataset_created", "dataset_id", "created_at"),
+)
+
 
 ROLE_PERMISSIONS = {
     "ADMIN": {
         "market.read", "signals.read", "account.read", "trade.execute",
-        "users.manage", "accounts.manage", "contracts.manage", "audit.read",
+        "users.manage", "accounts.manage", "contracts.manage", "market_data.manage", "audit.read",
     },
     "TRADER": {"market.read", "signals.read", "account.read", "trade.execute"},
     "VIEWER": {"market.read", "signals.read", "account.read"},
@@ -428,6 +512,7 @@ PERMISSION_NAMES = {
     "users.manage": "管理用户与角色",
     "accounts.manage": "管理模拟资金",
     "contracts.manage": "管理合约参数",
+    "market_data.manage": "管理K线数据",
     "audit.read": "查看审计日志",
 }
 

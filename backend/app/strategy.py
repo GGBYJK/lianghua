@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 import math
 from typing import Any, Iterator
 
+import numpy as np
 import pandas as pd
 
 
@@ -477,16 +478,35 @@ def _prepare_ma_score_df(df: pd.DataFrame) -> pd.DataFrame:
     return add_ma_columns(score_df, HeadShoulderTopConfig())
 
 
+@dataclass
+class TrendScoreContext:
+    hourly_df: pd.DataFrame | None
+    daily_df: pd.DataFrame | None
+
+    @classmethod
+    def prepare(
+        cls,
+        hourly_df: pd.DataFrame | None,
+        daily_df: pd.DataFrame | None,
+    ) -> "TrendScoreContext":
+        return cls(
+            hourly_df=_prepare_ma_score_df(hourly_df) if hourly_df is not None else None,
+            daily_df=_prepare_ma_score_df(daily_df) if daily_df is not None else None,
+        )
+
+
 def _score_named_timeframe(
     df: pd.DataFrame | None,
     name: str,
     bullish: bool,
     signal_time: pd.Timestamp | None,
+    *,
+    prepared: bool = False,
 ) -> tuple[int, list[str]]:
     if df is None:
         name_cn = "小时线" if name == "Hourly" else "日线"
         return 0, [f"{name_cn}评分数据不可用：0/50"]
-    score_df = _prepare_ma_score_df(df)
+    score_df = df if prepared else _prepare_ma_score_df(df)
     score_index = len(score_df) - 1 if signal_time is None else _timeframe_score_index(score_df, signal_time)
     if score_index is None:
         name_cn = "小时线" if name == "Hourly" else "日线"
@@ -546,13 +566,20 @@ def calculate_combined_trend_score(
     daily_df: pd.DataFrame | None = None,
     config: HeadShoulderTopConfig | None = None,
     head_time: pd.Timestamp | None = None,
+    score_context: TrendScoreContext | None = None,
 ) -> tuple[int, list[str]]:
-    hourly_override = _hourly_key_zone_trend_override(hourly_df, bullish, head_time, config)
+    score_hourly_df = score_context.hourly_df if score_context is not None else hourly_df
+    score_daily_df = score_context.daily_df if score_context is not None else daily_df
+    hourly_override = _hourly_key_zone_trend_override(score_hourly_df, bullish, head_time, config)
     if hourly_override is not None:
         hourly_score, hourly_reasons = hourly_override
     else:
-        hourly_score, hourly_reasons = _score_named_timeframe(hourly_df, "Hourly", bullish, signal_time)
-    daily_score, daily_reasons = _score_named_timeframe(daily_df, "Daily", bullish, signal_time)
+        hourly_score, hourly_reasons = _score_named_timeframe(
+            score_hourly_df, "Hourly", bullish, signal_time, prepared=score_context is not None
+        )
+    daily_score, daily_reasons = _score_named_timeframe(
+        score_daily_df, "Daily", bullish, signal_time, prepared=score_context is not None
+    )
     return hourly_score + daily_score, [*hourly_reasons, *daily_reasons]
 
 
@@ -1616,13 +1643,16 @@ def validate_candle_close_constraints(
 
     excluded_indices = excluded_indices or set()
 
-    def closes_between(start_index: int, end_index: int) -> pd.Series:
-        indices = [
-            index
-            for index in range(start_index, end_index + 1)
-            if index not in excluded_indices
-        ]
-        return df.iloc[indices]["close"]
+    close_values = df["close"].to_numpy(dtype=float, copy=False)
+
+    def closes_between(start_index: int, end_index: int) -> np.ndarray:
+        if not excluded_indices:
+            return close_values[start_index:end_index + 1]
+        indices = np.fromiter(
+            (index for index in range(start_index, end_index + 1) if index not in excluded_indices),
+            dtype=np.intp,
+        )
+        return close_values[indices]
 
     left_shoulder, left_neck, head, right_neck, right_shoulder = points
     left_leg_closes = closes_between(left_shoulder.index, left_neck.index)
@@ -1631,39 +1661,39 @@ def validate_candle_close_constraints(
     right_leg_closes = closes_between(right_neck.index, right_shoulder.index)
 
     if inverse:
-        if float(left_leg_closes.min()) < left_shoulder.price:
+        if float(np.min(left_leg_closes)) < left_shoulder.price:
             return False, "Close below left shoulder price between left shoulder and left neck"
-        if float(left_leg_closes.max()) > left_neck.price:
+        if float(np.max(left_leg_closes)) > left_neck.price:
             return False, "Close above left neck price between left shoulder and left neck"
-        if float(left_head_closes.min()) < head.price:
+        if float(np.min(left_head_closes)) < head.price:
             return False, "Close below head price between left neck and head"
-        if float(left_head_closes.max()) > left_neck.price:
+        if float(np.max(left_head_closes)) > left_neck.price:
             return False, "Close above left neck price between left neck and head"
-        if float(right_head_closes.min()) < head.price:
+        if float(np.min(right_head_closes)) < head.price:
             return False, "Close below head price between head and right neck"
-        if float(right_head_closes.max()) > right_neck.price:
+        if float(np.max(right_head_closes)) > right_neck.price:
             return False, "Close above right neck price between head and right neck"
-        if float(right_leg_closes.min()) < right_shoulder.price:
+        if float(np.min(right_leg_closes)) < right_shoulder.price:
             return False, "Close below right shoulder price between right neck and right shoulder"
-        if float(right_leg_closes.max()) > right_neck.price:
+        if float(np.max(right_leg_closes)) > right_neck.price:
             return False, "Close above right neck price between right neck and right shoulder"
         return True, ""
 
-    if float(left_leg_closes.max()) > left_shoulder.price:
+    if float(np.max(left_leg_closes)) > left_shoulder.price:
         return False, "Close above left shoulder price between left shoulder and left neck"
-    if float(left_leg_closes.min()) < left_neck.price:
+    if float(np.min(left_leg_closes)) < left_neck.price:
         return False, "Close below left neck price between left shoulder and left neck"
-    if float(left_head_closes.max()) > head.price:
+    if float(np.max(left_head_closes)) > head.price:
         return False, "Close above head price between left neck and head"
-    if float(left_head_closes.min()) < left_neck.price:
+    if float(np.min(left_head_closes)) < left_neck.price:
         return False, "Close below left neck price between left neck and head"
-    if float(right_head_closes.max()) > head.price:
+    if float(np.max(right_head_closes)) > head.price:
         return False, "Close above head price between head and right neck"
-    if float(right_head_closes.min()) < right_neck.price:
+    if float(np.min(right_head_closes)) < right_neck.price:
         return False, "Close below right neck price between head and right neck"
-    if float(right_leg_closes.max()) > right_shoulder.price:
+    if float(np.max(right_leg_closes)) > right_shoulder.price:
         return False, "Close above right shoulder price between right neck and right shoulder"
-    if float(right_leg_closes.min()) < right_neck.price:
+    if float(np.min(right_leg_closes)) < right_neck.price:
         return False, "Close below right neck price between right neck and right shoulder"
     return True, ""
 
@@ -1689,13 +1719,16 @@ def inverse_prior_high_exceeds_left_neck(
 ) -> bool:
     start_index = max(0, left_shoulder.index - lookback)
     excluded_indices = excluded_indices or set()
-    indices = [
-        index
-        for index in range(start_index, left_shoulder.index)
-        if index not in excluded_indices
-    ]
-    prior_highs = df.iloc[indices]["high"]
-    return not prior_highs.empty and float(prior_highs.max()) > left_neck.price
+    high_values = df["high"].to_numpy(dtype=float, copy=False)
+    if not excluded_indices:
+        prior_highs = high_values[start_index:left_shoulder.index]
+    else:
+        indices = np.fromiter(
+            (index for index in range(start_index, left_shoulder.index) if index not in excluded_indices),
+            dtype=np.intp,
+        )
+        prior_highs = high_values[indices]
+    return bool(prior_highs.size and float(np.max(prior_highs)) > left_neck.price)
 
 
 def validate_head_shoulders_structure(points: list[PivotPoint], config: HeadShoulderTopConfig) -> tuple[bool, list[str], int]:
@@ -2178,6 +2211,7 @@ def scan_head_shoulders_top(
     hourly_df: pd.DataFrame | None = None,
     daily_df: pd.DataFrame | None = None,
     include_right_neck_trigger: bool = False,
+    score_context: TrendScoreContext | None = None,
 ) -> list[HeadShoulderTopSignal]:
     df = df.copy().reset_index(drop=True)
     df["datetime"] = pd.to_datetime(df["datetime"])
@@ -2214,6 +2248,7 @@ def scan_head_shoulders_top(
             daily_df=daily_df,
             config=config,
             head_time=p3.time,
+            score_context=score_context,
         )
         total_score += trend_score
         reasons.extend(trend_reasons)
@@ -2465,6 +2500,7 @@ def scan_inverse_head_shoulders(
     hourly_df: pd.DataFrame | None = None,
     daily_df: pd.DataFrame | None = None,
     include_right_neck_trigger: bool = False,
+    score_context: TrendScoreContext | None = None,
 ) -> list[HeadShoulderTopSignal]:
     df = df.copy().reset_index(drop=True)
     df["datetime"] = pd.to_datetime(df["datetime"])
@@ -2511,6 +2547,7 @@ def scan_inverse_head_shoulders(
             daily_df=daily_df,
             config=config,
             head_time=p3.time,
+            score_context=score_context,
         )
         total_score += trend_score
         reasons.extend(trend_reasons)
@@ -2906,6 +2943,7 @@ def scan_head_shoulders(
     daily_df: pd.DataFrame | None = None,
     include_right_neck_trigger: bool = False,
 ) -> list[HeadShoulderTopSignal]:
+    score_context = TrendScoreContext.prepare(hourly_df, daily_df)
     signals = scan_head_shoulders_top(
         df,
         symbol=symbol,
@@ -2914,6 +2952,7 @@ def scan_head_shoulders(
         hourly_df=hourly_df,
         daily_df=daily_df,
         include_right_neck_trigger=include_right_neck_trigger,
+        score_context=score_context,
     )
     signals.extend(scan_inverse_head_shoulders(
         df,
@@ -2923,6 +2962,7 @@ def scan_head_shoulders(
         hourly_df=hourly_df,
         daily_df=daily_df,
         include_right_neck_trigger=include_right_neck_trigger,
+        score_context=score_context,
     ))
     if config.max_signal_age_bars > 0:
         min_right_shoulder_index = max(0, len(df) - config.max_signal_age_bars)

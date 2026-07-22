@@ -14,6 +14,8 @@ from sqlalchemy import insert, select, update
 from .market_client import MarketApiError, fetch_kline_from_market, shutdown_market_clients
 from .backtest_service import process_next_backtest_run
 from .backtest_store import recover_stale_backtest_runs
+from .kline_service import enqueue_due_scheduled_kline_jobs, process_next_kline_sync_job
+from .kline_store import recover_stale_kline_sync_jobs
 from .monitor import monitor_watch_pool_loop
 from .trading_db import get_engine, init_trading_database, utc_now, worker_leases
 from .trading_service import process_exit_rules_once
@@ -115,6 +117,25 @@ async def backtest_loop(stop_event: asyncio.Event) -> None:
             pass
 
 
+async def kline_maintenance_loop(stop_event: asyncio.Event) -> None:
+    while not stop_event.is_set():
+        try:
+            await enqueue_due_scheduled_kline_jobs()
+            recovered = await asyncio.to_thread(recover_stale_kline_sync_jobs)
+            if recovered:
+                logger.warning("recovered stale K-line sync jobs: %s", recovered)
+            processed = await process_next_kline_sync_job(OWNER_ID)
+        except Exception:
+            logger.exception("K-line maintenance worker iteration failed")
+            processed = False
+        if processed:
+            continue
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def supervise_loop(
     name: str,
     loop: Callable[[asyncio.Event], Awaitable[None]],
@@ -149,6 +170,10 @@ async def run() -> None:
             name="paper-trading-worker-supervisor",
         ))
     if mode in {"all", "backtest"}:
+        tasks.append(asyncio.create_task(
+            supervise_loop("K-line-maintenance-worker", kline_maintenance_loop, stop_event),
+            name="K-line-maintenance-worker-supervisor",
+        ))
         tasks.append(asyncio.create_task(
             supervise_loop("strategy-backtest-worker", backtest_loop, stop_event),
             name="strategy-backtest-worker-supervisor",

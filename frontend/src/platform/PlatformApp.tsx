@@ -59,6 +59,7 @@ import "./platform.css";
 const AnalysisApp = lazy(() => import("../main").then((module) => ({ default: module.AnalysisApp })));
 const BacktestPage = lazy(() => import("./BacktestPage"));
 const BacktestHistoryPage = lazy(() => import("./BacktestHistoryPage"));
+const KlineDataPage = lazy(() => import("./KlineDataPage"));
 const AuthContext = createContext<{
   user: PlatformUser | null;
   loading: boolean;
@@ -154,6 +155,7 @@ export function PlatformApp() {
               <Route path="settings/contracts" element={<ContractCenterPage />} />
               <Route path="admin/users" element={<PermissionRoute permission="users.manage"><UsersPage /></PermissionRoute>} />
               <Route path="admin/contracts" element={<PermissionRoute permission="contracts.manage"><ContractsPage /></PermissionRoute>} />
+              <Route path="admin/kline-data" element={<PermissionRoute permission="market_data.manage"><Suspense fallback={<PageLoading />}><KlineDataPage /></Suspense></PermissionRoute>} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -247,6 +249,7 @@ function PlatformLayout() {
     { key: "/settings/feedback", icon: <MessageSquareText size={16} />, label: "反馈列表" },
     { key: "/settings/contracts", icon: <Database size={16} />, label: "合约中心" },
     ...(user?.permissions.includes("contracts.manage") ? [{ key: "/admin/contracts", icon: <Settings2 size={16} />, label: "交易品种参数" }] : []),
+    ...(user?.permissions.includes("market_data.manage") ? [{ key: "/admin/kline-data", icon: <RefreshCw size={16} />, label: "K线数据维护" }] : []),
   ];
   const items = [
     { key: "/", icon: <BarChart3 size={18} />, label: "信号交易池" },
@@ -270,7 +273,7 @@ function PlatformLayout() {
   const selected = location.pathname.startsWith("/analysis/backtest") ? "/analysis/backtest" : location.pathname;
   const defaultOpenKeys = [
     ...(location.pathname.startsWith("/analysis") ? ["analysis-group"] : []),
-    ...(location.pathname.startsWith("/settings") || location.pathname === "/admin/contracts" ? ["settings-group"] : []),
+    ...(location.pathname.startsWith("/settings") || location.pathname === "/admin/contracts" || location.pathname === "/admin/kline-data" ? ["settings-group"] : []),
   ];
 
   async function signOut() {

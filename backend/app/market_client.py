@@ -44,6 +44,7 @@ class TqKlineSubscription:
     klines: pd.DataFrame
     cache: pd.DataFrame | None = None
     waiters: list["TqKlineWaiter"] | None = None
+    last_used_at: float = 0.0
 
 
 @dataclass
@@ -295,6 +296,7 @@ class TqSdkMarketService:
         key = (tq_symbol, duration_seconds)
         subscription = subscriptions.get(key)
         if subscription is None or subscription.limit < limit:
+            self._evict_unused_subscriptions(subscriptions, keep_key=key)
             self._ensure_contract_listed(api, tq_symbol)
             data_length = max(limit, int(os.getenv("TQ_MIN_DATA_LENGTH", "240")))
             previous_waiters = subscription.waiters if subscription and subscription.waiters else []
@@ -304,6 +306,7 @@ class TqSdkMarketService:
                 limit=data_length,
                 klines=api.get_kline_serial(tq_symbol, duration_seconds, data_length=data_length),
                 waiters=previous_waiters,
+                last_used_at=time.monotonic(),
             )
             subscriptions[key] = subscription
             logger.info(
@@ -312,7 +315,25 @@ class TqSdkMarketService:
                 duration_seconds,
                 data_length,
             )
+        subscription.last_used_at = time.monotonic()
         return subscription
+
+    @staticmethod
+    def _evict_unused_subscriptions(
+        subscriptions: dict[tuple[str, int], TqKlineSubscription],
+        keep_key: tuple[str, int],
+    ) -> None:
+        max_subscriptions = max(1, int(os.getenv("TQ_MAX_KLINE_SUBSCRIPTIONS", "8")))
+        while len(subscriptions) >= max_subscriptions and keep_key not in subscriptions:
+            candidates = [
+                (key, item) for key, item in subscriptions.items()
+                if not item.waiters
+            ]
+            if not candidates:
+                return
+            oldest_key, _ = min(candidates, key=lambda pair: pair[1].last_used_at)
+            subscriptions.pop(oldest_key, None)
+            logger.info("TqSdk K-line subscription evicted: symbol=%s duration_seconds=%s", *oldest_key)
 
     def _ensure_contract_listed(self, api: Any, tq_symbol: str) -> None:
         if tq_symbol.startswith("KQ."):
@@ -399,8 +420,10 @@ def get_tqsdk_service() -> TqSdkMarketService:
 
 
 def shutdown_market_clients() -> None:
+    global _tqsdk_service
     if _tqsdk_service is not None:
         _tqsdk_service.stop()
+        _tqsdk_service = None
 
 
 def fetch_tqsdk_contracts(exchanges: list[str] | None = None) -> list[str]:

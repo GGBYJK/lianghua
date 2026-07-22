@@ -19,6 +19,11 @@ import type {
   BacktestSeries,
   BacktestSymbolGroup,
   BacktestSymbolGroupPayload,
+  KlineBarsResponse,
+  KlineDataset,
+  AnalysisCacheStats,
+  KlineSyncJob,
+  MarketContract,
 } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || window.location.origin;
@@ -170,6 +175,21 @@ export const platformApi = {
   backtestSeries: (runId: string, symbol: string, timeframe: string) => request<BacktestSeries>(`/api/backtests/${runId}/series?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`),
   cancelBacktest: (runId: string) => request<{ ok: boolean }>(`/api/backtests/${runId}/cancel`, { method: "POST" }),
   deleteBacktest: (runId: string) => request<{ ok: boolean }>(`/api/backtests/${runId}`, { method: "DELETE" }),
+  marketContracts: () => request<MarketContract[]>("/api/contracts"),
+  klineDatasets: () => request<KlineDataset[]>("/api/admin/kline-data/datasets"),
+  createKlineDataset: (payload: { symbol: string; timeframe: string; target_count: number; auto_update: boolean }) => request<KlineDataset>("/api/admin/kline-data/datasets", {
+    method: "POST", body: JSON.stringify(payload),
+  }),
+  updateKlineDataset: (datasetId: string, payload: { target_count?: number; auto_update?: boolean }) => request<KlineDataset>(`/api/admin/kline-data/datasets/${encodeURIComponent(datasetId)}`, {
+    method: "PATCH", body: JSON.stringify(payload),
+  }),
+  deleteKlineDataset: (datasetId: string) => request<{ ok: boolean }>(`/api/admin/kline-data/datasets/${encodeURIComponent(datasetId)}`, { method: "DELETE" }),
+  syncKlineDataset: (datasetId: string) => request<KlineSyncJob>(`/api/admin/kline-data/datasets/${encodeURIComponent(datasetId)}/sync`, { method: "POST" }),
+  syncAllKlineDatasets: () => request<{ queued: number; jobs: KlineSyncJob[] }>("/api/admin/kline-data/sync-all", { method: "POST" }),
+  klineBars: (datasetId: string, page: number, pageSize: number) => request<KlineBarsResponse>(`/api/admin/kline-data/datasets/${encodeURIComponent(datasetId)}/bars?page=${page}&page_size=${pageSize}`),
+  klineSyncJobs: () => request<KlineSyncJob[]>("/api/admin/kline-data/jobs?limit=100"),
+  analysisCacheStats: () => request<AnalysisCacheStats>("/api/admin/kline-data/analysis-cache"),
+  clearAnalysisCache: () => request<{ deleted: number }>("/api/admin/kline-data/analysis-cache", { method: "DELETE" }),
 };
 
 export async function downloadBacktest(runId: string) {

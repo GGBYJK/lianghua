@@ -3231,25 +3231,27 @@ def test_api_scan() -> None:
     assert any(signal["alert_type"] == "right_shoulder_confirmed" for signal in body["signals"])
 
 
-def test_market_scan_fetches_daily_klines_for_combined_score(monkeypatch) -> None:
+def test_market_scan_uses_versioned_analysis_service(monkeypatch) -> None:
     from app import main
 
-    calls: list[tuple[str, int]] = []
-    sample_df = pd.read_csv(SAMPLE)
+    calls: list[tuple[str, str, int, dict | None]] = []
 
-    async def fake_fetch_kline(symbol: str, period: str, limit: int = 120) -> pd.DataFrame:
-        calls.append((period, limit))
-        return sample_df.copy()
+    async def fake_scan(symbol: str, timeframe: str, limit: int, overrides: dict | None):
+        calls.append((symbol, timeframe, limit, overrides))
+        return main.build_scan_response(
+            pd.read_csv(SAMPLE),
+            symbol=symbol,
+            timeframe=timeframe,
+            overrides=overrides,
+        )
 
-    monkeypatch.setattr(main, "fetch_kline_from_market", fake_fetch_kline)
+    monkeypatch.setattr(main, "scan_market_cached", fake_scan)
 
     client = TestClient(app)
     response = client.get("/api/market/scan", params={"symbol": "rb2405", "timeframe": "5m", "limit": 120})
 
     assert response.status_code == 200
-    assert ("5m", 120) in calls
-    assert ("1h", 120) in calls
-    assert ("1d", 120) in calls
+    assert calls == [("rb2405", "5m", 120, None)]
 
 
 def test_scan_response_filters_same_head_same_timeframe_by_increasing_pattern_score() -> None:

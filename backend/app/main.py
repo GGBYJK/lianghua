@@ -48,6 +48,8 @@ from .watch_pool_store import (
 )
 from .trading_api import router as trading_router
 from .backtest_api import router as backtest_router
+from .kline_api import router as kline_router
+from .scan_analysis import scan_market_cached
 from .trading_db import init_trading_database
 
 
@@ -205,6 +207,7 @@ app = FastAPI(title="头肩顶识别服务", version="0.2.0", lifespan=lifespan)
 simulation_sessions: dict[str, SimulationSession] = {}
 app.include_router(trading_router)
 app.include_router(backtest_router)
+app.include_router(kline_router)
 
 
 @app.middleware("http")
@@ -607,20 +610,7 @@ async def scan_market(
 ) -> ScanResponse:
     try:
         overrides = parse_overrides(config_overrides)
-        df, hourly_df, daily_df = await asyncio.gather(
-            fetch_kline_from_market(symbol=symbol, period=timeframe, limit=limit),
-            fetch_kline_from_market(symbol=symbol, period="1h", limit=max(80, min(limit, 240))),
-            fetch_kline_from_market(symbol=symbol, period="1d", limit=max(80, min(limit, 240))),
-        )
-        return await asyncio.to_thread(
-            build_scan_response,
-            df,
-            symbol=symbol,
-            timeframe=timeframe,
-            overrides=overrides,
-            hourly_df=hourly_df,
-            daily_df=daily_df,
-        )
+        return await scan_market_cached(symbol, timeframe, limit, overrides)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except MarketApiError as exc:

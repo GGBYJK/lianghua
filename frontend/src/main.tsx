@@ -373,7 +373,10 @@ export function AnalysisApp({
       });
       applyScanResponse(response);
       saveMarketScanCache(response, marketLimit);
-      setMarketLastFetch(`接口 ${new Date().toLocaleTimeString()}`);
+      setMarketLastFetch(response.cache_hit
+        ? `分析缓存命中 ${new Date().toLocaleTimeString()}`
+        : `重新计算 ${response.analysis_ms ? `${(response.analysis_ms / 1000).toFixed(1)} 秒 · ` : ""}${new Date().toLocaleTimeString()}`
+      );
       pushNewAlerts(response.signals);
       setFeedbackTab("current");
       scrollToPanel(feedbackPanelRef);

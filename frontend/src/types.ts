@@ -83,6 +83,9 @@ export type ScanResponse = {
     pivots: PivotPoint[];
     necklines: Neckline[];
   };
+  cache_hit?: boolean;
+  analysis_ms?: number | null;
+  data_sources?: Record<string, string>;
 };
 
 export type SimulationStartResponse = {

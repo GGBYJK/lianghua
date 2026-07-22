@@ -25,6 +25,9 @@ class ScanResponse(BaseModel):
     config: dict[str, Any]
     signals: list[dict[str, Any]]
     chart: dict[str, Any]
+    cache_hit: bool = False
+    analysis_ms: int | None = None
+    data_sources: dict[str, str] = Field(default_factory=dict)
 
 
 class WatchPoolItemBase(BaseModel):

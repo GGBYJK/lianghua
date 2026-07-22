@@ -350,3 +350,73 @@ export type BacktestSeries = {
   };
   signals: Array<Record<string, unknown>>;
 };
+
+export type KlineDatasetStatus = "IDLE" | "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
+
+export type KlineDataset = {
+  id: string;
+  symbol: string;
+  timeframe: string;
+  provider: string;
+  target_count: number;
+  auto_update: boolean;
+  status: KlineDatasetStatus;
+  row_count: number;
+  revision: number;
+  start_time: string | null;
+  end_time: string | null;
+  last_synced_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AnalysisCacheStats = {
+  entries: number;
+  bytes: number;
+  hits: number;
+  calculation_ms: number;
+};
+
+export type KlineSyncJob = {
+  id: string;
+  dataset_id: string;
+  symbol?: string;
+  timeframe?: string;
+  trigger_type: "INITIAL" | "MANUAL" | "SCHEDULED";
+  schedule_date: string | null;
+  sequence: number;
+  status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
+  requested_count: number;
+  fetched_count: number;
+  written_count: number;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+export type KlineBar = {
+  dataset_id: string;
+  bar_time: string;
+  open: Numeric;
+  high: Numeric;
+  low: Numeric;
+  close: Numeric;
+  volume: Numeric;
+  updated_at: string;
+};
+
+export type KlineBarsResponse = {
+  items: KlineBar[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export type MarketContract = {
+  id: string;
+  symbol: string;
+  exchange: string;
+  name: string;
+};
