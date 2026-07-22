@@ -610,7 +610,13 @@ async def scan_market(
 ) -> ScanResponse:
     try:
         overrides = parse_overrides(config_overrides)
-        return await scan_market_cached(symbol, timeframe, limit, overrides)
+        return await scan_market_cached(
+            symbol,
+            timeframe,
+            limit,
+            overrides,
+            include_trend_scores=True,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except MarketApiError as exc:

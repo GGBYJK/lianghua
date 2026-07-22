@@ -29,6 +29,7 @@ load_dotenv(ROOT_DIR / ".env", override=True)
 load_dotenv(ROOT_DIR / "backend" / ".env", override=False)
 logger = logging.getLogger("app.market_client")
 MARKET_TIMEZONE = ZoneInfo(os.getenv("MARKET_TIMEZONE", os.getenv("WATCH_POOL_TIMEZONE", "Asia/Shanghai")))
+TQ_MAX_DATA_LENGTH = 10000
 
 TQ_SYMBOL_MAP = {
     "c0": "KQ.m@DCE.c",
@@ -295,10 +296,13 @@ class TqSdkMarketService:
     ) -> TqKlineSubscription:
         key = (tq_symbol, duration_seconds)
         subscription = subscriptions.get(key)
-        if subscription is None or subscription.limit < limit:
+        data_length = min(
+            TQ_MAX_DATA_LENGTH,
+            max(limit, int(os.getenv("TQ_MIN_DATA_LENGTH", "240"))),
+        )
+        if subscription is None or subscription.limit < data_length:
             self._evict_unused_subscriptions(subscriptions, keep_key=key)
             self._ensure_contract_listed(api, tq_symbol)
-            data_length = max(limit, int(os.getenv("TQ_MIN_DATA_LENGTH", "240")))
             previous_waiters = subscription.waiters if subscription and subscription.waiters else []
             subscription = TqKlineSubscription(
                 tq_symbol=tq_symbol,

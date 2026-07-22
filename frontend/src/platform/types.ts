@@ -347,6 +347,7 @@ export type BacktestSeries = {
     }>;
     pivots: Array<{ index: number; time: string; price: number; kind: "high" | "low" }>;
     necklines: Array<{ from_index: number; to_index: number; from_price: number; to_price: number; confirmed: boolean }>;
+    trend_scores?: Array<{ time: string; bullish: number; bearish: number }>;
   };
   signals: Array<Record<string, unknown>>;
 };
@@ -363,6 +364,11 @@ export type KlineDataset = {
   status: KlineDatasetStatus;
   row_count: number;
   revision: number;
+  feature_version: string | null;
+  feature_config_hash: string | null;
+  feature_row_count: number;
+  features_updated_at: string | null;
+  features_ready: boolean;
   start_time: string | null;
   end_time: string | null;
   last_synced_at: string | null;
@@ -404,6 +410,12 @@ export type KlineBar = {
   low: Numeric;
   close: Numeric;
   volume: Numeric;
+  ma?: Record<string, number>;
+  macd_dif?: Numeric | null;
+  macd_dea?: Numeric | null;
+  macd_hist?: Numeric | null;
+  trend_bullish?: number | null;
+  trend_bearish?: number | null;
   updated_at: string;
 };
 

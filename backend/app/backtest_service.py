@@ -33,7 +33,7 @@ from .config import load_head_shoulder_config
 from .analysis_cache_store import load_analysis_cache, save_analysis_cache
 from .kline_service import load_kline_for_backtest
 from .scan_analysis import build_analysis_cache_context
-from .strategy import add_ma_columns, add_macd_columns, find_pivots, prepare_chart_payload, scan_head_shoulders, signal_direction
+from .strategy import add_ma_columns, add_macd_columns, cached_trend_score_series, calculate_combined_trend_score_series, find_pivots, prepare_chart_payload, scan_head_shoulders, signal_direction
 from .market_client import contract_to_variety
 from .trading_service import DEFAULT_SLIPPAGE_TICKS, _fee, _fill_price, _round_price, decimal_value
 from .trading_store import get_contract_spec
@@ -49,7 +49,8 @@ NECKLINE_SCALE_OUT_TRAIL_TRIGGER_R = Decimal("1.5")
 NECKLINE_SCALE_OUT_FINAL_TARGET_R = Decimal("2.5")
 NECKLINE_SCALE_OUT_TRAIL_QTR = Decimal("0.25")
 NECKLINE_SCALE_OUT_STALE_BARS = 10
-BACKTEST_ANALYSIS_ALGORITHM_VERSION = "backtest-analysis-v1-20260722"
+BACKTEST_ANALYSIS_ALGORITHM_VERSION = "backtest-analysis-v2-trend-series-20260722"
+TREND_SCORE_CHART_TIMEFRAMES = {"1m", "3m", "5m"}
 BACKTEST_ANALYSIS_CACHE_BUCKET_SECONDS = max(
     300, int(os.getenv("BACKTEST_ANALYSIS_CACHE_BUCKET_SECONDS", "86400")),
 )
@@ -186,6 +187,14 @@ def _build_backtest_analysis(
     enriched = add_macd_columns(add_ma_columns(normalized, config), config)
     pivots = find_pivots(enriched, left=config.pivot_left, right=config.pivot_right)
     chart = prepare_chart_payload(enriched, pivots, signals, config, timeframe=timeframe)
+    if timeframe.strip().lower() in TREND_SCORE_CHART_TIMEFRAMES:
+        chart["trend_scores"] = cached_trend_score_series(normalized) or (
+            calculate_combined_trend_score_series(
+                hourly,
+                daily,
+                normalized["datetime"].tolist(),
+            )
+        )
     return normalized, [signal.to_dict() for signal in signals], chart
 
 

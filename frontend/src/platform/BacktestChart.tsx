@@ -59,6 +59,11 @@ export function BacktestChart({ series, orders }: { series: BacktestSeries; orde
     const ma20 = candles.map((item) => item.ma?.ma20 ?? null);
     const ma30 = candles.map((item) => item.ma?.ma30 ?? null);
     const ma60 = candles.map((item) => item.ma?.ma60 ?? null);
+    const trendScores = series.chart.trend_scores || [];
+    const showTrendScores = ["1m", "3m", "5m"].includes(series.timeframe) && trendScores.length > 0;
+    const trendScoreByTime = new Map(trendScores.map((item) => [item.time, item]));
+    const bullishTrendScores = rawTimes.map((time) => trendScoreByTime.get(time)?.bullish ?? null);
+    const bearishTrendScores = rawTimes.map((time) => trendScoreByTime.get(time)?.bearish ?? null);
     const priceRange = Math.max(...candles.map((item) => item.high)) - Math.min(...candles.map((item) => item.low));
     const markerOffset = Math.max(priceRange * 0.06, 1);
     const markerUpperBound = Math.max(...candles.map((item) => item.high)) + priceRange * 0.1;
@@ -194,7 +199,7 @@ export function BacktestChart({ series, orders }: { series: BacktestSeries; orde
     chart.setOption({
       animation: false,
       backgroundColor: "#ffffff",
-      legend: { top: 8, left: 10, data: ["K线", "MA5", "MA10", "MA20", "MA30", "MA60"], textStyle: { color: "#68736f", fontSize: 11 } },
+      legend: { top: 8, left: 10, data: ["K线", "MA5", "MA10", "MA20", "MA30", "MA60", ...(showTrendScores ? ["多头趋势评分", "空头趋势评分"] : [])], textStyle: { color: "#68736f", fontSize: 11 } },
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "cross" },
@@ -206,31 +211,39 @@ export function BacktestChart({ series, orders }: { series: BacktestSeries; orde
           const index = Number(candle?.dataIndex);
           const candleData = candles[index];
           if (!candleData) return "";
-          return [
+          const details = [
             `<div>${candle.axisValueLabel || ""}</div>`,
             `<div>开盘价 <strong>${candleData.open}</strong></div>`,
             `<div>收盘价 <strong>${candleData.close}</strong></div>`,
             `<div>最低价 <strong>${candleData.low}</strong></div>`,
             `<div>最高价 <strong>${candleData.high}</strong></div>`,
-          ].join("");
+          ];
+          if (showTrendScores) {
+            details.push(`<div>多头趋势评分 <strong>${bullishTrendScores[index] ?? "--"}</strong></div>`);
+            details.push(`<div>空头趋势评分 <strong>${bearishTrendScores[index] ?? "--"}</strong></div>`);
+          }
+          return details.join("");
         },
       },
       axisPointer: { link: [{ xAxisIndex: "all" }] },
       grid: [
-        { left: 58, right: 24, top: 42, height: "62%" },
-        { left: 58, right: 24, top: "76%", height: "12%" },
+        { left: 58, right: 24, top: showTrendScores ? 58 : 42, height: showTrendScores ? "47%" : "62%" },
+        { left: 58, right: 24, top: showTrendScores ? "58%" : "76%", height: showTrendScores ? "9%" : "12%" },
+        ...(showTrendScores ? [{ left: 58, right: 24, top: "71%", height: "13%" }] : []),
       ],
       xAxis: [
         { type: "category", data: times, boundaryGap: true, axisLine: { lineStyle: { color: "#aab5b1" } }, axisLabel: { show: false } },
-        { type: "category", gridIndex: 1, data: times, boundaryGap: true, axisLine: { lineStyle: { color: "#aab5b1" } }, axisLabel: { color: "#75807c", formatter: (value: string) => value.slice(5, 16) } },
+        { type: "category", gridIndex: 1, data: times, boundaryGap: true, axisLine: { lineStyle: { color: "#aab5b1" } }, axisLabel: { show: !showTrendScores, color: "#75807c", formatter: (value: string) => value.slice(5, 16) } },
+        ...(showTrendScores ? [{ type: "category" as const, gridIndex: 2, data: times, boundaryGap: true, axisLine: { lineStyle: { color: "#aab5b1" } }, axisLabel: { color: "#75807c", formatter: (value: string) => value.slice(5, 16) } }] : []),
       ],
       yAxis: [
         { scale: true, splitLine: { lineStyle: { color: "#e8ecea" } }, axisLabel: { color: "#75807c" } },
         { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { color: "#75807c" }, splitLine: { show: false } },
+        ...(showTrendScores ? [{ min: 0, max: 100, interval: 25, gridIndex: 2, name: "趋势评分", nameTextStyle: { color: "#68736f", fontSize: 11 }, axisLabel: { color: "#75807c" }, splitLine: { lineStyle: { color: "#edf0ef" } } }] : []),
       ],
       dataZoom: [
-        { type: "inside", xAxisIndex: [0, 1], start: zoomStart, end: zoomEnd },
-        { type: "slider", xAxisIndex: [0, 1], start: zoomStart, end: zoomEnd, bottom: 2, height: 18, borderColor: "#ded8d6", fillerColor: "rgba(179,58,58,.14)" },
+        { type: "inside", xAxisIndex: showTrendScores ? [0, 1, 2] : [0, 1], start: zoomStart, end: zoomEnd },
+        { type: "slider", xAxisIndex: showTrendScores ? [0, 1, 2] : [0, 1], start: zoomStart, end: zoomEnd, bottom: 2, height: 18, borderColor: "#ded8d6", fillerColor: "rgba(179,58,58,.14)" },
       ],
       series: [
         {
@@ -256,6 +269,26 @@ export function BacktestChart({ series, orders }: { series: BacktestSeries; orde
           yAxisIndex: 1,
           data: candles.map((item) => ({ value: item.volume, itemStyle: { color: item.close >= item.open ? "rgba(194,59,50,.45)" : "rgba(12,122,90,.45)" } })),
         },
+        ...(showTrendScores ? [
+          {
+            name: "多头趋势评分",
+            type: "line" as const,
+            xAxisIndex: 2,
+            yAxisIndex: 2,
+            data: bullishTrendScores,
+            symbol: "none",
+            lineStyle: { color: "#c23b32", width: 1.5 },
+          },
+          {
+            name: "空头趋势评分",
+            type: "line" as const,
+            xAxisIndex: 2,
+            yAxisIndex: 2,
+            data: bearishTrendScores,
+            symbol: "none",
+            lineStyle: { color: "#0c7a5a", width: 1.5 },
+          },
+        ] : []),
       ],
     });
     const observer = new ResizeObserver(() => chart.resize());
@@ -266,5 +299,6 @@ export function BacktestChart({ series, orders }: { series: BacktestSeries; orde
     };
   }, [series, orders]);
 
-  return <div ref={elementRef} className="backtest-chart" />;
+  const showTrendScores = ["1m", "3m", "5m"].includes(series.timeframe) && Boolean(series.chart.trend_scores?.length);
+  return <div ref={elementRef} className={`backtest-chart${showTrendScores ? " backtest-chart-with-trend" : ""}`} />;
 }

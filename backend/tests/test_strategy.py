@@ -62,6 +62,7 @@ from app.strategy import (
     validate_inverse_head_shoulders_structure,
     calculate_ma_trend_score,
     calculate_combined_trend_score,
+    calculate_combined_trend_score_series,
     trend_label_from_score,
     candle_display_time,
 )
@@ -632,6 +633,28 @@ def test_tqsdk_subscription_rejects_unlisted_contract() -> None:
         assert "未找到上市合约" in str(exc)
     else:
         raise AssertionError("expected unlisted contract to be rejected")
+
+
+def test_tqsdk_subscription_caps_and_reuses_large_base_requests() -> None:
+    class FakeApi:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, int, int]] = []
+
+        def get_kline_serial(self, symbol: str, duration: int, data_length: int) -> pd.DataFrame:
+            self.requests.append((symbol, duration, data_length))
+            return pd.DataFrame()
+
+    api = FakeApi()
+    service = TqSdkMarketService()
+    service._ensure_contract_listed = lambda *_args: None  # type: ignore[method-assign]
+    subscriptions = {}
+
+    first = service._ensure_subscription(api, subscriptions, "DCE.a2609", 300, 10000)
+    second = service._ensure_subscription(api, subscriptions, "DCE.a2609", 300, 900000)
+
+    assert first is second
+    assert first.limit == 10000
+    assert api.requests == [("DCE.a2609", 300, 10000)]
 
 
 def test_infoway_symbol_row_normalizes() -> None:
@@ -2099,6 +2122,35 @@ def test_combined_trend_score_adds_hourly_and_daily_scores_to_one_hundred() -> N
     assert "日线评分：50/50" in reasons
 
 
+def test_combined_trend_score_series_aligns_each_candle_and_both_directions() -> None:
+    hourly_closes = [100 + index * 0.5 for index in range(80)]
+    hourly = pd.DataFrame({
+        "datetime": pd.date_range("2026-06-01 09:00:00", periods=80, freq="h"),
+        "open": hourly_closes,
+        "high": [close + 1 for close in hourly_closes],
+        "low": [close - 1 for close in hourly_closes],
+        "close": hourly_closes,
+        "volume": [1000] * 80,
+    })
+    daily_closes = [100 + index * 0.5 for index in range(80)]
+    daily = pd.DataFrame({
+        "datetime": pd.date_range("2026-03-01", periods=80, freq="D"),
+        "open": daily_closes,
+        "high": [close + 1 for close in daily_closes],
+        "low": [close - 1 for close in daily_closes],
+        "close": daily_closes,
+        "volume": [1000] * 80,
+    })
+    signal_times = hourly["datetime"].tail(3).tolist()
+
+    scores = calculate_combined_trend_score_series(hourly, daily, signal_times)
+
+    assert [item["time"] for item in scores] == [pd.Timestamp(value).isoformat() for value in signal_times]
+    assert len(scores) == 3
+    assert all(0 <= item["bullish"] <= 100 and 0 <= item["bearish"] <= 100 for item in scores)
+    assert scores[-1]["bullish"] > scores[-1]["bearish"]
+
+
 def test_key_zone_trend_score_gives_hourly_full_score_for_top_resistance_touch() -> None:
     times = pd.date_range("2026-06-01 09:00:00", periods=12, freq="h")
     hourly = pd.DataFrame({
@@ -3234,10 +3286,16 @@ def test_api_scan() -> None:
 def test_market_scan_uses_versioned_analysis_service(monkeypatch) -> None:
     from app import main
 
-    calls: list[tuple[str, str, int, dict | None]] = []
+    calls: list[tuple[str, str, int, dict | None, bool]] = []
 
-    async def fake_scan(symbol: str, timeframe: str, limit: int, overrides: dict | None):
-        calls.append((symbol, timeframe, limit, overrides))
+    async def fake_scan(
+        symbol: str,
+        timeframe: str,
+        limit: int,
+        overrides: dict | None,
+        include_trend_scores: bool = False,
+    ):
+        calls.append((symbol, timeframe, limit, overrides, include_trend_scores))
         return main.build_scan_response(
             pd.read_csv(SAMPLE),
             symbol=symbol,
@@ -3251,7 +3309,7 @@ def test_market_scan_uses_versioned_analysis_service(monkeypatch) -> None:
     response = client.get("/api/market/scan", params={"symbol": "rb2405", "timeframe": "5m", "limit": 120})
 
     assert response.status_code == 200
-    assert calls == [("rb2405", "5m", 120, None)]
+    assert calls == [("rb2405", "5m", 120, None, True)]
 
 
 def test_scan_response_filters_same_head_same_timeframe_by_increasing_pattern_score() -> None:

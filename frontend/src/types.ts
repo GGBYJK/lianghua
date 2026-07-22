@@ -26,6 +26,12 @@ export type Neckline = {
   confirmed: boolean;
 };
 
+export type TrendScorePoint = {
+  time: string;
+  bullish: number;
+  bearish: number;
+};
+
 export type PatternScoreItem = {
   label: string;
   score: number;
@@ -82,6 +88,7 @@ export type ScanResponse = {
     candles: Candle[];
     pivots: PivotPoint[];
     necklines: Neckline[];
+    trend_scores?: TrendScorePoint[];
   };
   cache_hit?: boolean;
   analysis_ms?: number | null;

@@ -5,7 +5,7 @@ import { BarChart, CandlestickChart, LineChart } from "echarts/charts";
 import { AxisPointerComponent, DataZoomComponent, GridComponent, LegendComponent, MarkLineComponent, MarkPointComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import { createAlertFeedback, createWatchPoolItem, deleteAlertFeedback, deleteWatchPoolItem, disableAllWatchPoolItems, downloadWatchPoolImportTemplate, enableAllWatchPoolItems, getDefaultConfig, getHeadShouldersAlert, getMarketSettings, hideHeadShouldersAlert, importWatchPoolExcel, listAlertFeedbacks, listContracts, listHeadShouldersAlerts, listWatchPool, refreshContracts, scanMarket, scanWatchPoolOnce, updateContracts, updateWatchPoolItem } from "./api";
-import type { AlertFeedback, Candle, ContractCenterItem, ContractCenterRefresh, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, Neckline, PivotPoint, ScanResponse, Signal, WatchPoolImportResult, WatchPoolItem as ApiWatchPoolItem } from "./types";
+import type { AlertFeedback, Candle, ContractCenterItem, ContractCenterRefresh, HeadShouldersAlert, HeadShouldersAlertSummary, MarketSettings, Neckline, PivotPoint, ScanResponse, Signal, TrendScorePoint, WatchPoolImportResult, WatchPoolItem as ApiWatchPoolItem } from "./types";
 import { parseApiTimestamp } from "./time";
 import "antd/dist/reset.css";
 import "./styles.css";
@@ -925,6 +925,7 @@ export function AnalysisApp({
         necklines={result?.chart.necklines ?? EMPTY_NECKLINES}
         signals={selectedSignals}
         focusedSignal={focusedSignal}
+        trendScores={activePage === "research" ? result?.chart.trend_scores ?? [] : []}
       />
       <div className="signal-display-controls">
         <div>
@@ -2803,12 +2804,13 @@ function SignalGroup({
   );
 }
 
-function KlineChartEcharts({ candles, signals, focusedSignal }: {
+function KlineChartEcharts({ candles, signals, focusedSignal, trendScores }: {
   candles: Candle[];
   pivots: PivotPoint[];
   necklines: Neckline[];
   signals: Signal[];
   focusedSignal: Signal | null;
+  trendScores: TrendScorePoint[];
 }) {
   const chartRef = useRef<HTMLDivElement | null>(null);
 
@@ -2828,6 +2830,12 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
       value: candle.volume,
       itemStyle: { color: candle.close >= candle.open ? "rgba(194,65,52,0.42)" : "rgba(22,138,85,0.42)" },
     }));
+    const trendScoreByTime = new Map(trendScores.map((item) => [item.time, item]));
+    const bullishTrendScores = candles.map((candle) => trendScoreByTime.get(candle.time)?.bullish ?? null);
+    const bearishTrendScores = candles.map((candle) => trendScoreByTime.get(candle.time)?.bearish ?? null);
+    const showTrendScores = trendScores.length > 0;
+    const bullishTrendName = "\u591a\u5934\u8d8b\u52bf\u8bc4\u5206";
+    const bearishTrendName = "\u7a7a\u5934\u8d8b\u52bf\u8bc4\u5206";
     const maKeys = Object.keys(candles.find((candle) => candle.ma && Object.keys(candle.ma).length > 0)?.ma ?? {})
       .sort((a, b) => Number(a.slice(2)) - Number(b.slice(2)));
     const maColors: Record<string, string> = {
@@ -2893,10 +2901,13 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
       const zoomGap = height < 420 ? 8 : 12;
       const volumeHeight = Math.max(44, Math.min(78, Math.round(height * 0.17)));
       const volumeGap = height < 420 ? 16 : 24;
-      const available = height - top - bottom - zoomHeight - zoomGap - volumeHeight - volumeGap;
+      const trendHeight = showTrendScores ? Math.max(52, Math.min(84, Math.round(height * 0.16))) : 0;
+      const trendGap = showTrendScores ? (height < 520 ? 14 : 20) : 0;
+      const available = height - top - bottom - zoomHeight - zoomGap - volumeHeight - volumeGap - trendHeight - trendGap;
       const priceHeight = Math.max(150, available);
       const volumeTop = top + priceHeight + volumeGap;
-      return { bottom, zoomHeight, priceHeight, volumeTop, volumeHeight };
+      const trendTop = volumeTop + volumeHeight + trendGap;
+      return { bottom, zoomHeight, priceHeight, volumeTop, volumeHeight, trendTop, trendHeight };
     };
     const applyChartLayout = () => {
       const layout = getChartLayout();
@@ -2904,6 +2915,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
         grid: [
           { left: 14, right: 58, top: 34, height: layout.priceHeight },
           { left: 14, right: 58, top: layout.volumeTop, height: layout.volumeHeight },
+          ...(showTrendScores ? [{ left: 14, right: 58, top: layout.trendTop, height: layout.trendHeight }] : []),
         ],
         dataZoom: [
           {},
@@ -2924,7 +2936,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
         icon: "roundRect",
         itemWidth: 18,
         itemHeight: 3,
-        data: maKeys.map((key) => key.toUpperCase()),
+        data: [...maKeys.map((key) => key.toUpperCase()), ...(showTrendScores ? [bullishTrendName, bearishTrendName] : [])],
         textStyle: { color: "#7a7a7a", fontSize: 11, fontWeight: 600 },
       },
       axisPointer: {
@@ -2940,11 +2952,12 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
         backgroundColor: "rgba(255,255,255,0.96)",
         textStyle: { color: "#1d1d1f", fontSize: 12 },
         extraCssText: "box-shadow: 0 18px 44px rgba(0,0,0,.14); border-radius: 11px;",
-        formatter: (params: unknown) => formatChartTooltip(params, candles),
+        formatter: (params: unknown) => formatChartTooltip(params, candles, bullishTrendScores, bearishTrendScores),
       },
       grid: [
         { left: 14, right: 58, top: 34, height: initialLayout.priceHeight },
         { left: 14, right: 58, top: initialLayout.volumeTop, height: initialLayout.volumeHeight },
+        ...(showTrendScores ? [{ left: 14, right: 58, top: initialLayout.trendTop, height: initialLayout.trendHeight }] : []),
       ],
       xAxis: [
         {
@@ -2963,9 +2976,19 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
           boundaryGap: true,
           axisLine: { lineStyle: { color: "rgba(148,163,184,0.28)" } },
           axisTick: { show: false },
-          axisLabel: { color: "#7a7a7a", fontSize: 10, hideOverlap: true },
+          axisLabel: { show: !showTrendScores, color: "#7a7a7a", fontSize: 10, hideOverlap: true },
           splitLine: { show: false },
         },
+        ...(showTrendScores ? [{
+          type: "category" as const,
+          gridIndex: 2,
+          data: categories,
+          boundaryGap: true,
+          axisLine: { lineStyle: { color: "rgba(148,163,184,0.28)" } },
+          axisTick: { show: false },
+          axisLabel: { color: "#7a7a7a", fontSize: 10, hideOverlap: true },
+          splitLine: { show: false },
+        }] : []),
       ],
       yAxis: [
         {
@@ -2985,11 +3008,24 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
           axisLabel: { color: "#7a7a7a", fontSize: 10, formatter: (value: number) => formatCompactVolume(value) },
           splitLine: { show: false },
         },
+        ...(showTrendScores ? [{
+          min: 0,
+          max: 100,
+          interval: 25,
+          gridIndex: 2,
+          position: "right" as const,
+          name: "\u8d8b\u52bf\u8bc4\u5206",
+          nameTextStyle: { color: "#7a7a7a", fontSize: 10 },
+          axisLine: { show: false },
+          axisTick: { show: false },
+          axisLabel: { color: "#7a7a7a", fontSize: 10 },
+          splitLine: { lineStyle: { color: "#f0f0f0" } },
+        }] : []),
       ],
       dataZoom: [
         {
           type: "inside",
-          xAxisIndex: [0, 1],
+          xAxisIndex: showTrendScores ? [0, 1, 2] : [0, 1],
           start,
           end,
           zoomOnMouseWheel: true,
@@ -3000,7 +3036,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
         },
         {
           type: "slider",
-          xAxisIndex: [0, 1],
+          xAxisIndex: showTrendScores ? [0, 1, 2] : [0, 1],
           bottom: initialLayout.bottom,
           height: initialLayout.zoomHeight,
           realtime: false,
@@ -3049,6 +3085,28 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
           barWidth: "60%",
           large: true,
         },
+        ...(showTrendScores ? [
+          {
+            name: bullishTrendName,
+            type: "line" as const,
+            xAxisIndex: 2,
+            yAxisIndex: 2,
+            data: bullishTrendScores,
+            showSymbol: false,
+            lineStyle: { width: 1.6, color: "#c24134" },
+            emphasis: { disabled: true },
+          },
+          {
+            name: bearishTrendName,
+            type: "line" as const,
+            xAxisIndex: 2,
+            yAxisIndex: 2,
+            data: bearishTrendScores,
+            showSymbol: false,
+            lineStyle: { width: 1.6, color: "#168a55" },
+            emphasis: { disabled: true },
+          },
+        ] : []),
       ],
     });
 
@@ -3060,7 +3118,11 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
     });
 
     const showTooltipAt = (offsetX: number, offsetY: number) => {
-      if (!chart.containPixel({ gridIndex: 0 }, [offsetX, offsetY]) && !chart.containPixel({ gridIndex: 1 }, [offsetX, offsetY])) {
+      if (
+        !chart.containPixel({ gridIndex: 0 }, [offsetX, offsetY])
+        && !chart.containPixel({ gridIndex: 1 }, [offsetX, offsetY])
+        && (!showTrendScores || !chart.containPixel({ gridIndex: 2 }, [offsetX, offsetY]))
+      ) {
         return;
       }
       const converted = chart.convertFromPixel({ xAxisIndex: 0 }, [offsetX, offsetY]);
@@ -3222,7 +3284,7 @@ function KlineChartEcharts({ candles, signals, focusedSignal }: {
       observer.disconnect();
       chart.dispose();
     };
-  }, [candles, signals, focusedSignal]);
+  }, [candles, signals, focusedSignal, trendScores]);
 
   if (candles.length === 0) {
     return <div className="chart-empty">等待 K 线数据</div>;
@@ -3605,7 +3667,12 @@ function calculateSignalZoom(signal: Signal, candles: Candle[]) {
   };
 }
 
-function formatChartTooltip(params: unknown, candles: Candle[]) {
+function formatChartTooltip(
+  params: unknown,
+  candles: Candle[],
+  bullishTrendScores: Array<number | null> = [],
+  bearishTrendScores: Array<number | null> = [],
+) {
   const items = Array.isArray(params) ? params as Array<{ dataIndex?: number; seriesName?: string; value?: unknown; marker?: string }> : [];
   const dataIndex = items.find((item) => typeof item.dataIndex === "number")?.dataIndex;
   if (dataIndex === undefined) {
@@ -3619,12 +3686,18 @@ function formatChartTooltip(params: unknown, candles: Candle[]) {
     .filter(([, value]) => value !== null && value !== undefined)
     .map(([key, value]) => `<div><span style="color:#7a7a7a">${key.toUpperCase()}</span> ${formatPrice(Number(value))}</div>`)
     .join("");
+  const bullishScore = bullishTrendScores[dataIndex];
+  const bearishScore = bearishTrendScores[dataIndex];
+  const trendRows = bullishScore !== null && bullishScore !== undefined
+    ? `<div style="height:1px;background:rgba(148,163,184,.18);margin:6px 0"></div><div><span style="color:#c24134">\u591a\u5934\u8d8b\u52bf\u8bc4\u5206</span> ${bullishScore}</div><div><span style="color:#168a55">\u7a7a\u5934\u8d8b\u52bf\u8bc4\u5206</span> ${bearishScore ?? "--"}</div>`
+    : "";
   return [
     `<div style="font-weight:700;margin-bottom:6px">${formatTime(candle.display_time ?? candle.time)}</div>`,
     `<div>开 ${formatPrice(candle.open)} &nbsp; 高 ${formatPrice(candle.high)}</div>`,
     `<div>低 ${formatPrice(candle.low)} &nbsp; 收 ${formatPrice(candle.close)}</div>`,
     `<div>量 ${formatCompactVolume(candle.volume)}</div>`,
     maRows ? `<div style="height:1px;background:rgba(148,163,184,.18);margin:6px 0"></div>${maRows}` : "",
+    trendRows,
   ].join("");
 }
 

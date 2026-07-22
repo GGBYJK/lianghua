@@ -20,7 +20,7 @@ import {
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Clock3, Database, Eraser, Eye, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { CircleHelp, Clock3, Database, Eraser, Eye, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 
 import { formatApiDateTime, formatMarketDateTime } from "../time";
 import { platformApi } from "./api";
@@ -28,7 +28,13 @@ import type { KlineBar, KlineDataset, KlineDatasetStatus, KlineSyncJob } from ".
 
 
 const TIMEFRAME_OPTIONS = ["1m", "3m", "5m", "15m", "30m", "1h", "1d"].map((value) => ({ value, label: value }));
+const TIMEFRAME_ORDER = new Map(TIMEFRAME_OPTIONS.map((option, index) => [option.value, index]));
 const ACTIVE_STATUSES = new Set(["QUEUED", "RUNNING"]);
+
+type KlineDatasetGroup = {
+  symbol: string;
+  items: KlineDataset[];
+};
 
 const STATUS_META: Record<KlineDatasetStatus | KlineSyncJob["status"], { label: string; color?: string }> = {
   IDLE: { label: "就绪", color: "success" },
@@ -45,6 +51,24 @@ function statusTag(status: KlineDatasetStatus | KlineSyncJob["status"]) {
 
 function triggerLabel(trigger: KlineSyncJob["trigger_type"]) {
   return { INITIAL: "首次拉取", MANUAL: "手动更新", SCHEDULED: "凌晨更新" }[trigger];
+}
+
+function groupedDatasetStatus(items: KlineDataset[]): KlineDatasetStatus {
+  const priority: KlineDatasetStatus[] = ["RUNNING", "QUEUED", "FAILED", "IDLE", "COMPLETED"];
+  return priority.find((status) => items.some((item) => item.status === status)) || "IDLE";
+}
+
+function latestSuccessfulSync(items: KlineDataset[]): string | null {
+  return items.reduce<string | null>((latest, item) => {
+    if (!item.last_synced_at) return latest;
+    if (!latest || new Date(item.last_synced_at).getTime() > new Date(latest).getTime()) return item.last_synced_at;
+    return latest;
+  }, null);
+}
+
+function formatFeatureNumber(value: string | number | null | undefined, digits = 4) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(digits) : "--";
 }
 
 export default function KlineDataPage() {
@@ -91,8 +115,8 @@ export default function KlineDataPage() {
   ]);
   const createMutation = useMutation({
     mutationFn: platformApi.createKlineDataset,
-    onSuccess: async () => {
-      api.success("数据集已创建，首次拉取已进入串行队列");
+    onSuccess: async (result) => {
+      api.success(`已创建 ${result.length} 个数据集，首次拉取已进入串行队列`);
       setCreateOpen(false);
       createForm.resetFields();
       await invalidate();
@@ -104,6 +128,16 @@ export default function KlineDataPage() {
     onSuccess: async () => {
       api.success("维护配置已更新");
       setEditing(null);
+      await invalidate();
+    },
+    onError: (error: Error) => api.error(error.message),
+  });
+  const groupAutoMutation = useMutation({
+    mutationFn: ({ items, checked }: { items: KlineDataset[]; checked: boolean }) => Promise.all(
+      items.map((item) => platformApi.updateKlineDataset(item.id, { auto_update: checked })),
+    ),
+    onSuccess: async () => {
+      api.success("该品种全部周期的自动更新已同步");
       await invalidate();
     },
     onError: (error: Error) => api.error(error.message),
@@ -142,69 +176,154 @@ export default function KlineDataPage() {
   });
 
   const datasets = datasetsQuery.data || [];
-  const rows = useMemo(() => {
+  const createSymbol = Form.useWatch("symbol", createForm);
+  const createTimeframeOptions = useMemo(() => {
+    const existing = new Set(
+      datasets
+        .filter((item) => item.symbol === createSymbol)
+        .map((item) => item.timeframe),
+    );
+    return TIMEFRAME_OPTIONS.map((option) => ({
+      ...option,
+      disabled: existing.has(option.value),
+      label: existing.has(option.value) ? `${option.label} · 已存在` : option.label,
+    }));
+  }, [createSymbol, datasets]);
+  const groupedRows = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
-    return datasets.filter((item) => (
-      (!normalizedKeyword || item.symbol.toLowerCase().includes(normalizedKeyword))
-      && (!timeframe || item.timeframe === timeframe)
-    ));
+    const visibleSymbols = new Set(
+      datasets
+        .filter((item) => (
+          (!normalizedKeyword || item.symbol.toLowerCase().includes(normalizedKeyword))
+          && (!timeframe || item.timeframe === timeframe)
+        ))
+        .map((item) => item.symbol),
+    );
+    const groups = new Map<string, KlineDataset[]>();
+    datasets.forEach((item) => {
+      if (!visibleSymbols.has(item.symbol)) return;
+      const group = groups.get(item.symbol) || [];
+      group.push(item);
+      groups.set(item.symbol, group);
+    });
+    return Array.from(groups, ([symbol, items]) => ({
+      symbol,
+      items: items.sort((left, right) => (
+        (TIMEFRAME_ORDER.get(left.timeframe) ?? 99) - (TIMEFRAME_ORDER.get(right.timeframe) ?? 99)
+      )),
+    })).sort((left, right) => left.symbol.localeCompare(right.symbol));
   }, [datasets, keyword, timeframe]);
+  const visiblePeriodCount = useMemo(
+    () => groupedRows.reduce((total, group) => total + group.items.length, 0),
+    [groupedRows],
+  );
   const stats = useMemo(() => ({
     datasets: datasets.length,
     rows: datasets.reduce((sum, item) => sum + item.row_count, 0),
     automatic: datasets.filter((item) => item.auto_update).length,
   }), [datasets]);
 
-  const datasetColumns: ColumnsType<KlineDataset> = [
+  const datasetColumns: ColumnsType<KlineDatasetGroup> = [
     {
       title: "品种 / 周期",
-      fixed: "left",
-      width: 150,
-      render: (_, row) => <div className="kline-market-cell"><strong>{row.symbol}</strong><Tag>{row.timeframe}</Tag></div>,
+      width: "10%",
+      className: "kline-summary-meta-cell",
+      render: (_, row) => <div className="kline-symbol-summary">
+        <strong>{row.symbol}</strong>
+        <div>{row.items.map((item) => <Tag key={item.id}>{item.timeframe}</Tag>)}</div>
+      </div>,
     },
-    { title: "行情源", dataIndex: "provider", width: 90, className: "kline-provider-cell", render: (value) => String(value).toUpperCase() },
-    { title: "状态", dataIndex: "status", width: 80, render: (value) => statusTag(value) },
+    { title: "行情源", width: "6%", className: "kline-provider-cell", render: (_, row) => String(row.items[0]?.provider || "--").toUpperCase() },
+    {
+      title: "状态",
+      width: "7%",
+      className: "kline-summary-meta-cell",
+      render: (_, row) => {
+        const errors = row.items.map((item) => item.last_error).filter(Boolean).join("\n");
+        const tag = statusTag(groupedDatasetStatus(row.items));
+        return errors ? <Tooltip title={<span className="pre-line">{errors}</span>}>{tag}</Tooltip> : tag;
+      },
+    },
     {
       title: "数据量",
-      width: 140,
-      render: (_, row) => <div className="kline-count-cell"><strong>{row.row_count.toLocaleString()}</strong><span>/ {row.target_count.toLocaleString()} 条</span></div>,
+      width: "10%",
+      render: (_, row) => <div className="kline-period-stack kline-count-stack">
+        {row.items.map((item) => <div className="kline-period-row" key={item.id}>
+          <span className="kline-period-key">{item.timeframe}</span>
+          <strong>{item.row_count.toLocaleString()}</strong>
+          <small>{["1h", "1d"].includes(item.timeframe) ? "5m合成" : `/ ${item.target_count.toLocaleString()}`}</small>
+        </div>)}
+      </div>,
+    },
+    {
+      title: <span className="kline-feature-column-title">预计算缓存<Tooltip title="除原始K线外，还会预缓存成交量（VOL）、MA、MACD；1m、3m、5m周期额外缓存每根K线的多头和空头趋势评分。"><CircleHelp size={13} /></Tooltip></span>,
+      width: "10%",
+      render: (_, row) => <div className="kline-period-stack kline-feature-stack">
+        {row.items.map((item) => {
+          const ready = item.features_ready;
+          return <Tooltip key={item.id} title={item.features_updated_at ? `计算于 ${formatApiDateTime(item.features_updated_at)}` : "下次数据更新时自动生成"}>
+            <div className="kline-period-row">
+              <span className="kline-period-key">{item.timeframe}</span>
+              <Tag color={ready ? "success" : "default"}>{ready ? `${item.feature_row_count.toLocaleString()} 条` : "待生成"}</Tag>
+            </div>
+          </Tooltip>;
+        })}
+      </div>,
     },
     {
       title: "数据范围",
-      width: 270,
-      render: (_, row) => row.start_time && row.end_time
-        ? <div className="kline-range-cell"><span>{formatMarketDateTime(row.start_time)}</span><i>至</i><span>{formatMarketDateTime(row.end_time)}</span></div>
-        : <Typography.Text type="secondary">尚未拉取</Typography.Text>,
+      width: "22%",
+      render: (_, row) => <div className="kline-period-stack kline-range-stack">
+        {row.items.map((item) => <div className="kline-period-row" key={item.id}>
+          <span className="kline-period-key">{item.timeframe}:</span>
+          {item.start_time && item.end_time
+            ? <span>{formatMarketDateTime(item.start_time)} <i>至</i> {formatMarketDateTime(item.end_time)}</span>
+            : <span className="kline-empty-value">尚未拉取</span>}
+        </div>)}
+      </div>,
     },
     {
       title: "凌晨自动更新",
-      width: 120,
-      render: (_, row) => <Switch
-        checked={row.auto_update}
-        loading={updateMutation.isPending && updateMutation.variables?.id === row.id}
-        onChange={(checked) => updateMutation.mutate({ id: row.id, values: { auto_update: checked } })}
-      />,
+      width: "8%",
+      align: "center",
+      className: "kline-summary-meta-cell",
+      render: (_, row) => {
+        const enabledCount = row.items.filter((item) => item.auto_update).length;
+        const mixed = enabledCount > 0 && enabledCount < row.items.length;
+        return <Tooltip title={mixed ? "部分周期的自动更新设置不一致，操作后将全部同步" : undefined}>
+          <Switch
+            checked={enabledCount === row.items.length}
+            loading={groupAutoMutation.isPending && groupAutoMutation.variables?.items[0]?.symbol === row.symbol}
+            onChange={(checked) => groupAutoMutation.mutate({ items: row.items, checked })}
+          />
+        </Tooltip>;
+      },
     },
     {
       title: "最后成功更新",
-      dataIndex: "last_synced_at",
-      width: 160,
-      render: (value, row) => row.last_error
-        ? <Tooltip title={row.last_error}><Typography.Text type="danger">更新失败，查看任务记录</Typography.Text></Tooltip>
-        : value ? formatApiDateTime(value) : "--",
+      width: "12%",
+      className: "kline-summary-meta-cell",
+      render: (_, row) => {
+        const latest = latestSuccessfulSync(row.items);
+        return latest ? formatApiDateTime(latest) : "--";
+      },
     },
     {
-      title: "操作",
-      fixed: "right",
-      width: 150,
-      render: (_, row) => <Space size={2}>
-        <Tooltip title="查看K线"><Button type="text" icon={<Eye size={16} />} disabled={!row.row_count} onClick={() => { setViewing(row); setBarPage(1); }} /></Tooltip>
-        <Tooltip title="立即更新"><Button type="text" icon={<RefreshCw size={16} />} loading={syncMutation.isPending && syncMutation.variables === row.id} disabled={ACTIVE_STATUSES.has(row.status)} onClick={() => syncMutation.mutate(row.id)} /></Tooltip>
-        <Tooltip title="修改容量"><Button type="text" icon={<Pencil size={16} />} onClick={() => { setEditing(row); editForm.setFieldsValue({ target_count: row.target_count }); }} /></Tooltip>
-        <Popconfirm title="删除该K线数据集？" description="维护配置和全部历史K线会一并删除。" onConfirm={() => deleteMutation.mutate(row.id)}>
-          <Tooltip title="删除"><Button type="text" danger icon={<Trash2 size={16} />} disabled={row.status === "RUNNING"} /></Tooltip>
-        </Popconfirm>
-      </Space>,
+      title: "周期操作",
+      width: "15%",
+      render: (_, row) => <div className="kline-period-stack kline-action-stack">
+        {row.items.map((item) => <div className="kline-period-row" key={item.id}>
+          <span className="kline-period-key">{item.timeframe}</span>
+          <Space size={0}>
+            <Tooltip title="查看K线"><Button type="text" icon={<Eye size={15} />} disabled={!item.row_count} onClick={() => { setViewing(item); setBarPage(1); }} /></Tooltip>
+            <Tooltip title="立即更新"><Button type="text" icon={<RefreshCw size={15} />} loading={syncMutation.isPending && syncMutation.variables === item.id} disabled={ACTIVE_STATUSES.has(item.status)} onClick={() => syncMutation.mutate(item.id)} /></Tooltip>
+            <Tooltip title="修改容量"><Button type="text" icon={<Pencil size={15} />} onClick={() => { setEditing(item); editForm.setFieldsValue({ target_count: item.target_count }); }} /></Tooltip>
+            <Popconfirm title={`删除 ${item.timeframe} K线数据集？`} description="维护配置和全部历史K线会一并删除。" onConfirm={() => deleteMutation.mutate(item.id)}>
+              <Tooltip title="删除"><Button type="text" danger icon={<Trash2 size={15} />} disabled={item.status === "RUNNING"} /></Tooltip>
+            </Popconfirm>
+          </Space>
+        </div>)}
+      </div>,
     },
   ];
 
@@ -215,13 +334,34 @@ export default function KlineDataPage() {
     { title: "低", dataIndex: "low", align: "right" },
     { title: "收", dataIndex: "close", align: "right" },
     { title: "成交量", dataIndex: "volume", align: "right" },
+    {
+      title: "MA缓存",
+      width: 210,
+      render: (_, row) => row.ma && Object.keys(row.ma).length
+        ? <div className="kline-feature-values">{Object.entries(row.ma).map(([period, value]) => <span key={period}>MA{period}: {formatFeatureNumber(value, 2)}</span>)}</div>
+        : "--",
+    },
+    {
+      title: "MACD缓存",
+      width: 180,
+      render: (_, row) => row.macd_dif !== undefined
+        ? <div className="kline-feature-values"><span>DIF: {formatFeatureNumber(row.macd_dif)}</span><span>DEA: {formatFeatureNumber(row.macd_dea)}</span><span>HIST: {formatFeatureNumber(row.macd_hist)}</span></div>
+        : "--",
+    },
+    {
+      title: "趋势评分",
+      width: 130,
+      render: (_, row) => row.trend_bullish !== null && row.trend_bullish !== undefined
+        ? <div className="kline-feature-values"><span className="trend-bullish-value">多头: {row.trend_bullish}</span><span className="trend-bearish-value">空头: {row.trend_bearish}</span></div>
+        : "--",
+    },
   ];
 
   const jobColumns: ColumnsType<KlineSyncJob> = [
     { title: "品种 / 周期", width: 170, render: (_, row) => <strong>{row.symbol} · {row.timeframe}</strong> },
     { title: "触发方式", dataIndex: "trigger_type", width: 110, render: triggerLabel },
     { title: "状态", dataIndex: "status", width: 100, render: (value) => statusTag(value) },
-    { title: "请求 / 拉取", width: 130, align: "right", render: (_, row) => `${row.requested_count.toLocaleString()} / ${row.fetched_count.toLocaleString()}` },
+    { title: "目标上限 / 实际", width: 150, align: "right", render: (_, row) => `${row.requested_count.toLocaleString()} / ${row.fetched_count.toLocaleString()}` },
     { title: "写入", dataIndex: "written_count", width: 100, align: "right", render: (value) => Number(value).toLocaleString() },
     { title: "创建时间", dataIndex: "created_at", width: 170, render: (value) => formatApiDateTime(value) },
     { title: "完成时间", dataIndex: "completed_at", width: 170, render: (value) => value ? formatApiDateTime(value) : "--" },
@@ -261,13 +401,21 @@ export default function KlineDataPage() {
 
     <section className="table-section kline-dataset-section">
       <div className="kline-table-toolbar">
-        <div><strong>维护数据集</strong><span>共 {rows.length} 项</span></div>
+        <div><strong>维护数据集</strong><span>{groupedRows.length} 个品种 · {visiblePeriodCount} 个周期</span></div>
         <Space wrap>
           <Input.Search allowClear placeholder="搜索品种" value={keyword} onChange={(event) => setKeyword(event.target.value)} className="kline-search" />
           <Select allowClear placeholder="全部周期" value={timeframe} onChange={setTimeframe} options={TIMEFRAME_OPTIONS} className="kline-timeframe-filter" />
         </Space>
       </div>
-      <Table rowKey="id" columns={datasetColumns} dataSource={rows} loading={datasetsQuery.isLoading} scroll={{ x: 1145 }} pagination={{ pageSize: 15, showSizeChanger: false }} />
+      <Table
+        rowKey="symbol"
+        columns={datasetColumns}
+        dataSource={groupedRows}
+        loading={datasetsQuery.isLoading}
+        rowClassName="kline-symbol-summary-row"
+        tableLayout="fixed"
+        pagination={{ pageSize: 10, showSizeChanger: false }}
+      />
     </section>
 
     <section className="table-section kline-job-section">
@@ -277,15 +425,16 @@ export default function KlineDataPage() {
 
     <Modal title="新增K线数据集" open={createOpen} onCancel={() => setCreateOpen(false)} onOk={() => createForm.submit()} confirmLoading={createMutation.isPending} okText="创建并拉取">
       <Alert showIcon type="info" message="创建后进入串行队列，不会在页面请求中直接拉取大量行情。" />
-      <Form form={createForm} layout="vertical" initialValues={{ timeframe: "3m", target_count: 10000, auto_update: true }} onFinish={(values) => createMutation.mutate(values)}>
+      <Form form={createForm} layout="vertical" initialValues={{ timeframes: [], target_count: 10000, auto_update: true }} onFinish={(values) => createMutation.mutate(values)}>
         <Form.Item name="symbol" label="品种" rules={[{ required: true, message: "请选择品种" }]}>
-          <Select showSearch optionFilterProp="label" loading={contractsQuery.isLoading} options={(contractsQuery.data || []).map((item) => ({ value: item.symbol, label: `${item.symbol} · ${item.name}` }))} />
+          <Select showSearch optionFilterProp="label" loading={contractsQuery.isLoading} options={(contractsQuery.data || []).map((item) => ({ value: item.symbol, label: `${item.symbol} · ${item.name}` }))} onChange={() => createForm.setFieldValue("timeframes", [])} />
         </Form.Item>
         <div className="kline-form-grid">
-          <Form.Item name="timeframe" label="K线周期" rules={[{ required: true }]}><Select options={TIMEFRAME_OPTIONS} /></Form.Item>
-          <Form.Item name="target_count" label="维护条数" rules={[{ required: true }]}><InputNumber min={120} max={10000} step={100} className="full-input" /></Form.Item>
+          <Form.Item name="timeframes" label="K线周期" rules={[{ required: true, message: "请至少选择一个周期" }]}><Select mode="multiple" maxTagCount="responsive" options={createTimeframeOptions} /></Form.Item>
+          <Form.Item name="target_count" label="最多保留条数" rules={[{ required: true }]}><InputNumber min={120} max={10000} step={100} className="full-input" /></Form.Item>
         </div>
         <Form.Item name="auto_update" label="每日凌晨自动更新" valuePropName="checked"><Switch /></Form.Item>
+        <Typography.Text type="secondary">1m–30m 直接获取；1h 和 1d 使用最多 10000 条 5m K线合成，按实际可用数量保存。</Typography.Text>
       </Form>
     </Modal>
 
@@ -296,9 +445,9 @@ export default function KlineDataPage() {
       </Form>
     </Modal>
 
-    <Drawer width="min(920px, 94vw)" title={viewing ? `${viewing.symbol} / ${viewing.timeframe} · K线明细` : "K线明细"} open={Boolean(viewing)} onClose={() => setViewing(null)} destroyOnHidden>
+    <Drawer width="min(1280px, 96vw)" title={viewing ? `${viewing.symbol} / ${viewing.timeframe} · K线明细` : "K线明细"} open={Boolean(viewing)} onClose={() => setViewing(null)} destroyOnHidden>
       {viewing ? <div className="kline-drawer-summary"><span>共 <strong>{viewing.row_count.toLocaleString()}</strong> 条</span><span>{viewing.start_time ? formatMarketDateTime(viewing.start_time) : "--"} 至 {viewing.end_time ? formatMarketDateTime(viewing.end_time) : "--"}</span></div> : null}
-      <Table rowKey="bar_time" size="small" columns={barColumns} dataSource={barsQuery.data?.items || []} loading={barsQuery.isLoading} scroll={{ x: 760 }} pagination={{ current: barPage, pageSize: 50, total: barsQuery.data?.total || 0, showSizeChanger: false, onChange: setBarPage }} />
+      <Table rowKey="bar_time" size="small" columns={barColumns} dataSource={barsQuery.data?.items || []} loading={barsQuery.isLoading} scroll={{ x: 1350 }} pagination={{ current: barPage, pageSize: 50, total: barsQuery.data?.total || 0, showSizeChanger: false, onChange: setBarPage }} />
     </Drawer>
   </div>;
 }

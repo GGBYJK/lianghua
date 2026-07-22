@@ -177,7 +177,7 @@ export const platformApi = {
   deleteBacktest: (runId: string) => request<{ ok: boolean }>(`/api/backtests/${runId}`, { method: "DELETE" }),
   marketContracts: () => request<MarketContract[]>("/api/contracts"),
   klineDatasets: () => request<KlineDataset[]>("/api/admin/kline-data/datasets"),
-  createKlineDataset: (payload: { symbol: string; timeframe: string; target_count: number; auto_update: boolean }) => request<KlineDataset>("/api/admin/kline-data/datasets", {
+  createKlineDataset: (payload: { symbol: string; timeframes: string[]; target_count: number; auto_update: boolean }) => request<KlineDataset[]>("/api/admin/kline-data/datasets", {
     method: "POST", body: JSON.stringify(payload),
   }),
   updateKlineDataset: (datasetId: string, payload: { target_count?: number; auto_update?: boolean }) => request<KlineDataset>(`/api/admin/kline-data/datasets/${encodeURIComponent(datasetId)}`, {

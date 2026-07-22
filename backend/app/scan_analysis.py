@@ -20,6 +20,8 @@ from .strategy import (
     HeadShoulderTopSignal,
     add_macd_columns,
     add_ma_columns,
+    cached_trend_score_series,
+    calculate_combined_trend_score_series,
     find_pivots,
     prepare_chart_payload,
     scan_head_shoulders,
@@ -28,6 +30,7 @@ from .strategy import (
 
 logger = logging.getLogger("app.scan_analysis")
 ANALYSIS_ALGORITHM_VERSION = "scan-v2-ma-context-20260722"
+TREND_SCORE_CHART_TIMEFRAMES = {"1m", "3m", "5m"}
 ANALYSIS_CACHE_BUCKET_SECONDS = max(30, int(os.getenv("ANALYSIS_CACHE_BUCKET_SECONDS", "300")))
 ANALYSIS_MAX_CONCURRENCY = max(1, int(os.getenv("ANALYSIS_MAX_CONCURRENCY", "1")))
 _analysis_gate = asyncio.Semaphore(ANALYSIS_MAX_CONCURRENCY)
@@ -95,6 +98,7 @@ def build_scan_response(
     overrides: dict[str, Any] | None,
     hourly_df: pd.DataFrame | None = None,
     daily_df: pd.DataFrame | None = None,
+    include_trend_scores: bool = False,
 ) -> ScanResponse:
     df = df.copy()
     df["datetime"] = pd.to_datetime(df["datetime"])
@@ -116,6 +120,19 @@ def build_scan_response(
     enriched_df = add_macd_columns(add_ma_columns(df, config), config)
     pivots = find_pivots(enriched_df, left=config.pivot_left, right=config.pivot_right)
     chart = prepare_chart_payload(enriched_df, pivots, signals, config, timeframe=timeframe)
+    if (
+        include_trend_scores
+        and timeframe.strip().lower() in TREND_SCORE_CHART_TIMEFRAMES
+        and hourly_df is not None
+        and daily_df is not None
+    ):
+        chart["trend_scores"] = cached_trend_score_series(df) or (
+            calculate_combined_trend_score_series(
+                hourly_df,
+                daily_df,
+                df["datetime"].tolist(),
+            )
+        )
     return ScanResponse(
         symbol=symbol,
         timeframe=timeframe,
@@ -156,16 +173,25 @@ async def _cache_context(
     timeframe: str,
     limit: int,
     overrides: dict[str, Any] | None,
+    include_trend_scores: bool = False,
 ) -> dict[str, Any]:
     config = load_head_shoulder_config(symbol=symbol, timeframe=timeframe, overrides=overrides)
-    support_limit = max(80, min(limit, 240))
+    support_limit = (
+        max(240, min(limit, 600))
+        if include_trend_scores
+        else max(80, min(limit, 240))
+    )
     return await build_analysis_cache_context(
         symbol=symbol,
         timeframe=timeframe,
         limit=limit,
         support_limit=support_limit,
         config=config.to_dict(),
-        algorithm_version=ANALYSIS_ALGORITHM_VERSION,
+        algorithm_version=(
+            f"{ANALYSIS_ALGORITHM_VERSION}:trend-series"
+            if include_trend_scores
+            else ANALYSIS_ALGORITHM_VERSION
+        ),
     )
 
 
@@ -210,8 +236,9 @@ async def scan_market_cached(
     timeframe: str,
     limit: int,
     overrides: dict[str, Any] | None = None,
+    include_trend_scores: bool = False,
 ) -> ScanResponse:
-    context = await _cache_context(symbol, timeframe, limit, overrides)
+    context = await _cache_context(symbol, timeframe, limit, overrides, include_trend_scores)
     cached = await asyncio.to_thread(load_analysis_cache, context["cache_key"])
     if cached is not None:
         cached["cache_hit"] = True
@@ -221,7 +248,7 @@ async def scan_market_cached(
 
     async with _analysis_gate:
         # A queued request may have been calculated while it waited for the gate.
-        context = await _cache_context(symbol, timeframe, limit, overrides)
+        context = await _cache_context(symbol, timeframe, limit, overrides, include_trend_scores)
         cached = await asyncio.to_thread(load_analysis_cache, context["cache_key"])
         if cached is not None:
             cached["cache_hit"] = True
@@ -230,14 +257,18 @@ async def scan_market_cached(
             return ScanResponse.model_validate(cached)
 
         started = time.perf_counter()
-        support_limit = max(80, min(limit, 240))
+        support_limit = (
+            max(240, min(limit, 600))
+            if include_trend_scores
+            else max(80, min(limit, 240))
+        )
         df, hourly_df, daily_df = await asyncio.gather(
             load_kline_for_backtest(symbol, timeframe, limit),
             load_kline_for_backtest(symbol, "1h", support_limit),
             load_kline_for_backtest(symbol, "1d", support_limit),
         )
         # A cache miss can write through into a maintained dataset and bump its revision.
-        context = await _cache_context(symbol, timeframe, limit, overrides)
+        context = await _cache_context(symbol, timeframe, limit, overrides, include_trend_scores)
         response = await asyncio.to_thread(
             build_scan_response,
             df,
@@ -246,6 +277,7 @@ async def scan_market_cached(
             overrides,
             hourly_df,
             daily_df,
+            include_trend_scores,
         )
         calculation_ms = max(1, int((time.perf_counter() - started) * 1000))
         response.analysis_ms = calculation_ms

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from bisect import bisect_left, bisect_right
+import hashlib
+import json
 import math
 from typing import Any, Iterator
 
@@ -23,6 +25,7 @@ RIGHT_SHOULDER_PIVOT_WINDOW = 3
 PULLBACK_LOOKAHEAD_BARS = 60
 PULLBACK_MAX_TREND_SCORE = 35
 PULLBACK_MIN_PATTERN_SCORE = 80
+KLINE_FEATURE_VERSION = "kline-features-v2-incremental-20260722"
 
 
 def signal_direction(pattern: str, alert_type: str) -> str:
@@ -166,9 +169,41 @@ class HeadShoulderTopSignal:
         }
 
 
+def _canonical_feature_hash(payload: dict[str, Any]) -> str:
+    value = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def ma_feature_config_hash(config: HeadShoulderTopConfig) -> str:
+    return _canonical_feature_hash({
+        "periods": sorted(set([*config.ma_periods, config.ma_short, config.ma_mid, config.ma_long])),
+    })
+
+
+def macd_feature_config_hash(config: HeadShoulderTopConfig) -> str:
+    return _canonical_feature_hash({
+        "fast": config.macd_fast,
+        "slow": config.macd_slow,
+        "signal": config.macd_signal,
+    })
+
+
+def indicator_feature_config_hash(config: HeadShoulderTopConfig) -> str:
+    return _canonical_feature_hash({
+        "ma": ma_feature_config_hash(config),
+        "macd": macd_feature_config_hash(config),
+    })
+
+
 def add_ma_columns(df: pd.DataFrame, config: HeadShoulderTopConfig) -> pd.DataFrame:
     df = df.copy()
     periods = sorted(set([*config.ma_periods, config.ma_short, config.ma_mid, config.ma_long]))
+    if (
+        df.attrs.get("feature_version") == KLINE_FEATURE_VERSION
+        and df.attrs.get("feature_config_hash") == indicator_feature_config_hash(config)
+        and all(f"ma{period}" in df.columns for period in periods)
+    ):
+        return df
     for period in periods:
         df[f"ma{period}"] = df["close"].rolling(period).mean()
     return df
@@ -176,8 +211,16 @@ def add_ma_columns(df: pd.DataFrame, config: HeadShoulderTopConfig) -> pd.DataFr
 
 def add_macd_columns(df: pd.DataFrame, config: HeadShoulderTopConfig) -> pd.DataFrame:
     df = df.copy()
+    if (
+        df.attrs.get("feature_version") == KLINE_FEATURE_VERSION
+        and df.attrs.get("feature_config_hash") == indicator_feature_config_hash(config)
+        and all(column in df.columns for column in ("ema_fast", "ema_slow", "macd_dif", "macd_dea", "macd_hist"))
+    ):
+        return df
     ema_fast = df["close"].ewm(span=config.macd_fast, adjust=False).mean()
     ema_slow = df["close"].ewm(span=config.macd_slow, adjust=False).mean()
+    df["ema_fast"] = ema_fast
+    df["ema_slow"] = ema_slow
     df["macd_dif"] = ema_fast - ema_slow
     df["macd_dea"] = df["macd_dif"].ewm(span=config.macd_signal, adjust=False).mean()
     df["macd_hist"] = 2 * (df["macd_dif"] - df["macd_dea"])
@@ -596,6 +639,59 @@ def calculate_combined_trend_score(
     if score_context is not None and cache_key is not None:
         score_context.score_cache[cache_key] = result
     return result
+
+
+def calculate_combined_trend_score_series(
+    hourly_df: pd.DataFrame,
+    daily_df: pd.DataFrame,
+    signal_times: list[Any],
+) -> list[dict[str, Any]]:
+    context = TrendScoreContext.prepare(hourly_df, daily_df)
+    hourly_times = pd.DatetimeIndex(pd.to_datetime(context.hourly_df["datetime"]))
+    daily_times = pd.DatetimeIndex(pd.to_datetime(context.daily_df["datetime"]))
+    score_cache: dict[tuple[str, int, bool], int] = {}
+
+    def score_at(
+        score_df: pd.DataFrame,
+        score_times: pd.DatetimeIndex,
+        signal_time: pd.Timestamp,
+        name: str,
+        bullish: bool,
+    ) -> int:
+        index = int(score_times.searchsorted(signal_time, side="right")) - 1
+        if index < 0:
+            return 0
+        key = (name, index, bullish)
+        if key not in score_cache:
+            score_cache[key] = calculate_ma_trend_score(score_df, index, bullish=bullish)[0]
+        return score_cache[key]
+
+    result: list[dict[str, Any]] = []
+    for raw_time in signal_times:
+        signal_time = pd.Timestamp(raw_time)
+        result.append({
+            "time": signal_time.isoformat(),
+            "bullish": score_at(context.hourly_df, hourly_times, signal_time, "hourly", True)
+            + score_at(context.daily_df, daily_times, signal_time, "daily", True),
+            "bearish": score_at(context.hourly_df, hourly_times, signal_time, "hourly", False)
+            + score_at(context.daily_df, daily_times, signal_time, "daily", False),
+        })
+    return result
+
+
+def cached_trend_score_series(frame: pd.DataFrame) -> list[dict[str, Any]] | None:
+    if (
+        frame.attrs.get("feature_version") != KLINE_FEATURE_VERSION
+        or "trend_bullish" not in frame.columns
+        or "trend_bearish" not in frame.columns
+        or frame[["trend_bullish", "trend_bearish"]].isna().any().any()
+    ):
+        return None
+    return [{
+        "time": pd.Timestamp(item["datetime"]).isoformat(),
+        "bullish": int(item["trend_bullish"]),
+        "bearish": int(item["trend_bearish"]),
+    } for item in frame[["datetime", "trend_bullish", "trend_bearish"]].to_dict("records")]
 
 
 def trend_label_from_score(score: int, bullish: bool) -> str:

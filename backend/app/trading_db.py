@@ -424,6 +424,10 @@ kline_datasets = Table(
     Column("status", String(24), nullable=False, server_default="IDLE"),
     Column("row_count", Integer, nullable=False, server_default="0"),
     Column("revision", Integer, nullable=False, server_default="0"),
+    Column("feature_version", String(64), nullable=True),
+    Column("feature_config_hash", String(64), nullable=True),
+    Column("feature_row_count", Integer, nullable=False, server_default="0"),
+    Column("features_updated_at", DateTime, nullable=True),
     Column("start_time", DateTime, nullable=True),
     Column("end_time", DateTime, nullable=True),
     Column("last_synced_at", DateTime, nullable=True),
@@ -470,6 +474,23 @@ kline_bars = Table(
     Column("volume", Numeric(28, 8), nullable=False),
     Column("updated_at", DateTime, nullable=False, server_default=func.now(), onupdate=func.now()),
     Index("idx_kline_bars_dataset_time", "dataset_id", "bar_time"),
+)
+
+kline_bar_features = Table(
+    "kline_bar_features",
+    metadata,
+    Column("dataset_id", String(36), ForeignKey("kline_datasets.id", ondelete="CASCADE"), primary_key=True),
+    Column("bar_time", DateTime, primary_key=True),
+    Column("ma_json", Text, nullable=False),
+    Column("ema_fast", Numeric(24, 12), nullable=True),
+    Column("ema_slow", Numeric(24, 12), nullable=True),
+    Column("macd_dif", Numeric(24, 12), nullable=True),
+    Column("macd_dea", Numeric(24, 12), nullable=True),
+    Column("macd_hist", Numeric(24, 12), nullable=True),
+    Column("trend_bullish", Integer, nullable=True),
+    Column("trend_bearish", Integer, nullable=True),
+    Column("updated_at", DateTime, nullable=False, server_default=func.now(), onupdate=func.now()),
+    Index("idx_kline_bar_features_dataset_time", "dataset_id", "bar_time"),
 )
 
 kline_sync_jobs = Table(

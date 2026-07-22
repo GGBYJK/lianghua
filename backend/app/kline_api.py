@@ -9,7 +9,7 @@ from .analysis_cache_store import analysis_cache_stats, clear_analysis_cache
 from .kline_service import current_market_provider
 from .kline_store import (
     KlineStoreError,
-    create_kline_dataset,
+    create_kline_datasets,
     delete_kline_dataset,
     enqueue_all_kline_syncs,
     enqueue_kline_sync,
@@ -37,12 +37,12 @@ def datasets(_: dict[str, Any] = Depends(require_permission("market_data.manage"
 def create_dataset(
     payload: KlineDatasetCreateRequest,
     user: dict[str, Any] = Depends(require_permission("market_data.manage")),
-) -> dict[str, Any]:
+) -> list[dict[str, Any]]:
     try:
-        return create_kline_dataset(
+        return create_kline_datasets(
             int(user["id"]),
             payload.symbol,
-            payload.timeframe,
+            payload.timeframes,
             current_market_provider(),
             payload.target_count,
             payload.auto_update,
