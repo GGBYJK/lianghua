@@ -44,6 +44,18 @@ def analysis_prewarm_counts() -> list[int]:
     return sorted(values)
 
 
+def backtest_analysis_prewarm_counts() -> list[int]:
+    values: set[int] = set()
+    for raw in os.getenv("KLINE_BACKTEST_PREWARM_COUNTS", "8000").split(","):
+        try:
+            value = int(raw.strip())
+        except ValueError:
+            continue
+        if value > 0:
+            values.add(value)
+    return sorted(values)
+
+
 def current_market_provider() -> str:
     return str(get_market_settings()["provider"])
 
@@ -142,6 +154,24 @@ async def process_next_kline_sync_job(worker_id: str) -> bool:
             except Exception:
                 logger.exception(
                     "market analysis prewarm failed: symbol=%s timeframe=%s count=%s",
+                    dataset["symbol"], dataset["timeframe"], count,
+                )
+        from .backtest_service import prewarm_backtest_analysis
+
+        for count in backtest_analysis_prewarm_counts():
+            if count > int(dataset["target_count"]):
+                continue
+            try:
+                cache_hit = await prewarm_backtest_analysis(
+                    str(dataset["symbol"]), str(dataset["timeframe"]), count,
+                )
+                logger.info(
+                    "backtest analysis prewarmed: symbol=%s timeframe=%s count=%s cache_hit=%s",
+                    dataset["symbol"], dataset["timeframe"], count, cache_hit,
+                )
+            except Exception:
+                logger.exception(
+                    "backtest analysis prewarm failed: symbol=%s timeframe=%s count=%s",
                     dataset["symbol"], dataset["timeframe"], count,
                 )
     except Exception as exc:

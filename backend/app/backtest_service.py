@@ -4,7 +4,8 @@ import asyncio
 import json
 import logging
 import os
-from dataclasses import replace
+import time
+from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 from io import BytesIO
@@ -29,7 +30,9 @@ from .backtest_store import (
     update_backtest_progress,
 )
 from .config import load_head_shoulder_config
+from .analysis_cache_store import load_analysis_cache, save_analysis_cache
 from .kline_service import load_kline_for_backtest
+from .scan_analysis import build_analysis_cache_context
 from .strategy import add_ma_columns, add_macd_columns, find_pivots, prepare_chart_payload, scan_head_shoulders, signal_direction
 from .market_client import contract_to_variety
 from .trading_service import DEFAULT_SLIPPAGE_TICKS, _fee, _fill_price, _round_price, decimal_value
@@ -46,6 +49,33 @@ NECKLINE_SCALE_OUT_TRAIL_TRIGGER_R = Decimal("1.5")
 NECKLINE_SCALE_OUT_FINAL_TARGET_R = Decimal("2.5")
 NECKLINE_SCALE_OUT_TRAIL_QTR = Decimal("0.25")
 NECKLINE_SCALE_OUT_STALE_BARS = 10
+BACKTEST_ANALYSIS_ALGORITHM_VERSION = "backtest-analysis-v1-20260722"
+BACKTEST_ANALYSIS_CACHE_BUCKET_SECONDS = max(
+    300, int(os.getenv("BACKTEST_ANALYSIS_CACHE_BUCKET_SECONDS", "86400")),
+)
+
+
+@dataclass
+class BacktestFrameView:
+    timestamps: pd.Series
+    highs: Any
+    lows: Any
+    closes: Any
+    index_by_time: dict[pd.Timestamp, int]
+
+    @classmethod
+    def from_frame(cls, frame: pd.DataFrame) -> "BacktestFrameView":
+        timestamps = pd.to_datetime(frame["datetime"]).reset_index(drop=True)
+        index_by_time: dict[pd.Timestamp, int] = {}
+        for index, value in enumerate(timestamps):
+            index_by_time.setdefault(pd.Timestamp(value), index)
+        return cls(
+            timestamps=timestamps,
+            highs=frame["high"].to_numpy(dtype=float, copy=False),
+            lows=frame["low"].to_numpy(dtype=float, copy=False),
+            closes=frame["close"].to_numpy(dtype=float, copy=False),
+            index_by_time=index_by_time,
+        )
 
 
 async def _heartbeat_backtest_run(
@@ -91,17 +121,58 @@ def _analyze_market(
     other_min_pattern_score: int,
     other_max_trend_score: int,
 ) -> tuple[pd.DataFrame, list[dict[str, Any]], dict[str, Any]]:
+    normalized, signals, chart = _build_backtest_analysis(
+        frame,
+        hourly,
+        daily,
+        symbol,
+        timeframe,
+        other_min_pattern_score,
+        other_max_trend_score,
+    )
+    selected = _filter_backtest_signals(
+        signals,
+        entry_conditions,
+        other_entry_conditions,
+        min_pattern_score,
+        min_trend_score,
+        other_min_pattern_score,
+        other_max_trend_score,
+    )
+    return normalized, selected, chart
+
+
+def _backtest_analysis_config(
+    symbol: str,
+    timeframe: str,
+    other_min_pattern_score: int,
+    other_max_trend_score: int,
+):
+    return replace(
+        _backtest_shape_config(symbol, timeframe),
+        max_signal_age_bars=0,
+        pullback_min_pattern_score=other_min_pattern_score,
+        pullback_max_trend_score=other_max_trend_score,
+    )
+
+
+def _build_backtest_analysis(
+    frame: pd.DataFrame,
+    hourly: pd.DataFrame,
+    daily: pd.DataFrame,
+    symbol: str,
+    timeframe: str,
+    other_min_pattern_score: int,
+    other_max_trend_score: int,
+) -> tuple[pd.DataFrame, list[dict[str, Any]], dict[str, Any]]:
     normalized = frame.copy().reset_index(drop=True)
     normalized["datetime"] = pd.to_datetime(normalized["datetime"])
     hourly = hourly.copy().reset_index(drop=True)
     daily = daily.copy().reset_index(drop=True)
     hourly["datetime"] = pd.to_datetime(hourly["datetime"])
     daily["datetime"] = pd.to_datetime(daily["datetime"])
-    config = replace(
-        _backtest_shape_config(symbol, timeframe),
-        max_signal_age_bars=0,
-        pullback_min_pattern_score=other_min_pattern_score,
-        pullback_max_trend_score=other_max_trend_score,
+    config = _backtest_analysis_config(
+        symbol, timeframe, other_min_pattern_score, other_max_trend_score,
     )
     signals = scan_head_shoulders(
         normalized,
@@ -112,8 +183,78 @@ def _analyze_market(
         daily_df=daily,
         include_right_neck_trigger=True,
     )
+    enriched = add_macd_columns(add_ma_columns(normalized, config), config)
+    pivots = find_pivots(enriched, left=config.pivot_left, right=config.pivot_right)
+    chart = prepare_chart_payload(enriched, pivots, signals, config, timeframe=timeframe)
+    return normalized, [signal.to_dict() for signal in signals], chart
+
+
+async def _analyze_market_cached(
+    frame: pd.DataFrame,
+    hourly: pd.DataFrame,
+    daily: pd.DataFrame,
+    symbol: str,
+    timeframe: str,
+    entry_conditions: list[str],
+    other_entry_conditions: list[str],
+    min_pattern_score: int,
+    min_trend_score: int,
+    other_min_pattern_score: int,
+    other_max_trend_score: int,
+) -> tuple[pd.DataFrame, list[dict[str, Any]], dict[str, Any], bool, int]:
+    config = _backtest_analysis_config(
+        symbol, timeframe, other_min_pattern_score, other_max_trend_score,
+    )
+    support_limit = max(240, min(len(frame), 600))
+    context = await build_analysis_cache_context(
+        symbol=symbol,
+        timeframe=timeframe,
+        limit=len(frame),
+        support_limit=support_limit,
+        config={**config.to_dict(), "include_right_neck_trigger": True},
+        algorithm_version=BACKTEST_ANALYSIS_ALGORITHM_VERSION,
+        bucket_seconds=BACKTEST_ANALYSIS_CACHE_BUCKET_SECONDS,
+    )
+    cached = await asyncio.to_thread(load_analysis_cache, context["cache_key"])
+    if cached is None:
+        started = time.perf_counter()
+        normalized, signals, chart = await asyncio.to_thread(
+            _build_backtest_analysis,
+            frame,
+            hourly,
+            daily,
+            symbol,
+            timeframe,
+            other_min_pattern_score,
+            other_max_trend_score,
+        )
+        analysis_ms = max(1, int((time.perf_counter() - started) * 1000))
+        await asyncio.to_thread(
+            save_analysis_cache,
+            cache_key=context["cache_key"],
+            symbol=symbol,
+            timeframe=timeframe,
+            requested_count=len(frame),
+            provider=context["provider"],
+            config_hash=context["config_hash"],
+            algorithm_version=context["algorithm_version"],
+            main_signature=context["main"],
+            hourly_signature=context["hourly"],
+            daily_signature=context["daily"],
+            calculation_ms=analysis_ms,
+            payload={"signals": signals, "chart": chart},
+        )
+        cache_hit = False
+    else:
+        normalized = frame.copy().reset_index(drop=True)
+        normalized["datetime"] = pd.to_datetime(normalized["datetime"])
+        signals = list(cached["signals"])
+        chart = dict(cached["chart"])
+        analysis_ms = 0
+        cache_hit = True
+
     selected = _filter_backtest_signals(
-        [signal.to_dict() for signal in signals],
+        signals,
         entry_conditions,
         other_entry_conditions,
         min_pattern_score,
@@ -121,10 +262,36 @@ def _analyze_market(
         other_min_pattern_score,
         other_max_trend_score,
     )
-    enriched = add_macd_columns(add_ma_columns(normalized, config), config)
-    pivots = find_pivots(enriched, left=config.pivot_left, right=config.pivot_right)
-    chart = prepare_chart_payload(enriched, pivots, signals, config, timeframe=timeframe)
-    return normalized, selected, chart
+    return normalized, selected, chart, cache_hit, analysis_ms
+
+
+async def prewarm_backtest_analysis(symbol: str, timeframe: str, count: int) -> bool:
+    support_limit = max(240, min(count, 600))
+    frame, hourly, daily = await asyncio.gather(
+        load_kline_for_backtest(symbol, timeframe, count),
+        load_kline_for_backtest(symbol, "1h", support_limit),
+        load_kline_for_backtest(symbol, "1d", support_limit),
+    )
+    result = await _analyze_market_cached(
+        frame,
+        hourly,
+        daily,
+        symbol,
+        timeframe,
+        [
+            "head_shoulders_top:right_shoulder_confirmed",
+            "inverse_head_shoulders:right_shoulder_confirmed",
+        ],
+        [
+            "head_shoulders_top:head_shoulders_top_pullback",
+            "inverse_head_shoulders:inverse_head_shoulders_pullback",
+        ],
+        75,
+        65,
+        80,
+        35,
+    )
+    return result[3]
 
 
 def _score(signal: dict[str, Any], field: str) -> int:
@@ -357,18 +524,19 @@ def _simulate_neckline_scale_out_order(
     entry_condition: str,
     initial_capital: Decimal,
     no_overnight: bool,
+    frame_view: BacktestFrameView | None = None,
 ) -> dict[str, Any]:
     direction = signal_direction(str(signal["pattern"]), str(signal["alert_type"]))
     base = _order_base(run_id, series_id, signal, rule, entry_condition, direction, contract)
     signal_time = _signal_time(signal)
     if not signal_time:
         return base
-    timestamps = pd.to_datetime(frame["datetime"])
-    matches = timestamps[timestamps == pd.Timestamp(signal_time)].index
-    if len(matches) == 0:
+    view = frame_view or BacktestFrameView.from_frame(frame)
+    timestamps = view.timestamps
+    entry_index = view.index_by_time.get(pd.Timestamp(signal_time))
+    if entry_index is None:
         return base
-    entry_index = int(matches[0])
-    entry_quote = Decimal(str(frame.iloc[entry_index]["close"]))
+    entry_quote = Decimal(str(view.closes[entry_index]))
     tick = decimal_value(contract["price_tick"]) if contract else Decimal("0")
     open_side = "BUY" if direction == "LONG" else "SELL"
     close_side = "SELL" if direction == "LONG" else "BUY"
@@ -467,10 +635,9 @@ def _simulate_neckline_scale_out_order(
     exit_reason: str | None = None
 
     for index in range(entry_index + 1, end_index + 1):
-        row = frame.iloc[index]
-        low = Decimal(str(row["low"]))
-        high = Decimal(str(row["high"]))
-        close = Decimal(str(row["close"]))
+        low = Decimal(str(view.lows[index]))
+        high = Decimal(str(view.highs[index]))
+        close = Decimal(str(view.closes[index]))
         if direction == "LONG":
             max_favorable = max(max_favorable, high - entry_fill)
             max_adverse = max(max_adverse, entry_fill - low)
@@ -544,7 +711,7 @@ def _simulate_neckline_scale_out_order(
             })
             return base
         exit_index = end_index
-        exit_quote = Decimal(str(frame.iloc[exit_index]["close"]))
+        exit_quote = Decimal(str(view.closes[exit_index]))
         exit_reason = "SESSION_EXIT" if forced_by_session else "TIME_EXIT"
 
     assert exit_quote is not None and exit_reason is not None
@@ -613,6 +780,7 @@ def _simulate_order(
     position_sizing_mode: str = "PERCENT",
     single_symbol_lots: int | None = None,
     no_overnight: bool = False,
+    frame_view: BacktestFrameView | None = None,
 ) -> dict[str, Any]:
     direction = signal_direction(str(signal["pattern"]), str(signal["alert_type"]))
     if rule["type"] == "NECKLINE_SCALE_OUT":
@@ -627,19 +795,20 @@ def _simulate_order(
             entry_condition=entry_condition,
             initial_capital=initial_capital,
             no_overnight=no_overnight,
+            frame_view=frame_view,
         )
     base = _order_base(run_id, series_id, signal, rule, entry_condition, direction, contract)
     signal_time = _signal_time(signal)
     if not signal_time:
         return base
-    timestamps = pd.to_datetime(frame["datetime"])
-    matches = timestamps[timestamps == pd.Timestamp(signal_time)].index
-    if len(matches) == 0:
+    view = frame_view or BacktestFrameView.from_frame(frame)
+    timestamps = view.timestamps
+    entry_index = view.index_by_time.get(pd.Timestamp(signal_time))
+    if entry_index is None:
         return base
-    entry_index = int(matches[0])
     base["entry_time"] = timestamps.iloc[entry_index].to_pydatetime()
     # Signals are only actionable after this bar has closed.
-    entry = float(frame.iloc[entry_index]["close"])
+    entry = float(view.closes[entry_index])
     stop = _stop_price(signal, direction, stop_loss_qtr_multiplier)
     if stop is None:
         return base
@@ -697,9 +866,8 @@ def _simulate_order(
     max_favorable = Decimal("0")
     max_adverse = Decimal("0")
     for index in range(entry_index + 1, end_index + 1):
-        row = frame.iloc[index]
-        low = Decimal(str(row["low"]))
-        high = Decimal(str(row["high"]))
+        low = Decimal(str(view.lows[index]))
+        high = Decimal(str(view.highs[index]))
         if direction == "LONG":
             max_favorable = max(max_favorable, high - entry_fill)
             max_adverse = max(max_adverse, entry_fill - low)
@@ -711,10 +879,10 @@ def _simulate_order(
             stop_hit = high >= stop_decimal
             target_hit = low <= target_decimal
         if stop_hit:
-            exit_reason, exit_index, exit_quote = "STOP_LOSS", index, Decimal(str(row["close"]))
+            exit_reason, exit_index, exit_quote = "STOP_LOSS", index, Decimal(str(view.closes[index]))
             break
         if target_hit:
-            exit_reason, exit_index, exit_quote = "TAKE_PROFIT", index, Decimal(str(row["close"]))
+            exit_reason, exit_index, exit_quote = "TAKE_PROFIT", index, Decimal(str(view.closes[index]))
             break
 
     if exit_index is None:
@@ -730,7 +898,7 @@ def _simulate_order(
             })
             return base
         exit_reason, exit_index = ("SESSION_EXIT" if forced_by_session else "TIME_EXIT"), end_index
-        exit_quote = Decimal(str(frame.iloc[exit_index]["close"]))
+        exit_quote = Decimal(str(view.closes[exit_index]))
 
     assert exit_quote is not None and exit_index is not None
     if contract:
@@ -814,6 +982,7 @@ def _simulate_portfolio_orders(
         ),
     )
     orders: list[dict[str, Any]] = []
+    frame_views: dict[int, BacktestFrameView] = {}
     for rule in rules:
         active_positions: dict[str, dict[str, Any]] = {}
         reserved_margin = Decimal("0")
@@ -849,10 +1018,16 @@ def _simulate_portfolio_orders(
             if previous is not None and previous["exit_reason"] == "STOP_LOSS" and not _has_higher_score(signal, previous["signal"]):
                 continue
 
+            frame = event["frame"]
+            frame_key = id(frame)
+            frame_view = frame_views.get(frame_key)
+            if frame_view is None:
+                frame_view = BacktestFrameView.from_frame(frame)
+                frame_views[frame_key] = frame_view
             order = _simulate_order(
                 run_id=run_id,
                 series_id=event["series_id"],
-                frame=event["frame"],
+                frame=frame,
                 signal=signal,
                 rule=rule,
                 max_holding_bars=max_holding_bars,
@@ -864,6 +1039,7 @@ def _simulate_portfolio_orders(
                 position_sizing_mode=position_sizing_mode,
                 single_symbol_lots=single_symbol_lots,
                 no_overnight=no_overnight,
+                frame_view=frame_view,
             )
             if order["status"] == "INVALID":
                 continue
@@ -1025,13 +1201,15 @@ async def process_next_backtest_run(worker_id: str) -> bool:
                     return True
                 try:
                     support_limit = max(240, min(int(request["kline_count"]), 600))
+                    combination_started = time.perf_counter()
+                    data_started = combination_started
                     frame, hourly, daily = await asyncio.gather(
                         load_kline_for_backtest(symbol, timeframe, int(request["kline_count"])),
                         load_kline_for_backtest(symbol, "1h", support_limit),
                         load_kline_for_backtest(symbol, "1d", support_limit),
                     )
-                    frame, selected, chart = await asyncio.to_thread(
-                        _analyze_market,
+                    data_ms = int((time.perf_counter() - data_started) * 1000)
+                    frame, selected, chart, analysis_cache_hit, analysis_ms = await _analyze_market_cached(
                         frame,
                         hourly,
                         daily,
@@ -1044,6 +1222,7 @@ async def process_next_backtest_run(worker_id: str) -> bool:
                         int(request["other_min_pattern_score"]),
                         int(request["other_max_trend_score"]),
                     )
+                    persistence_started = time.perf_counter()
                     series_id = save_backtest_series(run_id, symbol, timeframe, {
                         "symbol": symbol, "timeframe": timeframe, "chart": chart, "signals": selected,
                     })
@@ -1055,6 +1234,20 @@ async def process_next_backtest_run(worker_id: str) -> bool:
                         "contract": contract,
                     } for signal in selected)
                     signal_count += len(selected)
+                    logger.info(
+                        "backtest combination prepared: run=%s symbol=%s timeframe=%s rows=%s "
+                        "data_ms=%s analysis_ms=%s analysis_cache_hit=%s persist_ms=%s total_ms=%s signals=%s",
+                        run_id,
+                        symbol,
+                        timeframe,
+                        len(frame),
+                        data_ms,
+                        analysis_ms,
+                        analysis_cache_hit,
+                        int((time.perf_counter() - persistence_started) * 1000),
+                        int((time.perf_counter() - combination_started) * 1000),
+                        len(selected),
+                    )
                 except Exception as exc:
                     errors += 1
                     logger.exception("backtest combination failed: run=%s symbol=%s timeframe=%s", run_id, symbol, timeframe)
@@ -1083,6 +1276,7 @@ async def process_next_backtest_run(worker_id: str) -> bool:
             ]
             if not stream_events:
                 continue
+            simulation_started = time.perf_counter()
             portfolio_orders = await asyncio.to_thread(
                 _simulate_portfolio_orders,
                 run_id=run_id,
@@ -1108,6 +1302,15 @@ async def process_next_backtest_run(worker_id: str) -> bool:
                     else None
                 ),
                 no_overnight=bool(request.get("no_overnight", False)),
+            )
+            logger.info(
+                "backtest order simulation completed: run=%s entry_condition=%s events=%s "
+                "orders=%s elapsed_ms=%s",
+                run_id,
+                entry_condition,
+                len(stream_events),
+                len(portfolio_orders),
+                int((time.perf_counter() - simulation_started) * 1000),
             )
             save_backtest_orders(portfolio_orders)
             all_orders.extend(portfolio_orders)

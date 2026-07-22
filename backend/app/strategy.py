@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from bisect import bisect_left, bisect_right
 import math
 from typing import Any, Iterator
 
@@ -482,6 +483,7 @@ def _prepare_ma_score_df(df: pd.DataFrame) -> pd.DataFrame:
 class TrendScoreContext:
     hourly_df: pd.DataFrame | None
     daily_df: pd.DataFrame | None
+    score_cache: dict[tuple[Any, ...], tuple[int, list[str]]] = field(default_factory=dict)
 
     @classmethod
     def prepare(
@@ -568,6 +570,16 @@ def calculate_combined_trend_score(
     head_time: pd.Timestamp | None = None,
     score_context: TrendScoreContext | None = None,
 ) -> tuple[int, list[str]]:
+    cache_key: tuple[Any, ...] | None = None
+    if score_context is not None:
+        cache_key = (
+            bullish,
+            signal_time.isoformat() if signal_time is not None else None,
+            head_time.isoformat() if head_time is not None and config is not None and config.enable_key_zone_trend_score else None,
+        )
+        cached_score = score_context.score_cache.get(cache_key)
+        if cached_score is not None:
+            return cached_score
     score_hourly_df = score_context.hourly_df if score_context is not None else hourly_df
     score_daily_df = score_context.daily_df if score_context is not None else daily_df
     hourly_override = _hourly_key_zone_trend_override(score_hourly_df, bullish, head_time, config)
@@ -580,7 +592,10 @@ def calculate_combined_trend_score(
     daily_score, daily_reasons = _score_named_timeframe(
         score_daily_df, "Daily", bullish, signal_time, prepared=score_context is not None
     )
-    return hourly_score + daily_score, [*hourly_reasons, *daily_reasons]
+    result = hourly_score + daily_score, [*hourly_reasons, *daily_reasons]
+    if score_context is not None and cache_key is not None:
+        score_context.score_cache[cache_key] = result
+    return result
 
 
 def trend_label_from_score(score: int, bullish: bool) -> str:
@@ -1458,6 +1473,7 @@ def iter_pattern_candidates_with_right_shoulder_pivots(
         return False
 
     right_shoulder_candidates = [point for point in right_shoulder_pivots if point.kind == kinds[4]]
+    right_shoulder_bar_indices = [point.index for point in right_shoulder_candidates]
 
     def passes_cheap_candidate_filters(
         left_shoulder: PivotPoint,
@@ -1560,15 +1576,27 @@ def iter_pattern_candidates_with_right_shoulder_pivots(
                         if kinds[0] == "low" and head.price >= right_neck.price:
                             continue
 
-                    for right_shoulder in right_shoulder_candidates:
-                        if right_shoulder.index <= right_neck.index:
-                            continue
-                        if min_right_shoulder_index is not None and right_shoulder.index < min_right_shoulder_index:
-                            continue
-                        if config is not None and config.enable_right_leg_ratio_filter:
-                            left_leg_bars = left_neck.index - left_shoulder.index
-                            if left_leg_bars > 0 and right_shoulder.index - right_neck.index > left_leg_bars * config.max_right_leg_to_left_leg_ratio:
-                                break
+                    minimum_bar_index = right_neck.index + 2
+                    maximum_bar_index: int | None = None
+                    if min_right_shoulder_index is not None:
+                        minimum_bar_index = max(minimum_bar_index, min_right_shoulder_index)
+                    if config is not None and config.enable_right_leg_ratio_filter:
+                        left_leg_bars = left_neck.index - left_shoulder.index
+                        minimum_bar_index = max(
+                            minimum_bar_index,
+                            right_neck.index + math.ceil(left_leg_bars * config.min_right_leg_to_left_leg_ratio),
+                        )
+                        maximum_bar_index = right_neck.index + math.floor(
+                            left_leg_bars * config.max_right_leg_to_left_leg_ratio
+                        )
+                    start_position = bisect_left(right_shoulder_bar_indices, minimum_bar_index)
+                    end_position = (
+                        bisect_right(right_shoulder_bar_indices, maximum_bar_index)
+                        if maximum_bar_index is not None
+                        else len(right_shoulder_candidates)
+                    )
+                    for candidate_position in range(start_position, end_position):
+                        right_shoulder = right_shoulder_candidates[candidate_position]
                         if right_neck.kind == right_shoulder.kind:
                             continue
                         if not passes_cheap_candidate_filters(left_shoulder, left_neck, head, right_neck, right_shoulder):

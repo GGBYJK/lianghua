@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import pandas as pd
 import pytest
 from datetime import datetime
@@ -10,6 +11,7 @@ from app.backtest_service import _backtest_shape_config, _filter_backtest_signal
 from app.backtest_store import _run_dict, default_backtest_name
 from app.strategy import HeadShoulderTopConfig, should_emit_pullback_alert
 from app.trading_store import with_utc_timestamps
+from app import backtest_service
 
 
 def frame(rows: list[tuple[float, float, float, float]]) -> pd.DataFrame:
@@ -29,6 +31,56 @@ def test_backtest_uses_its_own_minimum_shape_price_gaps() -> None:
     assert config.min_head_to_neck_height == 10
     assert config.min_shoulder_to_neck_height == 4
     assert config.apply_ma60_pattern_penalty is True
+
+
+def test_backtest_analysis_is_reused_from_versioned_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    cached_payload: dict | None = None
+    build_calls = 0
+    context = {
+        "cache_key": "c" * 64,
+        "provider": "tqsdk",
+        "config_hash": "d" * 64,
+        "algorithm_version": "backtest-test-v1",
+        "main": "main-v1",
+        "hourly": "hour-v1",
+        "daily": "day-v1",
+    }
+
+    async def fake_context(**_kwargs):
+        return context
+
+    def fake_load(_key: str):
+        return cached_payload
+
+    def fake_save(**values):
+        nonlocal cached_payload
+        cached_payload = values["payload"]
+
+    def fake_build(main, *_args):
+        nonlocal build_calls
+        build_calls += 1
+        normalized = main.copy().reset_index(drop=True)
+        normalized["datetime"] = pd.to_datetime(normalized["datetime"])
+        return normalized, [long_signal()], {"candles": []}
+
+    monkeypatch.setattr(backtest_service, "build_analysis_cache_context", fake_context)
+    monkeypatch.setattr(backtest_service, "load_analysis_cache", fake_load)
+    monkeypatch.setattr(backtest_service, "save_analysis_cache", fake_save)
+    monkeypatch.setattr(backtest_service, "_build_backtest_analysis", fake_build)
+    sample = frame([(99, 101, 98, 100), (100, 102, 99, 101)])
+    args = (
+        sample, sample, sample, "CZCE.CF609", "3m",
+        ["inverse_head_shoulders:right_shoulder_confirmed"], [], 75, 65, 80, 35,
+    )
+
+    first = asyncio.run(backtest_service._analyze_market_cached(*args))
+    second = asyncio.run(backtest_service._analyze_market_cached(*args))
+
+    assert first[3] is False
+    assert second[3] is True
+    assert second[4] == 0
+    assert build_calls == 1
+    assert len(second[1]) == 1
 
 
 def long_signal() -> dict[str, object]:

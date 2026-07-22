@@ -157,11 +157,31 @@ async def _cache_context(
     limit: int,
     overrides: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    provider = current_market_provider()
     config = load_head_shoulder_config(symbol=symbol, timeframe=timeframe, overrides=overrides)
-    config_hash = _canonical_hash(config.to_dict())
     support_limit = max(80, min(limit, 240))
-    bucket = int(datetime.now(timezone.utc).timestamp()) // ANALYSIS_CACHE_BUCKET_SECONDS
+    return await build_analysis_cache_context(
+        symbol=symbol,
+        timeframe=timeframe,
+        limit=limit,
+        support_limit=support_limit,
+        config=config.to_dict(),
+        algorithm_version=ANALYSIS_ALGORITHM_VERSION,
+    )
+
+
+async def build_analysis_cache_context(
+    *,
+    symbol: str,
+    timeframe: str,
+    limit: int,
+    support_limit: int,
+    config: dict[str, Any],
+    algorithm_version: str,
+    bucket_seconds: int = ANALYSIS_CACHE_BUCKET_SECONDS,
+) -> dict[str, Any]:
+    provider = current_market_provider()
+    config_hash = _canonical_hash(config)
+    bucket = int(datetime.now(timezone.utc).timestamp()) // max(30, bucket_seconds)
     main, hourly, daily = await asyncio.gather(
         asyncio.to_thread(_dataset_signature, symbol, timeframe, limit, provider, bucket),
         asyncio.to_thread(_dataset_signature, symbol, "1h", support_limit, provider, bucket),
@@ -173,7 +193,7 @@ async def _cache_context(
         "limit": limit,
         "provider": provider,
         "config_hash": config_hash,
-        "algorithm_version": ANALYSIS_ALGORITHM_VERSION,
+        "algorithm_version": algorithm_version,
         "main": main[0],
         "hourly": hourly[0],
         "daily": daily[0],
