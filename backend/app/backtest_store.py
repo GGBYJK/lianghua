@@ -40,6 +40,12 @@ BACKTEST_STALE_SECONDS = int(os.getenv("BACKTEST_STALE_SECONDS", "120"))
 BACKTEST_MAX_ATTEMPTS = int(os.getenv("BACKTEST_MAX_ATTEMPTS", "3"))
 BACKTEST_DB_RETRY_ATTEMPTS = int(os.getenv("BACKTEST_DB_RETRY_ATTEMPTS", "3"))
 BACKTEST_DB_RETRY_DELAY = float(os.getenv("BACKTEST_DB_RETRY_DELAY", "0.25"))
+BACKTEST_PENDING_STATUS = "PENDING_V2"
+BACKTEST_RUNNING_STATUS = "RUNNING_V2"
+BACKTEST_PUBLIC_STATUS = {
+    BACKTEST_PENDING_STATUS: "PENDING",
+    BACKTEST_RUNNING_STATUS: "RUNNING",
+}
 T = TypeVar("T")
 
 
@@ -80,6 +86,8 @@ def default_backtest_name(value: datetime | None = None) -> str:
 
 def _run_dict(row: Any) -> dict[str, Any]:
     item = dict(row)
+    if "status" in item:
+        item["status"] = BACKTEST_PUBLIC_STATUS.get(item["status"], item["status"])
     item["request"] = json.loads(item.pop("request_json"))
     for field in ("created_at", "started_at", "completed_at", "updated_at"):
         item[field] = _utc_iso(item.get(field))
@@ -103,7 +111,7 @@ def create_backtest_run(user_id: int, payload: dict[str, Any]) -> dict[str, Any]
             id=run_id,
             user_id=user_id,
             name=name,
-            status="PENDING",
+            status=BACKTEST_PENDING_STATUS,
             progress=0,
             request_json=_dump(payload),
             total_combinations=total,
@@ -226,7 +234,7 @@ def claim_next_backtest_run(worker_id: str) -> dict[str, Any] | None:
     with get_engine().begin() as connection:
         row = connection.execute(
             select(backtest_runs)
-            .where(backtest_runs.c.status == "PENDING")
+            .where(backtest_runs.c.status == BACKTEST_PENDING_STATUS)
             .order_by(backtest_runs.c.created_at)
             .limit(1)
             .with_for_update(skip_locked=True)
@@ -235,12 +243,12 @@ def claim_next_backtest_run(worker_id: str) -> dict[str, Any] | None:
             return None
         now = utc_now()
         connection.execute(update(backtest_runs).where(backtest_runs.c.id == row["id"]).values(
-            status="RUNNING", started_at=now, updated_at=now, heartbeat_at=now,
+            status=BACKTEST_RUNNING_STATUS, started_at=now, updated_at=now, heartbeat_at=now,
             worker_id=worker_id, attempt_count=backtest_runs.c.attempt_count + 1,
             error_message=None, progress=1,
         ))
         claimed = dict(row)
-        claimed["status"] = "RUNNING"
+        claimed["status"] = BACKTEST_RUNNING_STATUS
         claimed["worker_id"] = worker_id
         claimed["attempt_count"] = int(claimed.get("attempt_count") or 0) + 1
         claimed["request"] = json.loads(claimed.pop("request_json"))
@@ -253,7 +261,7 @@ def touch_backtest_heartbeat(run_id: str, worker_id: str) -> bool:
         with get_engine().begin() as connection:
             result = connection.execute(update(backtest_runs).where(and_(
                 backtest_runs.c.id == run_id,
-                backtest_runs.c.status == "RUNNING",
+                backtest_runs.c.status == BACKTEST_RUNNING_STATUS,
                 backtest_runs.c.worker_id == worker_id,
             )).values(heartbeat_at=now, updated_at=now))
             return result.rowcount == 1
@@ -274,7 +282,10 @@ def update_backtest_progress(
                 select(backtest_runs.c.total_combinations).where(backtest_runs.c.id == run_id)
             ).scalar_one()
             progress = 99 if completed >= total else max(1, int(completed * 100 / max(total, 1)))
-            conditions = [backtest_runs.c.id == run_id, backtest_runs.c.status == "RUNNING"]
+            conditions = [
+                backtest_runs.c.id == run_id,
+                backtest_runs.c.status == BACKTEST_RUNNING_STATUS,
+            ]
             if worker_id is not None:
                 conditions.append(backtest_runs.c.worker_id == worker_id)
             result = connection.execute(update(backtest_runs).where(and_(*conditions)).values(
@@ -303,7 +314,10 @@ def finish_backtest_run(
         with get_engine().begin() as connection:
             conditions = [backtest_runs.c.id == run_id]
             if worker_id is not None:
-                conditions.extend((backtest_runs.c.status == "RUNNING", backtest_runs.c.worker_id == worker_id))
+                conditions.extend((
+                    backtest_runs.c.status == BACKTEST_RUNNING_STATUS,
+                    backtest_runs.c.worker_id == worker_id,
+                ))
             result = connection.execute(update(backtest_runs).where(and_(*conditions)).values(
                 status=status,
                 progress=100,
@@ -339,7 +353,10 @@ def recover_stale_backtest_runs(
         with get_engine().begin() as connection:
             rows = connection.execute(
                 select(backtest_runs)
-                .where(and_(backtest_runs.c.status == "RUNNING", _stale_run_condition(cutoff)))
+                .where(and_(
+                    backtest_runs.c.status == BACKTEST_RUNNING_STATUS,
+                    _stale_run_condition(cutoff),
+                ))
                 .with_for_update(skip_locked=True)
             ).mappings().all()
             for row in rows:
@@ -366,7 +383,11 @@ def recover_stale_backtest_runs(
                 connection.execute(delete(backtest_errors).where(backtest_errors.c.run_id == run_id))
                 connection.execute(delete(backtest_series).where(backtest_series.c.run_id == run_id))
                 connection.execute(update(backtest_runs).where(backtest_runs.c.id == run_id).values(
-                    status="PENDING", progress=0, completed_combinations=0, signal_count=0, order_count=0,
+                    status=BACKTEST_PENDING_STATUS,
+                    progress=0,
+                    completed_combinations=0,
+                    signal_count=0,
+                    order_count=0,
                     worker_id=None, heartbeat_at=None, started_at=None, completed_at=None,
                     error_message="Backtest worker stopped; task was automatically requeued.", updated_at=now,
                 ))
@@ -387,12 +408,19 @@ def request_backtest_cancel(
                 backtest_runs.c.id == run_id,
                 backtest_runs.c.user_id == user_id,
             )).with_for_update()).mappings().first()
-            if row is None or row["status"] not in {"PENDING", "QUEUED", "RUNNING"}:
+            active_statuses = {
+                "PENDING",
+                "QUEUED",
+                "RUNNING",
+                BACKTEST_PENDING_STATUS,
+                BACKTEST_RUNNING_STATUS,
+            }
+            if row is None or row["status"] not in active_statuses:
                 raise BacktestStoreError("回测任务不存在或已结束")
             now = utc_now()
             heartbeat = row["heartbeat_at"] or row["updated_at"]
             is_stale = heartbeat is None or heartbeat < now - timedelta(seconds=stale_seconds)
-            if row["status"] in {"PENDING", "QUEUED"} or is_stale:
+            if row["status"] in {"PENDING", "QUEUED", BACKTEST_PENDING_STATUS} or is_stale:
                 connection.execute(update(backtest_runs).where(backtest_runs.c.id == run_id).values(
                     status="CANCELLED",
                     cancel_requested=True,
@@ -704,7 +732,13 @@ def delete_backtest_run(user_id: int, run_id: str) -> None:
         result = connection.execute(delete(backtest_runs).where(and_(
             backtest_runs.c.id == run_id,
             backtest_runs.c.user_id == user_id,
-            ~backtest_runs.c.status.in_(["PENDING", "QUEUED", "RUNNING"]),
+            ~backtest_runs.c.status.in_([
+                "PENDING",
+                "QUEUED",
+                "RUNNING",
+                BACKTEST_PENDING_STATUS,
+                BACKTEST_RUNNING_STATUS,
+            ]),
         )))
         if result.rowcount == 0:
             raise BacktestStoreError("运行中的任务不能删除，或回测记录不存在")
