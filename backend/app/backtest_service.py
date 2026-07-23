@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ProcessPoolExecutor
 import json
 import logging
+import multiprocessing
 import os
+import threading
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -41,6 +44,8 @@ from .trading_store import get_contract_spec
 
 logger = logging.getLogger("app.backtest")
 BACKTEST_HEARTBEAT_SECONDS = float(os.getenv("BACKTEST_HEARTBEAT_SECONDS", "10"))
+BACKTEST_ANALYSIS_PROCESSES = max(1, int(os.getenv("BACKTEST_ANALYSIS_PROCESSES", "3")))
+BACKTEST_SYMBOL_CONCURRENCY = max(1, int(os.getenv("BACKTEST_SYMBOL_CONCURRENCY", "3")))
 NECKLINE_SCALE_OUT_SLIPPAGE_TICKS = Decimal("2")
 NECKLINE_SCALE_OUT_QUANTITY = 2
 NECKLINE_SCALE_OUT_STOP_QTR = 0.5
@@ -54,6 +59,8 @@ TREND_SCORE_CHART_TIMEFRAMES = {"1m", "3m", "5m"}
 BACKTEST_ANALYSIS_CACHE_BUCKET_SECONDS = max(
     300, int(os.getenv("BACKTEST_ANALYSIS_CACHE_BUCKET_SECONDS", "86400")),
 )
+_analysis_process_pool: ProcessPoolExecutor | None = None
+_analysis_process_pool_lock = threading.Lock()
 
 
 @dataclass
@@ -198,6 +205,63 @@ def _build_backtest_analysis(
     return normalized, [signal.to_dict() for signal in signals], chart
 
 
+@dataclass
+class BacktestCombinationPreparation:
+    symbol: str
+    timeframe: str
+    frame: pd.DataFrame | None = None
+    selected: list[dict[str, Any]] | None = None
+    chart: dict[str, Any] | None = None
+    data_ms: int = 0
+    analysis_ms: int = 0
+    analysis_cache_hit: bool = False
+    total_ms: int = 0
+    error: str | None = None
+
+
+def _get_analysis_process_pool() -> ProcessPoolExecutor:
+    global _analysis_process_pool
+    with _analysis_process_pool_lock:
+        if _analysis_process_pool is None:
+            _analysis_process_pool = ProcessPoolExecutor(
+                max_workers=BACKTEST_ANALYSIS_PROCESSES,
+                mp_context=multiprocessing.get_context("spawn"),
+            )
+        return _analysis_process_pool
+
+
+def shutdown_backtest_analysis_pool() -> None:
+    global _analysis_process_pool
+    with _analysis_process_pool_lock:
+        pool = _analysis_process_pool
+        _analysis_process_pool = None
+    if pool is not None:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
+async def _run_backtest_analysis_in_process(
+    frame: pd.DataFrame,
+    hourly: pd.DataFrame,
+    daily: pd.DataFrame,
+    symbol: str,
+    timeframe: str,
+    other_min_pattern_score: int,
+    other_max_trend_score: int,
+) -> tuple[pd.DataFrame, list[dict[str, Any]], dict[str, Any]]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _get_analysis_process_pool(),
+        _build_backtest_analysis,
+        frame,
+        hourly,
+        daily,
+        symbol,
+        timeframe,
+        other_min_pattern_score,
+        other_max_trend_score,
+    )
+
+
 async def _analyze_market_cached(
     frame: pd.DataFrame,
     hourly: pd.DataFrame,
@@ -227,8 +291,7 @@ async def _analyze_market_cached(
     cached = await asyncio.to_thread(load_analysis_cache, context["cache_key"])
     if cached is None:
         started = time.perf_counter()
-        normalized, signals, chart = await asyncio.to_thread(
-            _build_backtest_analysis,
+        normalized, signals, chart = await _run_backtest_analysis_in_process(
             frame,
             hourly,
             daily,
@@ -1171,6 +1234,90 @@ def _summaries(
     return rows
 
 
+async def _prepare_backtest_symbol(
+    request: dict[str, Any],
+    symbol: str,
+) -> list[BacktestCombinationPreparation]:
+    support_limit = max(240, min(int(request["kline_count"]), 600))
+    support_started = time.perf_counter()
+    try:
+        hourly, daily = await asyncio.gather(
+            load_kline_for_backtest(symbol, "1h", support_limit),
+            load_kline_for_backtest(symbol, "1d", support_limit),
+        )
+    except Exception as exc:
+        logger.exception("backtest support data failed: symbol=%s", symbol)
+        elapsed_ms = int((time.perf_counter() - support_started) * 1000)
+        return [
+            BacktestCombinationPreparation(
+                symbol=symbol,
+                timeframe=timeframe,
+                data_ms=elapsed_ms,
+                total_ms=elapsed_ms,
+                error=str(exc),
+            )
+            for timeframe in request["timeframes"]
+        ]
+
+    support_ms = int((time.perf_counter() - support_started) * 1000)
+    prepared: list[BacktestCombinationPreparation] = []
+    for timeframe in request["timeframes"]:
+        combination_started = time.perf_counter()
+        try:
+            frame_started = time.perf_counter()
+            frame = await load_kline_for_backtest(
+                symbol, timeframe, int(request["kline_count"]),
+            )
+            data_ms = support_ms + int((time.perf_counter() - frame_started) * 1000)
+            frame, selected, chart, analysis_cache_hit, analysis_ms = await _analyze_market_cached(
+                frame,
+                hourly,
+                daily,
+                symbol,
+                timeframe,
+                request["entry_conditions"],
+                request["other_entry_conditions"],
+                int(request["min_pattern_score"]),
+                int(request["min_trend_score"]),
+                int(request["other_min_pattern_score"]),
+                int(request["other_max_trend_score"]),
+            )
+            prepared.append(BacktestCombinationPreparation(
+                symbol=symbol,
+                timeframe=timeframe,
+                frame=frame,
+                selected=selected,
+                chart=chart,
+                data_ms=data_ms,
+                analysis_ms=analysis_ms,
+                analysis_cache_hit=analysis_cache_hit,
+                total_ms=int((time.perf_counter() - combination_started) * 1000),
+            ))
+        except Exception as exc:
+            logger.exception(
+                "backtest combination analysis failed: symbol=%s timeframe=%s",
+                symbol,
+                timeframe,
+            )
+            prepared.append(BacktestCombinationPreparation(
+                symbol=symbol,
+                timeframe=timeframe,
+                data_ms=support_ms,
+                total_ms=int((time.perf_counter() - combination_started) * 1000),
+                error=str(exc),
+            ))
+    return prepared
+
+
+async def _prepare_backtest_symbols(
+    request: dict[str, Any],
+    symbols: list[str],
+) -> list[list[BacktestCombinationPreparation]]:
+    return await asyncio.gather(*(
+        _prepare_backtest_symbol(request, symbol) for symbol in symbols
+    ))
+
+
 async def process_next_backtest_run(worker_id: str) -> bool:
     run = claim_next_backtest_run(worker_id)
     if run is None:
@@ -1189,83 +1336,99 @@ async def process_next_backtest_run(worker_id: str) -> bool:
     )
     try:
         all_events: list[dict[str, Any]] = []
-        for symbol in request["symbols"]:
-            symbol_events: list[dict[str, Any]] = []
-            for timeframe in request["timeframes"]:
-                if lease_lost.is_set():
-                    raise BacktestLeaseLostError(f"backtest lease lost: {run_id}")
-                if is_backtest_cancel_requested(run_id):
-                    replace_backtest_summaries(
-                        run_id,
-                        _summaries(
-                            run_id,
-                            request["take_profit_rules"],
-                            all_orders,
-                            [*request.get("entry_conditions", []), *request.get("other_entry_conditions", [])],
-                        ),
+        conditions = [*request.get("entry_conditions", []), *request.get("other_entry_conditions", [])]
+
+        def finish_cancelled_run() -> None:
+            replace_backtest_summaries(
+                run_id,
+                _summaries(run_id, request["take_profit_rules"], all_orders, conditions),
+            )
+            finish_backtest_run(
+                run_id, "CANCELLED", signal_count, len(all_orders), worker_id=worker_id,
+            )
+
+        symbols = list(request["symbols"])
+        for batch_start in range(0, len(symbols), BACKTEST_SYMBOL_CONCURRENCY):
+            if lease_lost.is_set():
+                raise BacktestLeaseLostError(f"backtest lease lost: {run_id}")
+            if is_backtest_cancel_requested(run_id):
+                finish_cancelled_run()
+                return True
+
+            batch_symbols = symbols[batch_start:batch_start + BACKTEST_SYMBOL_CONCURRENCY]
+            batch_results = await _prepare_backtest_symbols(request, batch_symbols)
+            for symbol_results in batch_results:
+                for result in symbol_results:
+                    if lease_lost.is_set():
+                        raise BacktestLeaseLostError(f"backtest lease lost: {run_id}")
+                    if is_backtest_cancel_requested(run_id):
+                        finish_cancelled_run()
+                        return True
+
+                    if result.error is not None:
+                        errors += 1
+                        add_backtest_error(
+                            run_id, result.symbol, result.timeframe, result.error,
+                        )
+                    else:
+                        try:
+                            frame = result.frame
+                            selected = result.selected or []
+                            chart = result.chart or {}
+                            if frame is None:
+                                raise RuntimeError(
+                                    f"backtest frame missing: {result.symbol} {result.timeframe}"
+                                )
+                            persistence_started = time.perf_counter()
+                            series_id = save_backtest_series(
+                                run_id,
+                                result.symbol,
+                                result.timeframe,
+                                {
+                                    "symbol": result.symbol,
+                                    "timeframe": result.timeframe,
+                                    "chart": chart,
+                                    "signals": selected,
+                                },
+                            )
+                            contract = _contract_for_symbol(result.symbol)
+                            all_events.extend({
+                                "series_id": series_id,
+                                "frame": frame,
+                                "signal": signal,
+                                "contract": contract,
+                            } for signal in selected)
+                            signal_count += len(selected)
+                            persist_ms = int((time.perf_counter() - persistence_started) * 1000)
+                            logger.info(
+                                "backtest combination prepared: run=%s symbol=%s timeframe=%s rows=%s "
+                                "data_ms=%s analysis_ms=%s analysis_cache_hit=%s persist_ms=%s total_ms=%s signals=%s",
+                                run_id,
+                                result.symbol,
+                                result.timeframe,
+                                len(frame),
+                                result.data_ms,
+                                result.analysis_ms,
+                                result.analysis_cache_hit,
+                                persist_ms,
+                                result.total_ms + persist_ms,
+                                len(selected),
+                            )
+                        except Exception as exc:
+                            errors += 1
+                            logger.exception(
+                                "backtest combination persistence failed: run=%s symbol=%s timeframe=%s",
+                                run_id,
+                                result.symbol,
+                                result.timeframe,
+                            )
+                            add_backtest_error(
+                                run_id, result.symbol, result.timeframe, str(exc),
+                            )
+                    completed += 1
+                    update_backtest_progress(
+                        run_id, completed, signal_count, len(all_orders), worker_id=worker_id,
                     )
-                    finish_backtest_run(
-                        run_id, "CANCELLED", signal_count, len(all_orders), worker_id=worker_id,
-                    )
-                    return True
-                try:
-                    support_limit = max(240, min(int(request["kline_count"]), 600))
-                    combination_started = time.perf_counter()
-                    data_started = combination_started
-                    frame, hourly, daily = await asyncio.gather(
-                        load_kline_for_backtest(symbol, timeframe, int(request["kline_count"])),
-                        load_kline_for_backtest(symbol, "1h", support_limit),
-                        load_kline_for_backtest(symbol, "1d", support_limit),
-                    )
-                    data_ms = int((time.perf_counter() - data_started) * 1000)
-                    frame, selected, chart, analysis_cache_hit, analysis_ms = await _analyze_market_cached(
-                        frame,
-                        hourly,
-                        daily,
-                        symbol,
-                        timeframe,
-                        request["entry_conditions"],
-                        request["other_entry_conditions"],
-                        int(request["min_pattern_score"]),
-                        int(request["min_trend_score"]),
-                        int(request["other_min_pattern_score"]),
-                        int(request["other_max_trend_score"]),
-                    )
-                    persistence_started = time.perf_counter()
-                    series_id = save_backtest_series(run_id, symbol, timeframe, {
-                        "symbol": symbol, "timeframe": timeframe, "chart": chart, "signals": selected,
-                    })
-                    contract = _contract_for_symbol(symbol)
-                    symbol_events.extend({
-                        "series_id": series_id,
-                        "frame": frame,
-                        "signal": signal,
-                        "contract": contract,
-                    } for signal in selected)
-                    signal_count += len(selected)
-                    logger.info(
-                        "backtest combination prepared: run=%s symbol=%s timeframe=%s rows=%s "
-                        "data_ms=%s analysis_ms=%s analysis_cache_hit=%s persist_ms=%s total_ms=%s signals=%s",
-                        run_id,
-                        symbol,
-                        timeframe,
-                        len(frame),
-                        data_ms,
-                        analysis_ms,
-                        analysis_cache_hit,
-                        int((time.perf_counter() - persistence_started) * 1000),
-                        int((time.perf_counter() - combination_started) * 1000),
-                        len(selected),
-                    )
-                except Exception as exc:
-                    errors += 1
-                    logger.exception("backtest combination failed: run=%s symbol=%s timeframe=%s", run_id, symbol, timeframe)
-                    add_backtest_error(run_id, symbol, timeframe, str(exc))
-                completed += 1
-                update_backtest_progress(
-                    run_id, completed, signal_count, len(all_orders), worker_id=worker_id,
-                )
-            all_events.extend(symbol_events)
         configured_conditions = [*request.get("entry_conditions", []), *request.get("other_entry_conditions", [])]
         entry_streams, pullback_types = _entry_condition_streams(configured_conditions)
         for entry_condition in entry_streams:

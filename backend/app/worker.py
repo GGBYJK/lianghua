@@ -6,13 +6,23 @@ import os
 import socket
 from datetime import timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Awaitable, Callable
 from uuid import uuid4
+
+from dotenv import load_dotenv
+
+_root_dir = Path(__file__).resolve().parents[2]
+load_dotenv(_root_dir / ".env", override=True)
+load_dotenv(_root_dir / "backend" / ".env", override=False)
+_numeric_threads = os.getenv("BACKTEST_NUMERIC_THREADS", "1")
+for _thread_env in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_thread_env, _numeric_threads)
 
 from sqlalchemy import insert, select, update
 
 from .market_client import MarketApiError, fetch_kline_from_market, shutdown_market_clients
-from .backtest_service import process_next_backtest_run
+from .backtest_service import process_next_backtest_run, shutdown_backtest_analysis_pool
 from .backtest_store import recover_stale_backtest_runs
 from .kline_service import enqueue_due_scheduled_kline_jobs, process_next_kline_sync_job
 from .kline_store import recover_stale_kline_sync_jobs
@@ -190,6 +200,7 @@ async def run() -> None:
     finally:
         stop_event.set()
         await asyncio.gather(*tasks, return_exceptions=True)
+        shutdown_backtest_analysis_pool()
         shutdown_market_clients()
 
 

@@ -63,10 +63,13 @@ def test_backtest_analysis_is_reused_from_versioned_cache(monkeypatch: pytest.Mo
         normalized["datetime"] = pd.to_datetime(normalized["datetime"])
         return normalized, [long_signal()], {"candles": []}
 
+    async def fake_run(main, *args):
+        return fake_build(main, *args)
+
     monkeypatch.setattr(backtest_service, "build_analysis_cache_context", fake_context)
     monkeypatch.setattr(backtest_service, "load_analysis_cache", fake_load)
     monkeypatch.setattr(backtest_service, "save_analysis_cache", fake_save)
-    monkeypatch.setattr(backtest_service, "_build_backtest_analysis", fake_build)
+    monkeypatch.setattr(backtest_service, "_run_backtest_analysis_in_process", fake_run)
     sample = frame([(99, 101, 98, 100), (100, 102, 99, 101)])
     args = (
         sample, sample, sample, "CZCE.CF609", "3m",
@@ -81,6 +84,83 @@ def test_backtest_analysis_is_reused_from_versioned_cache(monkeypatch: pytest.Mo
     assert second[4] == 0
     assert build_calls == 1
     assert len(second[1]) == 1
+
+
+def backtest_preparation_request(timeframes: list[str]) -> dict[str, object]:
+    return {
+        "kline_count": 1000,
+        "timeframes": timeframes,
+        "entry_conditions": ["head_shoulders_top:right_shoulder_confirmed"],
+        "other_entry_conditions": [],
+        "min_pattern_score": 75,
+        "min_trend_score": 65,
+        "other_min_pattern_score": 80,
+        "other_max_trend_score": 35,
+    }
+
+
+def test_backtest_preparation_reuses_support_data_and_keeps_symbol_timeframes_sequential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, int]] = []
+    active = 0
+    max_active = 0
+    sample = frame([(99, 101, 98, 100), (100, 102, 99, 101)])
+
+    async def fake_load(symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
+        calls.append((symbol, timeframe, limit))
+        return sample
+
+    async def fake_analyze(main, _hourly, _daily, _symbol, _timeframe, *_args):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return main, [], {"candles": []}, False, 10
+
+    monkeypatch.setattr(backtest_service, "load_kline_for_backtest", fake_load)
+    monkeypatch.setattr(backtest_service, "_analyze_market_cached", fake_analyze)
+
+    result = asyncio.run(backtest_service._prepare_backtest_symbol(
+        backtest_preparation_request(["3m", "5m"]),
+        "DCE.a2609",
+    ))
+
+    assert [item.timeframe for item in result] == ["3m", "5m"]
+    assert [timeframe for _, timeframe, _ in calls].count("1h") == 1
+    assert [timeframe for _, timeframe, _ in calls].count("1d") == 1
+    assert max_active == 1
+
+
+def test_backtest_preparation_analyzes_different_symbols_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = 0
+    max_active = 0
+    sample = frame([(99, 101, 98, 100), (100, 102, 99, 101)])
+
+    async def fake_load(_symbol: str, _timeframe: str, _limit: int) -> pd.DataFrame:
+        return sample
+
+    async def fake_analyze(main, _hourly, _daily, _symbol, _timeframe, *_args):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return main, [], {"candles": []}, False, 10
+
+    monkeypatch.setattr(backtest_service, "load_kline_for_backtest", fake_load)
+    monkeypatch.setattr(backtest_service, "_analyze_market_cached", fake_analyze)
+
+    result = asyncio.run(backtest_service._prepare_backtest_symbols(
+        backtest_preparation_request(["3m"]),
+        ["DCE.a2609", "DCE.b2609", "DCE.c2609"],
+    ))
+
+    assert len(result) == 3
+    assert max_active == 3
 
 
 def long_signal() -> dict[str, object]:
