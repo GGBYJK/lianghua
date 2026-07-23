@@ -30,6 +30,7 @@ logging.basicConfig(
 logger = logging.getLogger("app.worker")
 POLL_SECONDS = float(os.getenv("TRADING_WORKER_POLL_SECONDS", "2"))
 LEASE_SECONDS = int(os.getenv("TRADING_WORKER_LEASE_SECONDS", "15"))
+KLINE_JOB_STALE_SECONDS = max(60, int(os.getenv("KLINE_JOB_STALE_SECONDS", "300")))
 OWNER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid4()}"
 
 
@@ -121,7 +122,10 @@ async def kline_maintenance_loop(stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
         try:
             await enqueue_due_scheduled_kline_jobs()
-            recovered = await asyncio.to_thread(recover_stale_kline_sync_jobs)
+            recovered = await asyncio.to_thread(
+                recover_stale_kline_sync_jobs,
+                KLINE_JOB_STALE_SECONDS,
+            )
             if recovered:
                 logger.warning("recovered stale K-line sync jobs: %s", recovered)
             processed = await process_next_kline_sync_job(OWNER_ID)

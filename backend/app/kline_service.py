@@ -28,7 +28,7 @@ from .kline_store import (
     upsert_kline_frame_with_range,
 )
 from .config import load_head_shoulder_config
-from .market_client import fetch_kline_from_market, get_market_settings
+from .market_client import MarketApiError, fetch_kline_from_market, get_market_settings
 from .strategy import (
     KLINE_FEATURE_VERSION,
     add_ma_columns,
@@ -40,6 +40,10 @@ from .strategy import (
 
 logger = logging.getLogger("app.kline_service")
 MARKET_FETCH_CONCURRENCY = max(1, int(os.getenv("KLINE_FETCH_CONCURRENCY", "1")))
+MARKET_FETCH_MAX_ATTEMPTS = max(1, int(os.getenv("KLINE_FETCH_MAX_ATTEMPTS", "3")))
+MARKET_FETCH_RETRY_SECONDS = max(0.0, float(os.getenv("KLINE_FETCH_RETRY_SECONDS", "2")))
+FINISH_MAX_ATTEMPTS = max(1, int(os.getenv("KLINE_FINISH_MAX_ATTEMPTS", "5")))
+FINISH_RETRY_SECONDS = max(0.0, float(os.getenv("KLINE_FINISH_RETRY_SECONDS", "1")))
 WRITE_BATCH_SIZE = max(100, int(os.getenv("KLINE_WRITE_BATCH_SIZE", "500")))
 SYNC_OVERLAP_BARS = max(20, int(os.getenv("KLINE_SYNC_OVERLAP_BARS", "120")))
 TREND_FEATURE_TIMEFRAMES = {"1m", "3m", "5m"}
@@ -47,30 +51,6 @@ SCHEDULE_TIMEZONE = ZoneInfo(os.getenv("KLINE_SCHEDULE_TIMEZONE", "Asia/Shanghai
 SCHEDULE_HOUR = max(0, min(23, int(os.getenv("KLINE_SCHEDULE_HOUR", "3"))))
 _market_fetch_gate = asyncio.Semaphore(MARKET_FETCH_CONCURRENCY)
 _last_schedule_check: object | None = None
-
-
-def analysis_prewarm_counts() -> list[int]:
-    values: set[int] = set()
-    for raw in os.getenv("KLINE_ANALYSIS_PREWARM_COUNTS", "1000").split(","):
-        try:
-            value = int(raw.strip())
-        except ValueError:
-            continue
-        if value > 0:
-            values.add(value)
-    return sorted(values)
-
-
-def backtest_analysis_prewarm_counts() -> list[int]:
-    values: set[int] = set()
-    for raw in os.getenv("KLINE_BACKTEST_PREWARM_COUNTS", "8000").split(","):
-        try:
-            value = int(raw.strip())
-        except ValueError:
-            continue
-        if value > 0:
-            values.add(value)
-    return sorted(values)
 
 
 def current_market_provider() -> str:
@@ -101,7 +81,25 @@ def sync_request_count(dataset: dict[str, Any]) -> int:
 
 async def _fetch_market(symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
     async with _market_fetch_gate:
-        return await fetch_kline_from_market(symbol, timeframe, limit)
+        for attempt in range(1, MARKET_FETCH_MAX_ATTEMPTS + 1):
+            try:
+                return await fetch_kline_from_market(symbol, timeframe, limit)
+            except MarketApiError as exc:
+                if attempt >= MARKET_FETCH_MAX_ATTEMPTS:
+                    raise
+                delay = MARKET_FETCH_RETRY_SECONDS * attempt
+                logger.warning(
+                    "market fetch failed; retrying: symbol=%s timeframe=%s attempt=%s/%s delay_seconds=%s error=%s",
+                    symbol,
+                    timeframe,
+                    attempt,
+                    MARKET_FETCH_MAX_ATTEMPTS,
+                    delay,
+                    exc,
+                )
+                if delay > 0:
+                    await asyncio.sleep(delay)
+    raise RuntimeError("market fetch retry loop exited unexpectedly")
 
 
 async def load_kline_for_backtest(symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
@@ -343,6 +341,69 @@ async def refresh_dependent_trend_features(
         await asyncio.to_thread(update_kline_trend_features, str(dataset["id"]), scores)
 
 
+async def _ensure_kline_features_ready(dataset_id: str) -> None:
+    dataset = await asyncio.to_thread(get_kline_dataset, dataset_id)
+    if int(dataset.get("row_count") or 0) <= 0 or dataset.get("features_ready"):
+        return
+
+    logger.warning(
+        "K-line feature integrity check failed; rebuilding: symbol=%s timeframe=%s rows=%s feature_rows=%s",
+        dataset["symbol"],
+        dataset["timeframe"],
+        dataset.get("row_count"),
+        dataset.get("feature_row_count"),
+    )
+    await refresh_kline_dataset_features(dataset)
+    verified = await asyncio.to_thread(get_kline_dataset, dataset_id)
+    if not verified.get("features_ready"):
+        raise RuntimeError(
+            "K-line feature rebuild incomplete: "
+            f"symbol={verified['symbol']} timeframe={verified['timeframe']} "
+            f"rows={verified.get('row_count')} feature_rows={verified.get('feature_row_count')}"
+        )
+    logger.info(
+        "K-line feature integrity repaired: symbol=%s timeframe=%s rows=%s",
+        verified["symbol"],
+        verified["timeframe"],
+        verified.get("row_count"),
+    )
+
+
+async def _finish_kline_sync_job_with_retry(
+    job_id: str,
+    dataset_id: str,
+    *,
+    fetched_count: int,
+    written_count: int,
+    error_message: str | None = None,
+) -> None:
+    for attempt in range(1, FINISH_MAX_ATTEMPTS + 1):
+        try:
+            await asyncio.to_thread(
+                finish_kline_sync_job,
+                job_id,
+                dataset_id,
+                fetched_count=fetched_count,
+                written_count=written_count,
+                error_message=error_message,
+            )
+            return
+        except Exception as exc:
+            if attempt >= FINISH_MAX_ATTEMPTS:
+                raise
+            delay = FINISH_RETRY_SECONDS * attempt
+            logger.warning(
+                "K-line sync result write failed; retrying: job=%s attempt=%s/%s delay_seconds=%s error=%s",
+                job_id,
+                attempt,
+                FINISH_MAX_ATTEMPTS,
+                delay,
+                exc,
+            )
+            if delay > 0:
+                await asyncio.sleep(delay)
+
+
 async def process_next_kline_sync_job(worker_id: str) -> bool:
     job = await asyncio.to_thread(claim_next_kline_sync_job, worker_id)
     if job is None:
@@ -350,6 +411,8 @@ async def process_next_kline_sync_job(worker_id: str) -> bool:
     dataset_id = str(job["dataset_id"])
     fetched_count = 0
     written_count = 0
+    error_message: str | None = None
+    dataset: dict[str, Any] | None = None
     try:
         dataset = await asyncio.to_thread(get_kline_dataset, dataset_id)
         provider = current_market_provider()
@@ -387,66 +450,22 @@ async def process_next_kline_sync_job(worker_id: str) -> bool:
                 )
         elif not dataset.get("features_ready") and int(dataset.get("row_count") or 0) > 0:
             await refresh_kline_dataset_features(dataset)
-        await asyncio.to_thread(
-            finish_kline_sync_job,
-            str(job["id"]),
-            dataset_id,
-            fetched_count=fetched_count,
-            written_count=written_count,
-        )
+        await _ensure_kline_features_ready(dataset_id)
+    except Exception as exc:
+        logger.exception("K-line sync failed: job=%s dataset=%s", job["id"], dataset_id)
+        error_message = str(exc)
+
+    await _finish_kline_sync_job_with_retry(
+        str(job["id"]),
+        dataset_id,
+        fetched_count=fetched_count,
+        written_count=written_count,
+        error_message=error_message,
+    )
+    if error_message is None and dataset is not None:
         logger.info(
             "K-line sync completed: symbol=%s timeframe=%s fetched=%s written=%s",
             dataset["symbol"], dataset["timeframe"], fetched_count, written_count,
-        )
-        # Keep prewarming inside the single sync worker so large scans never fan out.
-        from .scan_analysis import scan_market_cached
-
-        for count in analysis_prewarm_counts():
-            if count > int(dataset["target_count"]):
-                continue
-            try:
-                await scan_market_cached(
-                    str(dataset["symbol"]),
-                    str(dataset["timeframe"]),
-                    count,
-                    {"max_signal_age_bars": 0},
-                )
-                logger.info(
-                    "market analysis prewarmed: symbol=%s timeframe=%s count=%s",
-                    dataset["symbol"], dataset["timeframe"], count,
-                )
-            except Exception:
-                logger.exception(
-                    "market analysis prewarm failed: symbol=%s timeframe=%s count=%s",
-                    dataset["symbol"], dataset["timeframe"], count,
-                )
-        from .backtest_service import prewarm_backtest_analysis
-
-        for count in backtest_analysis_prewarm_counts():
-            if count > int(dataset["target_count"]):
-                continue
-            try:
-                cache_hit = await prewarm_backtest_analysis(
-                    str(dataset["symbol"]), str(dataset["timeframe"]), count,
-                )
-                logger.info(
-                    "backtest analysis prewarmed: symbol=%s timeframe=%s count=%s cache_hit=%s",
-                    dataset["symbol"], dataset["timeframe"], count, cache_hit,
-                )
-            except Exception:
-                logger.exception(
-                    "backtest analysis prewarm failed: symbol=%s timeframe=%s count=%s",
-                    dataset["symbol"], dataset["timeframe"], count,
-                )
-    except Exception as exc:
-        logger.exception("K-line sync failed: job=%s dataset=%s", job["id"], dataset_id)
-        await asyncio.to_thread(
-            finish_kline_sync_job,
-            str(job["id"]),
-            dataset_id,
-            fetched_count=fetched_count,
-            written_count=written_count,
-            error_message=str(exc),
         )
     return True
 

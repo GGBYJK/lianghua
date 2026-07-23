@@ -271,6 +271,127 @@ def test_short_timeframe_feature_refresh_caches_trend_score_for_every_bar(store_
     assert ((cached["trend_bullish"] >= 0) & (cached["trend_bullish"] <= 100)).all()
 
 
+def test_feature_integrity_check_rebuilds_incomplete_features(store_engine) -> None:
+    dataset = kline_store.create_kline_dataset(1, "DCE.a2609", "15m", "tqsdk", 300, True)
+    frame = sample_frame(300)
+    kline_store.upsert_kline_frame(dataset["id"], frame)
+    kline_store.trim_kline_dataset(dataset["id"], 300)
+
+    assert kline_store.get_kline_dataset(dataset["id"])["features_ready"] is False
+
+    asyncio.run(kline_service._ensure_kline_features_ready(dataset["id"]))
+
+    repaired = kline_store.get_kline_dataset(dataset["id"])
+    assert repaired["features_ready"] is True
+    assert repaired["feature_row_count"] == repaired["row_count"] == 300
+
+
+def test_feature_integrity_check_rejects_incomplete_rebuild(
+    store_engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = kline_store.create_kline_dataset(1, "DCE.a2609", "15m", "tqsdk", 120, True)
+    kline_store.upsert_kline_frame(dataset["id"], sample_frame(5))
+    kline_store.trim_kline_dataset(dataset["id"], 120)
+
+    async def skip_rebuild(_dataset):
+        return 0
+
+    monkeypatch.setattr(kline_service, "refresh_kline_dataset_features", skip_rebuild)
+
+    with pytest.raises(RuntimeError, match="feature rebuild incomplete"):
+        asyncio.run(kline_service._ensure_kline_features_ready(dataset["id"]))
+
+
+def test_sync_job_completes_with_ready_features(
+    store_engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = kline_store.create_kline_dataset(1, "DCE.a2609", "15m", "tqsdk", 120, True)
+
+    async def fake_fetch(_symbol: str, _timeframe: str, _limit: int) -> pd.DataFrame:
+        return sample_frame(5)
+
+    monkeypatch.setattr(kline_service, "current_market_provider", lambda: "tqsdk")
+    monkeypatch.setattr(kline_service, "_fetch_market", fake_fetch)
+
+    assert asyncio.run(kline_service.process_next_kline_sync_job("test-worker")) is True
+
+    refreshed = kline_store.get_kline_dataset(dataset["id"])
+    job = kline_store.list_kline_sync_jobs(limit=1)[0]
+    assert refreshed["features_ready"] is True
+    assert refreshed["status"] == "IDLE"
+    assert job["status"] == "COMPLETED"
+
+
+def test_market_fetch_retries_transient_market_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = 0
+    expected = sample_frame(5)
+
+    async def flaky_fetch(_symbol: str, _timeframe: str, _limit: int) -> pd.DataFrame:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise kline_service.MarketApiError("temporary timeout")
+        return expected
+
+    monkeypatch.setattr(kline_service, "fetch_kline_from_market", flaky_fetch)
+    monkeypatch.setattr(kline_service, "MARKET_FETCH_MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(kline_service, "MARKET_FETCH_RETRY_SECONDS", 0)
+
+    result = asyncio.run(kline_service._fetch_market("DCE.a2609", "3m", 120))
+
+    assert result is expected
+    assert attempts == 3
+
+
+def test_sync_result_write_retries_transient_database_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = 0
+
+    def flaky_finish(*_args, **_kwargs) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(kline_service, "finish_kline_sync_job", flaky_finish)
+    monkeypatch.setattr(kline_service, "FINISH_MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(kline_service, "FINISH_RETRY_SECONDS", 0)
+
+    asyncio.run(kline_service._finish_kline_sync_job_with_retry(
+        "job-id",
+        "dataset-id",
+        fetched_count=120,
+        written_count=5,
+    ))
+
+    assert attempts == 3
+
+
+def test_sync_job_remains_running_when_result_write_never_recovers(
+    store_engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = kline_store.create_kline_dataset(1, "DCE.a2609", "15m", "tqsdk", 120, True)
+
+    async def fake_fetch(_symbol: str, _timeframe: str, _limit: int) -> pd.DataFrame:
+        return sample_frame(5)
+
+    async def fail_finish(*_args, **_kwargs) -> None:
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(kline_service, "current_market_provider", lambda: "tqsdk")
+    monkeypatch.setattr(kline_service, "_fetch_market", fake_fetch)
+    monkeypatch.setattr(kline_service, "_finish_kline_sync_job_with_retry", fail_finish)
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        asyncio.run(kline_service.process_next_kline_sync_job("test-worker"))
+
+    job = kline_store.list_kline_sync_jobs(limit=1)[0]
+    assert job["status"] == "RUNNING"
+    assert job["error_message"] is None
+
+
 def test_scheduled_jobs_are_created_once_and_in_symbol_order(store_engine) -> None:
     kline_store.create_kline_dataset(1, "SHFE.rb2610", "5m", "tqsdk", 120, True)
     kline_store.create_kline_dataset(1, "DCE.a2609", "3m", "tqsdk", 120, True)
